@@ -37,6 +37,16 @@ export function useCandidateActivity(id: UUID | undefined) {
   });
 }
 
+export function useCreateCandidate() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: Partial<Candidate>) => candidatesApi.create(payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: candidateKeys.all });
+    },
+  });
+}
+
 export function useChangeCandidateStatus() {
   const queryClient = useQueryClient();
   return useMutation({

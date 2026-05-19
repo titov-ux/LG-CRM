@@ -26,6 +26,16 @@ export function useVacancy(id: UUID | undefined) {
   });
 }
 
+export function useCreateVacancy() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: Partial<Vacancy>) => vacanciesApi.create(payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: vacancyKeys.all });
+    },
+  });
+}
+
 export function useChangeVacancyStatus() {
   const queryClient = useQueryClient();
   return useMutation({

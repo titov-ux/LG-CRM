@@ -1,7 +1,7 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { clientsApi, type ClientsListParams } from '@/api/clients';
 import { usersApi } from '@/api/users';
-import type { UUID } from '@/api/types';
+import type { Client, UUID } from '@/api/types';
 import { QUERY_DEFAULTS } from '@/lib/constants';
 
 export const clientKeys = {
@@ -47,5 +47,15 @@ export function useClientContacts(id: UUID | undefined) {
     queryFn: () => clientsApi.contacts(id as UUID),
     enabled: !!id,
     ...QUERY_DEFAULTS,
+  });
+}
+
+export function useCreateClient() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: Partial<Client>) => clientsApi.create(payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: clientKeys.all });
+    },
   });
 }

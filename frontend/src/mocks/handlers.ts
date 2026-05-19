@@ -1,6 +1,6 @@
 import { http, HttpResponse } from 'msw';
 import { API_BASE_URL } from '@/lib/constants';
-import type { Candidate, CandidateStatus, Vacancy, VacancyStatus } from '@/api/types';
+import type { Candidate, CandidateStatus, Client, Vacancy, VacancyStatus } from '@/api/types';
 import {
   activityDb,
   auditDb,
@@ -48,6 +48,21 @@ export const handlers = [
     );
     return HttpResponse.json(paginate(items, u.searchParams.get('page'), u.searchParams.get('pageSize')));
   }),
+  http.post(url('/clients'), async ({ request }) => {
+    const body = (await request.json()) as Partial<Client>;
+    const created: Client = {
+      id: `c-${Date.now()}`,
+      name: body.name ?? 'Без названия',
+      inn: body.inn ?? '',
+      industry: body.industry ?? '',
+      accountManagerId: body.accountManagerId ?? 'u2',
+      status: body.status ?? 'lead',
+      vacanciesCount: 0,
+      contactsCount: 0,
+    };
+    clientsDb.unshift(created);
+    return HttpResponse.json(created, { status: 201 });
+  }),
   http.get(url('/clients/:id'), ({ params }) => {
     const c = clientsDb.find((x) => x.id === params.id);
     return c ? HttpResponse.json(c) : new HttpResponse(null, { status: 404 });
@@ -73,6 +88,30 @@ export const handlers = [
       return true;
     });
     return HttpResponse.json(paginate(items, u.searchParams.get('page'), u.searchParams.get('pageSize')));
+  }),
+  http.post(url('/vacancies'), async ({ request }) => {
+    const body = (await request.json()) as Partial<Vacancy>;
+    const created: Vacancy = {
+      id: `v-${Date.now()}`,
+      title: body.title ?? 'Без названия',
+      clientId: body.clientId ?? '',
+      grade: body.grade ?? 'Middle',
+      stack: body.stack ?? [],
+      format: body.format ?? 'Гибрид',
+      rateClient: body.rateClient ?? 0,
+      rateMax: body.rateMax ?? 0,
+      positions: body.positions ?? 1,
+      status: body.status ?? 'new',
+      priority: body.priority ?? 'medium',
+      recruiterIds: body.recruiterIds ?? [],
+      daysInStatus: 0,
+      candidatesCount: 0,
+      deadline: body.deadline ?? null,
+    };
+    vacanciesDb.unshift(created);
+    const client = clientsDb.find((c) => c.id === created.clientId);
+    if (client) client.vacanciesCount += 1;
+    return HttpResponse.json(created, { status: 201 });
   }),
   http.get(url('/vacancies/:id'), ({ params }) => {
     const v = vacanciesDb.find((x) => x.id === params.id);
@@ -123,6 +162,30 @@ export const handlers = [
       return true;
     });
     return HttpResponse.json(paginate(items, u.searchParams.get('page'), u.searchParams.get('pageSize')));
+  }),
+  http.post(url('/candidates'), async ({ request }) => {
+    const body = (await request.json()) as Partial<Candidate>;
+    const created: Candidate = {
+      id: `cand-${Date.now()}`,
+      fullName: body.fullName ?? 'Без имени',
+      role: body.role ?? '',
+      grade: body.grade ?? 'Middle',
+      experienceYears: body.experienceYears ?? 0,
+      stack: body.stack ?? [],
+      rate: body.rate ?? 0,
+      format: body.format ?? 'Гибрид',
+      location: body.location ?? '',
+      source: body.source ?? 'Прямой поиск',
+      recruiterId: body.recruiterId ?? 'u4',
+      status: body.status ?? 'new',
+      daysInStatus: 0,
+      vacancyIds: body.vacancyIds ?? [],
+      hot: body.hot ?? false,
+      email: body.email,
+      phone: body.phone,
+    };
+    candidatesDb.unshift(created);
+    return HttpResponse.json(created, { status: 201 });
   }),
   http.get(url('/candidates/:id'), ({ params }) => {
     const c = candidatesDb.find((x) => x.id === params.id);

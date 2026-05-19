@@ -1,8 +1,9 @@
-import { Bell, Plus, Search } from 'lucide-react';
+import { Bell, Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { UserAvatar } from '@/components/common/UserAvatar';
+import { QuickCreateMenu } from './QuickCreateMenu';
 import { useAuthStore } from '@/stores/auth';
 import { useFiltersStore } from '@/stores/filters';
 
@@ -31,10 +32,7 @@ export function Header({ title }: Props) {
         </div>
       </div>
 
-      <Button size="sm" className="h-8 gap-1.5">
-        <Plus className="h-3.5 w-3.5" />
-        Создать
-      </Button>
+      <QuickCreateMenu />
 
       <Separator orientation="vertical" className="h-6" />
 

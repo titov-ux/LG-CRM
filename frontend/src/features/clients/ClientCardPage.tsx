@@ -26,8 +26,8 @@ export function ClientCardPage() {
 
   return (
     <Sheet open onOpenChange={(o) => !o && close()}>
-      <SheetContent className="overflow-y-auto sm:max-w-2xl">
-        <div className="sticky top-0 z-10 -mx-6 -mt-6 flex items-center justify-between border-b bg-background px-6 py-3.5">
+      <SheetContent hideClose className="overflow-y-auto p-0 sm:max-w-2xl">
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-background px-6 py-4">
           <div className="flex items-center gap-1">
             <Button variant="ghost" size="icon" onClick={close}><ChevronLeft className="h-3.5 w-3.5" /></Button>
             <Button variant="ghost" size="icon"><Edit3 className="h-3.5 w-3.5" /></Button>
@@ -38,9 +38,9 @@ export function ClientCardPage() {
         </div>
 
         {isLoading || !client ? (
-          <div className="space-y-3 pt-6"><Skeleton className="h-10 w-3/4" /><Skeleton className="h-32" /></div>
+          <div className="space-y-3 px-6 py-6"><Skeleton className="h-10 w-3/4" /><Skeleton className="h-32" /></div>
         ) : (
-          <div className="space-y-6 pt-6">
+          <div className="space-y-6 px-6 py-6">
             <div className="space-y-2 pb-4">
               <div className="text-[11.5px] font-medium uppercase tracking-wide text-muted-foreground">
                 Клиент · {client.industry}

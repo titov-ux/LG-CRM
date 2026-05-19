@@ -1,0 +1,103 @@
+import {
+  Activity,
+  BarChart3,
+  Briefcase,
+  Building2,
+  Inbox,
+  Settings,
+  TrendingUp,
+  Users,
+} from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+import { Link, useRouterState } from '@tanstack/react-router';
+import { cn } from '@/lib/utils';
+
+interface NavItem {
+  to: string;
+  label: string;
+  icon: LucideIcon;
+  badge?: number;
+}
+
+interface NavGroup {
+  label?: string;
+  items: NavItem[];
+}
+
+const GROUPS: NavGroup[] = [
+  { items: [{ to: '/dashboard', label: 'Главная', icon: BarChart3 }] },
+  {
+    label: 'Работа',
+    items: [
+      { to: '/vacancies', label: 'Вакансии', icon: Briefcase },
+      { to: '/candidates', label: 'Кандидаты', icon: Users },
+      { to: '/clients', label: 'Клиенты', icon: Building2 },
+    ],
+  },
+  {
+    label: 'Прочее',
+    items: [
+      { to: '/notifications', label: 'Уведомления', icon: Inbox, badge: 3 },
+      { to: '/analytics', label: 'Аналитика', icon: TrendingUp },
+      { to: '/audit', label: 'Журнал действий', icon: Activity },
+      { to: '/settings', label: 'Настройки', icon: Settings },
+    ],
+  },
+];
+
+export function Sidebar() {
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+
+  return (
+    <aside className="flex w-[232px] shrink-0 flex-col border-r bg-muted/30">
+      <div className="flex items-center gap-2.5 px-3.5 py-4">
+        <div className="flex h-7 w-7 items-center justify-center rounded-md bg-foreground text-[11px] font-bold tracking-tight text-background">
+          ЛГ
+        </div>
+        <div className="flex flex-col leading-tight">
+          <span className="text-[13px] font-semibold tracking-tight">Интеграция</span>
+          <span className="text-[10.5px] text-muted-foreground">CRM · 2026</span>
+        </div>
+      </div>
+
+      <nav className="flex-1 space-y-4 px-2 py-2">
+        {GROUPS.map((group, gi) => (
+          <div key={gi}>
+            {group.label && (
+              <div className="px-3 pb-1 pt-2 text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+                {group.label}
+              </div>
+            )}
+            <ul className="space-y-px">
+              {group.items.map((item) => {
+                const Icon = item.icon;
+                const active = pathname.startsWith(item.to);
+                return (
+                  <li key={item.to}>
+                    <Link
+                      to={item.to}
+                      className={cn(
+                        'group flex items-center gap-2.5 rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors',
+                        active
+                          ? 'bg-background text-foreground shadow-sm'
+                          : 'text-muted-foreground hover:bg-background/60 hover:text-foreground',
+                      )}
+                    >
+                      <Icon className="h-4 w-4" strokeWidth={1.8} />
+                      <span className="flex-1">{item.label}</span>
+                      {item.badge && (
+                        <span className="tnum rounded bg-red-500 px-1.5 text-[10px] font-semibold leading-4 text-white">
+                          {item.badge}
+                        </span>
+                      )}
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ))}
+      </nav>
+    </aside>
+  );
+}

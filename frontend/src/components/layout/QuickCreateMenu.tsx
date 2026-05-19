@@ -37,14 +37,27 @@ export function QuickCreateMenu() {
   const close = () => setOpen(null);
 
   const handleClient = (values: ClientFormValues) => {
-    createClient.mutate(values, {
-      onSuccess: (c) => {
-        toast.success(`Клиент «${c.name}» создан`);
-        close();
-        navigate({ to: '/clients/$id', params: { id: c.id } });
+    createClient.mutate(
+      {
+        name: values.name,
+        legalEntities: values.legalEntities.map((le, i) => ({
+          id: `le-${Date.now()}-${i}`,
+          name: le.name,
+          inn: le.inn,
+        })),
+        industry: values.industry,
+        accountManagerId: values.accountManagerId,
+        status: values.status,
       },
-      onError: () => toast.error('Не удалось создать клиента'),
-    });
+      {
+        onSuccess: (c) => {
+          toast.success(`Клиент «${c.name}» создан`);
+          close();
+          navigate({ to: '/clients/$id', params: { id: c.id } });
+        },
+        onError: () => toast.error('Не удалось создать клиента'),
+      },
+    );
   };
 
   const handleVacancy = (values: VacancyFormValues) => {

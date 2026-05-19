@@ -27,10 +27,16 @@ export interface CreateUserRequest {
 // === Clients ===
 export type ClientStatus = 'lead' | 'in_progress' | 'active' | 'paused' | 'archived';
 
-export interface Client {
+export interface LegalEntity {
   id: UUID;
   name: string;
   inn: string;
+}
+
+export interface Client {
+  id: UUID;
+  name: string;
+  legalEntities: LegalEntity[];
   industry: string;
   accountManagerId: UUID;
   status: ClientStatus;
@@ -45,6 +51,17 @@ export interface Contact {
   role: string;
   email?: string;
   phone?: string;
+}
+
+export interface CreateContactRequest {
+  name: string;
+  role: string;
+  email?: string;
+  phone?: string;
+}
+
+export interface ContactListItem extends Contact {
+  clientName: string;
 }
 
 // === Vacancies ===

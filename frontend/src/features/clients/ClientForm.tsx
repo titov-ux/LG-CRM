@@ -1,6 +1,7 @@
-import { useForm } from 'react-hook-form';
+import { useFieldArray, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
+import { Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -29,9 +30,14 @@ const STATUSES: { id: ClientStatus; label: string }[] = [
   { id: 'archived', label: 'Архив' },
 ];
 
-const schema = z.object({
+const legalEntitySchema = z.object({
   name: z.string().min(2, 'Минимум 2 символа'),
   inn: z.string().regex(/^\d{10,12}$/, 'ИНН должен быть из 10 или 12 цифр'),
+});
+
+const schema = z.object({
+  name: z.string().min(2, 'Минимум 2 символа'),
+  legalEntities: z.array(legalEntitySchema).min(1, 'Добавьте хотя бы одно юр. лицо'),
   industry: z.string().min(2),
   accountManagerId: z.string().min(1, 'Выберите менеджера'),
   status: z.enum(['lead', 'in_progress', 'active', 'paused', 'archived']),
@@ -54,12 +60,17 @@ export function ClientForm({ defaultValues, onSubmit, isPending, submitLabel = '
     resolver: zodResolver(schema),
     defaultValues: {
       name: '',
-      inn: '',
+      legalEntities: [{ name: '', inn: '' }],
       industry: '',
       accountManagerId: '',
       status: 'lead',
       ...defaultValues,
     } as ClientFormValues,
+  });
+
+  const { fields, append, remove } = useFieldArray({
+    control: form.control,
+    name: 'legalEntities',
   });
 
   return (
@@ -70,36 +81,93 @@ export function ClientForm({ defaultValues, onSubmit, isPending, submitLabel = '
           name="name"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Название</FormLabel>
-              <FormControl><Input {...field} placeholder="ООО «Ромашка»" /></FormControl>
+              <FormLabel>Название клиента</FormLabel>
+              <FormControl>
+                <Input {...field} placeholder="X5 Retail Group, Альфа-Банк…" />
+              </FormControl>
               <FormMessage />
             </FormItem>
           )}
         />
-        <div className="grid grid-cols-2 gap-3">
-          <FormField
-            control={form.control}
-            name="inn"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>ИНН</FormLabel>
-                <FormControl><Input {...field} placeholder="7728029110" /></FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-          <FormField
-            control={form.control}
-            name="industry"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Отрасль</FormLabel>
-                <FormControl><Input {...field} placeholder="IT, Финансы…" /></FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <FormLabel className="text-sm font-medium">Юридические лица</FormLabel>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1"
+              onClick={() => append({ name: '', inn: '' })}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Добавить
+            </Button>
+          </div>
+          {fields.map((field, index) => (
+            <div key={field.id} className="space-y-3 rounded-lg border bg-muted/20 p-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-muted-foreground">
+                  {fields.length > 1 ? `Юр. лицо ${index + 1}` : 'Юр. лицо'}
+                </span>
+                {fields.length > 1 && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                    onClick={() => remove(index)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                )}
+              </div>
+              <FormField
+                control={form.control}
+                name={`legalEntities.${index}.name`}
+                render={({ field: f }) => (
+                  <FormItem>
+                    <FormLabel>Наименование</FormLabel>
+                    <FormControl>
+                      <Input {...f} placeholder="ООО «Ромашка»" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name={`legalEntities.${index}.inn`}
+                render={({ field: f }) => (
+                  <FormItem>
+                    <FormLabel>ИНН</FormLabel>
+                    <FormControl>
+                      <Input {...f} placeholder="7728029110" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+          ))}
+          {form.formState.errors.legalEntities?.root && (
+            <p className="text-sm font-medium text-destructive">
+              {form.formState.errors.legalEntities.root.message}
+            </p>
+          )}
         </div>
+
+        <FormField
+          control={form.control}
+          name="industry"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Отрасль</FormLabel>
+              <FormControl><Input {...field} placeholder="IT, Финансы…" /></FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
         <FormField
           control={form.control}
           name="accountManagerId"

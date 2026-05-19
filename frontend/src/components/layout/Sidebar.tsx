@@ -3,6 +3,7 @@ import {
   BarChart3,
   Briefcase,
   Building2,
+  ContactRound,
   Inbox,
   Settings,
   ShieldCheck,
@@ -12,6 +13,7 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import { Link, useRouterState } from '@tanstack/react-router';
 import { cn } from '@/lib/utils';
+import { useNotifications } from '@/features/notifications/hooks';
 
 interface NavItem {
   to: string;
@@ -33,12 +35,13 @@ const GROUPS: NavGroup[] = [
       { to: '/vacancies', label: 'Вакансии', icon: Briefcase },
       { to: '/candidates', label: 'Кандидаты', icon: Users },
       { to: '/clients', label: 'Клиенты', icon: Building2 },
+      { to: '/contacts', label: 'Контакты', icon: ContactRound },
     ],
   },
   {
     label: 'Прочее',
     items: [
-      { to: '/notifications', label: 'Уведомления', icon: Inbox, badge: 3 },
+      { to: '/notifications', label: 'Уведомления', icon: Inbox },
       { to: '/analytics', label: 'Аналитика', icon: TrendingUp },
       { to: '/audit', label: 'Журнал действий', icon: Activity },
     ],
@@ -54,6 +57,8 @@ const GROUPS: NavGroup[] = [
 
 export function Sidebar() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const { data: notifications } = useNotifications();
+  const unreadCount = notifications?.filter((n) => !n.read).length ?? 0;
 
   return (
     <aside className="flex w-[232px] shrink-0 flex-col border-r bg-muted/30">
@@ -79,6 +84,8 @@ export function Sidebar() {
               {group.items.map((item) => {
                 const Icon = item.icon;
                 const active = pathname.startsWith(item.to);
+                const badge =
+                  item.to === '/notifications' ? unreadCount : item.badge;
                 return (
                   <li key={item.to}>
                     <Link
@@ -92,9 +99,9 @@ export function Sidebar() {
                     >
                       <Icon className="h-4 w-4" strokeWidth={1.8} />
                       <span className="flex-1">{item.label}</span>
-                      {item.badge && (
+                      {badge != null && badge > 0 && (
                         <span className="tnum rounded bg-red-500 px-1.5 text-[10px] font-semibold leading-4 text-white">
-                          {item.badge}
+                          {badge}
                         </span>
                       )}
                     </Link>

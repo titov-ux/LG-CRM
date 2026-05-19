@@ -1,6 +1,6 @@
 import { http, HttpResponse } from 'msw';
 import { API_BASE_URL } from '@/lib/constants';
-import type { Candidate, CandidateStatus, Client, User, Vacancy, VacancyStatus } from '@/api/types';
+import type { Candidate, CandidateStatus, Client, ContactListItem, User, Vacancy, VacancyStatus } from '@/api/types';
 import {
   activityDb,
   auditDb,
@@ -86,7 +86,11 @@ export const handlers = [
     const status = u.searchParams.get('status');
     const items = clientsDb.filter(
       (c) =>
-        (!search || c.name.toLowerCase().includes(search) || c.inn.includes(search)) &&
+        (!search ||
+          c.name.toLowerCase().includes(search) ||
+          c.legalEntities.some(
+            (le) => le.name.toLowerCase().includes(search) || le.inn.includes(search),
+          )) &&
         (!status || c.status === status),
     );
     return HttpResponse.json(paginate(items, u.searchParams.get('page'), u.searchParams.get('pageSize')));
@@ -96,7 +100,11 @@ export const handlers = [
     const created: Client = {
       id: `c-${Date.now()}`,
       name: body.name ?? 'Без названия',
-      inn: body.inn ?? '',
+      legalEntities: (body.legalEntities ?? []).map((le, i) => ({
+        id: le.id ?? `le-${Date.now()}-${i}`,
+        name: le.name,
+        inn: le.inn,
+      })),
       industry: body.industry ?? '',
       accountManagerId: body.accountManagerId ?? 'u2',
       status: body.status ?? 'lead',
@@ -110,8 +118,63 @@ export const handlers = [
     const c = clientsDb.find((x) => x.id === params.id);
     return c ? HttpResponse.json(c) : new HttpResponse(null, { status: 404 });
   }),
+  http.patch(url('/clients/:id'), async ({ params, request }) => {
+    const patch = (await request.json()) as Partial<Client>;
+    const c = clientsDb.find((x) => x.id === params.id);
+    if (!c) return new HttpResponse(null, { status: 404 });
+    if (patch.legalEntities) {
+      c.legalEntities = patch.legalEntities.map((le, i) => ({
+        id: le.id ?? `le-${Date.now()}-${i}`,
+        name: le.name,
+        inn: le.inn,
+      }));
+    }
+    const { legalEntities: _le, ...rest } = patch;
+    Object.assign(c, rest);
+    return HttpResponse.json(c);
+  }),
   http.get(url('/clients/:id/contacts'), ({ params }) => {
     return HttpResponse.json(contactsDb.filter((x) => x.clientId === params.id));
+  }),
+  http.get(url('/contacts'), ({ request }) => {
+    const u = new URL(request.url);
+    const search = u.searchParams.get('search')?.toLowerCase() ?? '';
+    const clientId = u.searchParams.get('clientId');
+    const items: ContactListItem[] = contactsDb
+      .map((contact) => {
+        const client = clientsDb.find((c) => c.id === contact.clientId);
+        return { ...contact, clientName: client?.name ?? '—' };
+      })
+      .filter((c) => {
+        if (clientId && c.clientId !== clientId) return false;
+        if (!search) return true;
+        return (
+          c.name.toLowerCase().includes(search) ||
+          c.role.toLowerCase().includes(search) ||
+          c.clientName.toLowerCase().includes(search) ||
+          (c.email?.toLowerCase().includes(search) ?? false) ||
+          (c.phone?.includes(search) ?? false)
+        );
+      });
+    return HttpResponse.json(paginate(items, u.searchParams.get('page'), u.searchParams.get('pageSize')));
+  }),
+  http.post(url('/clients/:id/contacts'), async ({ params, request }) => {
+    const body = (await request.json()) as { name?: string; role?: string; email?: string; phone?: string };
+    const clientId = params.id as string;
+    const client = clientsDb.find((c) => c.id === clientId);
+    if (!client) return new HttpResponse(null, { status: 404 });
+
+    const created = {
+      id: `ct-${Date.now()}`,
+      clientId,
+      name: body.name ?? '',
+      role: body.role ?? '',
+      ...(body.email ? { email: body.email } : {}),
+      ...(body.phone ? { phone: body.phone } : {}),
+    };
+    contactsDb.push(created);
+    client.contactsCount += 1;
+    return HttpResponse.json(created, { status: 201 });
   }),
 
   // === Vacancies ===

@@ -35,7 +35,7 @@ export function ClientsListPage() {
           <TableHeader>
             <TableRow className="bg-muted/40">
               <TableHead>Название</TableHead>
-              <TableHead>ИНН</TableHead>
+              <TableHead>Юр. лица</TableHead>
               <TableHead>Отрасль</TableHead>
               <TableHead>Статус</TableHead>
               <TableHead>Менеджер</TableHead>
@@ -55,7 +55,11 @@ export function ClientsListPage() {
               return (
                 <TableRow key={c.id} className="cursor-pointer" onClick={() => navigate({ to: '/clients/$id', params: { id: c.id } })}>
                   <TableCell className="font-semibold">{c.name}</TableCell>
-                  <TableCell className="tnum text-[12.5px] text-muted-foreground">{c.inn}</TableCell>
+                  <TableCell className="text-[12.5px] text-muted-foreground">
+                    {c.legalEntities.length === 1
+                      ? c.legalEntities[0].name
+                      : `${c.legalEntities.length} юр. лиц`}
+                  </TableCell>
                   <TableCell>{c.industry}</TableCell>
                   <TableCell>
                     <span className="flex items-center gap-1.5">

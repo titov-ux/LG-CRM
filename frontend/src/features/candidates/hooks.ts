@@ -62,9 +62,22 @@ export function useChangeCandidateStatus() {
           items: data.items.map((c) => (c.id === id ? { ...c, status, daysInStatus: 0 } : c)),
         });
       });
-      return { previous };
+      const byIdKey = candidateKeys.byId(id);
+      const previousById = queryClient.getQueryData<Candidate>(byIdKey);
+      if (previousById) {
+        queryClient.setQueryData(byIdKey, { ...previousById, status, daysInStatus: 0 });
+      }
+      return { previous, previousById, byIdKey };
     },
-    onError: (_e, _v, ctx) => ctx?.previous.forEach(([k, d]) => queryClient.setQueryData(k, d)),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(candidateKeys.byId(updated.id), updated);
+    },
+    onError: (_e, _v, ctx) => {
+      ctx?.previous.forEach(([k, d]) => queryClient.setQueryData(k, d));
+      if (ctx?.previousById !== undefined) {
+        queryClient.setQueryData(ctx.byIdKey, ctx.previousById);
+      }
+    },
     onSettled: () => queryClient.invalidateQueries({ queryKey: candidateKeys.all }),
   });
 }

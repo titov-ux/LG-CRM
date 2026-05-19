@@ -1,4 +1,5 @@
 import { useNavigate, useParams } from '@tanstack/react-router';
+import { toast } from 'sonner';
 import { ArrowRight, ChevronLeft, Copy, Edit3, Mail, MessageCircle, MoreHorizontal, Phone, Plus, X } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
@@ -7,8 +8,10 @@ import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { UserAvatar } from '@/components/common/UserAvatar';
 import { StackTags } from '@/components/common/StackTags';
+import { KanbanStatusSelect } from '@/components/kanban/KanbanStatusSelect';
+import type { CandidateStatus } from '@/api/types';
 import { formatMoneyRub } from '@/lib/utils';
-import { useCandidate, useCandidateActivity } from './hooks';
+import { useCandidate, useCandidateActivity, useChangeCandidateStatus } from './hooks';
 import { useUsers } from '@/features/users/hooks';
 import { candidateStatuses } from '@/mocks/db/candidates';
 
@@ -26,10 +29,21 @@ export function CandidateCardPage() {
   const { data: candidate, isLoading } = useCandidate(id);
   const { data: activity } = useCandidateActivity(id);
   const { data: usersData } = useUsers();
+  const changeStatus = useChangeCandidateStatus();
 
   const close = () => navigate({ to: '/candidates' });
-  const status = candidateStatuses.find((s) => s.id === candidate?.status);
   const recruiter = usersData?.find((u) => u.id === candidate?.recruiterId);
+
+  const handleStatusChange = (status: CandidateStatus) => {
+    if (!candidate || status === candidate.status) return;
+    changeStatus.mutate(
+      { id: candidate.id, status },
+      {
+        onSuccess: (c) => toast.success(`Кандидат «${c.fullName}» — статус изменён`),
+        onError: () => toast.error('Не удалось изменить статус'),
+      },
+    );
+  };
 
   return (
     <Sheet open onOpenChange={(o) => !o && close()}>
@@ -70,12 +84,12 @@ export function CandidateCardPage() {
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                {status && (
-                  <span className="inline-flex items-center gap-1.5 rounded bg-muted px-2 py-0.5 text-xs font-medium">
-                    <span className="h-1.5 w-1.5 rounded-full" style={{ background: status.color }} />
-                    {status.label}
-                  </span>
-                )}
+                <KanbanStatusSelect
+                  statuses={candidateStatuses}
+                  value={candidate.status}
+                  onValueChange={handleStatusChange}
+                  disabled={changeStatus.isPending}
+                />
                 <span className="text-xs text-muted-foreground">
                   {candidate.experienceYears} лет опыта · {candidate.location}
                 </span>

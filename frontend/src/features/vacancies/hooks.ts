@@ -36,6 +36,18 @@ export function useCreateVacancy() {
   });
 }
 
+export function useUpdateVacancy() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, payload }: { id: UUID; payload: Partial<Vacancy> }) =>
+      vacanciesApi.update(id, payload),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(vacancyKeys.byId(updated.id), updated);
+      queryClient.invalidateQueries({ queryKey: vacancyKeys.all });
+    },
+  });
+}
+
 export function useChangeVacancyStatus() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -52,10 +64,21 @@ export function useChangeVacancyStatus() {
           items: data.items.map((v) => (v.id === id ? { ...v, status, daysInStatus: 0 } : v)),
         });
       });
-      return { previous };
+      const byIdKey = vacancyKeys.byId(id);
+      const previousById = queryClient.getQueryData<Vacancy>(byIdKey);
+      if (previousById) {
+        queryClient.setQueryData(byIdKey, { ...previousById, status, daysInStatus: 0 });
+      }
+      return { previous, previousById, byIdKey };
+    },
+    onSuccess: (updated) => {
+      queryClient.setQueryData(vacancyKeys.byId(updated.id), updated);
     },
     onError: (_err, _vars, ctx) => {
       ctx?.previous.forEach(([key, data]) => queryClient.setQueryData(key, data));
+      if (ctx?.previousById !== undefined) {
+        queryClient.setQueryData(ctx.byIdKey, ctx.previousById);
+      }
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: vacancyKeys.all });

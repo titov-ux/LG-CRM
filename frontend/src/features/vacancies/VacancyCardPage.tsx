@@ -1,18 +1,64 @@
+import { useState } from 'react';
 import { useNavigate, useParams } from '@tanstack/react-router';
 import { ChevronLeft, ChevronRight, Copy, Edit3, MoreHorizontal, X } from 'lucide-react';
-import { Sheet, SheetContent } from '@/components/ui/sheet';
+import { toast } from 'sonner';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Separator } from '@/components/ui/separator';
 import { UserAvatar } from '@/components/common/UserAvatar';
 import { StackTags } from '@/components/common/StackTags';
 import { PriorityBadge } from '@/components/common/PriorityBadge';
-import { useVacancy } from './hooks';
+import { KanbanStatusSelect } from '@/components/kanban/KanbanStatusSelect';
+import type { VacancyStatus } from '@/api/types';
+import { useChangeVacancyStatus, useCreateVacancy, useUpdateVacancy, useVacancy } from './hooks';
+import { VacancyForm, type VacancyFormValues } from './VacancyForm';
 import { useClients } from '@/features/clients/hooks';
 import { useUsers } from '@/features/users/hooks';
 import { useCandidates } from '@/features/candidates/hooks';
 import { vacancyStatuses } from '@/mocks/db/vacancies';
 import { formatDateRu, formatMoneyRub } from '@/lib/utils';
+import type { Vacancy } from '@/api/types';
+
+function splitStack(value: string | undefined): string[] {
+  return (value ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function toDuplicatePayload(vacancy: Vacancy): Partial<Vacancy> {
+  return {
+    title: `${vacancy.title} (копия)`,
+    clientId: vacancy.clientId,
+    grade: vacancy.grade,
+    format: vacancy.format,
+    priority: vacancy.priority,
+    rateClient: vacancy.rateClient,
+    rateMax: vacancy.rateMax,
+    positions: vacancy.positions,
+    stack: [...vacancy.stack],
+    deadline: vacancy.deadline,
+    recruiterIds: [...vacancy.recruiterIds],
+    status: 'new',
+  };
+}
+
+function toFormValues(vacancy: Vacancy): Partial<VacancyFormValues> {
+  return {
+    title: vacancy.title,
+    clientId: vacancy.clientId,
+    grade: vacancy.grade,
+    format: vacancy.format,
+    priority: vacancy.priority,
+    rateClient: vacancy.rateClient,
+    rateMax: vacancy.rateMax,
+    positions: vacancy.positions,
+    stack: vacancy.stack.join(', '),
+    deadline: vacancy.deadline ?? '',
+    recruiterId: vacancy.recruiterIds[0] ?? '',
+  };
+}
 
 export function VacancyCardPage() {
   const navigate = useNavigate();
@@ -21,14 +67,67 @@ export function VacancyCardPage() {
   const { data: clientsData } = useClients();
   const { data: usersData } = useUsers();
   const { data: candidatesData } = useCandidates();
+  const updateVacancy = useUpdateVacancy();
+  const createVacancy = useCreateVacancy();
+  const changeStatus = useChangeVacancyStatus();
+  const [editOpen, setEditOpen] = useState(false);
 
   const close = () => navigate({ to: '/vacancies' });
   const client = clientsData?.items.find((c) => c.id === vacancy?.clientId);
   const accountManager = usersData?.find((u) => u.id === client?.accountManagerId);
-  const status = vacancyStatuses.find((s) => s.id === vacancy?.status);
   const attached = (candidatesData?.items ?? []).filter((c) => vacancy && c.vacancyIds.includes(vacancy.id));
 
+  const handleStatusChange = (status: VacancyStatus) => {
+    if (!vacancy || status === vacancy.status) return;
+    changeStatus.mutate(
+      { id: vacancy.id, status },
+      {
+        onSuccess: (v) => toast.success(`Вакансия «${v.title}» — статус изменён`),
+        onError: () => toast.error('Не удалось изменить статус'),
+      },
+    );
+  };
+
+  const handleCopy = () => {
+    if (!vacancy) return;
+    createVacancy.mutate(toDuplicatePayload(vacancy), {
+      onSuccess: (v) => {
+        toast.success(`Создана копия «${v.title}»`);
+        navigate({ to: '/vacancies/$id', params: { id: v.id } });
+      },
+      onError: () => toast.error('Не удалось скопировать вакансию'),
+    });
+  };
+
+  const handleEdit = (values: VacancyFormValues) => {
+    if (!vacancy) return;
+    const payload = {
+      title: values.title,
+      clientId: values.clientId,
+      grade: values.grade,
+      format: values.format,
+      priority: values.priority,
+      rateClient: Number(values.rateClient),
+      rateMax: Number(values.rateMax),
+      positions: Number(values.positions),
+      stack: splitStack(values.stack),
+      deadline: values.deadline || null,
+      recruiterIds: values.recruiterId ? [values.recruiterId] : [],
+    };
+    updateVacancy.mutate(
+      { id: vacancy.id, payload },
+      {
+        onSuccess: (v) => {
+          toast.success(`Вакансия «${v.title}» обновлена`);
+          setEditOpen(false);
+        },
+        onError: () => toast.error('Не удалось сохранить изменения'),
+      },
+    );
+  };
+
   return (
+    <>
     <Sheet open onOpenChange={(o) => !o && close()}>
       <SheetContent hideClose className="overflow-y-auto p-0 sm:max-w-2xl">
         <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-background px-6 py-4">
@@ -36,8 +135,24 @@ export function VacancyCardPage() {
             <Button variant="ghost" size="icon" onClick={close}>
               <ChevronLeft className="h-3.5 w-3.5" />
             </Button>
-            <Button variant="ghost" size="icon"><Edit3 className="h-3.5 w-3.5" /></Button>
-            <Button variant="ghost" size="icon"><Copy className="h-3.5 w-3.5" /></Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              disabled={!vacancy}
+              onClick={() => setEditOpen(true)}
+              aria-label="Редактировать вакансию"
+            >
+              <Edit3 className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              disabled={!vacancy || createVacancy.isPending}
+              onClick={handleCopy}
+              aria-label="Скопировать вакансию"
+            >
+              <Copy className="h-3.5 w-3.5" />
+            </Button>
             <Button variant="ghost" size="icon"><MoreHorizontal className="h-3.5 w-3.5" /></Button>
           </div>
           <Button variant="ghost" size="icon" onClick={close}><X className="h-3.5 w-3.5" /></Button>
@@ -57,12 +172,12 @@ export function VacancyCardPage() {
               </div>
               <div className="text-[22px] font-bold leading-tight tracking-tight">{vacancy.title}</div>
               <div className="flex flex-wrap items-center gap-2">
-                {status && (
-                  <span className="inline-flex items-center gap-1.5 rounded bg-muted px-2 py-0.5 text-xs font-medium">
-                    <span className="h-1.5 w-1.5 rounded-full" style={{ background: status.color }} />
-                    {status.label}
-                  </span>
-                )}
+                <KanbanStatusSelect
+                  statuses={vacancyStatuses}
+                  value={vacancy.status}
+                  onValueChange={handleStatusChange}
+                  disabled={changeStatus.isPending}
+                />
                 <PriorityBadge priority={vacancy.priority} />
                 <span className="text-xs text-muted-foreground">
                   {vacancy.grade} · {vacancy.format}
@@ -149,6 +264,24 @@ export function VacancyCardPage() {
         )}
       </SheetContent>
     </Sheet>
+
+    <Sheet open={editOpen} onOpenChange={setEditOpen}>
+      <SheetContent className="overflow-y-auto sm:max-w-xl">
+        <SheetHeader className="mb-4">
+          <SheetTitle>Редактирование вакансии</SheetTitle>
+          <SheetDescription>Изменения сохраняются в карточке и на канбан-доске.</SheetDescription>
+        </SheetHeader>
+        {vacancy && (
+          <VacancyForm
+            key={vacancy.id}
+            defaultValues={toFormValues(vacancy)}
+            onSubmit={handleEdit}
+            isPending={updateVacancy.isPending}
+          />
+        )}
+      </SheetContent>
+    </Sheet>
+    </>
   );
 }
 

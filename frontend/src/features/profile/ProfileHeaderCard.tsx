@@ -9,13 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { UserAvatar } from '@/components/common/UserAvatar';
 import { useAuthStore } from '@/stores/auth';
 import { ROLE_LABEL } from '@/features/users/UserForm';
-
-const ROLE_BADGE: Record<string, string> = {
-  admin: 'bg-rose-100 text-rose-700 hover:bg-rose-100',
-  account_manager: 'bg-violet-100 text-violet-700 hover:bg-violet-100',
-  recruiter: 'bg-emerald-100 text-emerald-700 hover:bg-emerald-100',
-  viewer: 'bg-slate-100 text-slate-700 hover:bg-slate-100',
-};
+import { ROLE_BADGE } from './constants';
 
 export function ProfileHeaderCard() {
   const user = useAuthStore((s) => s.user);
@@ -62,7 +56,7 @@ export function ProfileHeaderCard() {
     <Card>
       <CardContent className="flex flex-col gap-5 p-5 sm:flex-row sm:items-center">
         <div className="flex shrink-0 items-center gap-4">
-          <UserAvatar user={user} size={72} ring />
+          <UserAvatar user={user} size={72} ring interactive={false} />
           <div className="sm:hidden">
             <div className="text-base font-semibold">{user.fullName}</div>
             <div className="text-xs text-muted-foreground">{user.email}</div>

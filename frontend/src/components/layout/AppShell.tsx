@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
+import { ProfileDialog } from '@/features/profile/ProfileDialog';
 
 interface Props {
   title: string;
@@ -18,6 +19,7 @@ export function AppShell({ title, children }: Props) {
           <ErrorBoundary>{children}</ErrorBoundary>
         </main>
       </div>
+      <ProfileDialog />
     </div>
   );
 }

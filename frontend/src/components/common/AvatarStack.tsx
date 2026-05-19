@@ -13,7 +13,11 @@ export function AvatarStack({ users, max = 3, size = 22 }: Props) {
   return (
     <div className="flex items-center">
       {shown.map((u, i) => (
-        <div key={u.id} className="relative" style={{ marginLeft: i === 0 ? 0 : -6, zIndex: shown.length - i }}>
+        <div
+          key={u.id}
+          className="relative"
+          style={{ marginLeft: i === 0 ? 0 : -6, zIndex: shown.length - i }}
+        >
           <UserAvatar user={u} size={size} ring />
         </div>
       ))}

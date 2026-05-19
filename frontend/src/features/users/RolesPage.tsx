@@ -189,7 +189,7 @@ export function RolesPage() {
   };
 
   return (
-    <div className="flex-1 overflow-auto px-6 pb-6">
+    <div className="flex-1 overflow-auto px-6 pb-6 pt-5">
       <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-4">
         <StatCard label="Всего пользователей" value={stats.total} />
         <StatCard label="Активны" value={stats.active} accent="text-emerald-600" />

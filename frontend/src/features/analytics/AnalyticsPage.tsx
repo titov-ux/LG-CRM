@@ -2,7 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 export function AnalyticsPage() {
   return (
-    <div className="flex-1 overflow-auto px-6 pb-6">
+    <div className="flex-1 overflow-auto px-6 pb-6 pt-5">
       <Card>
         <CardHeader><CardTitle>Аналитика</CardTitle></CardHeader>
         <CardContent className="text-sm text-muted-foreground">

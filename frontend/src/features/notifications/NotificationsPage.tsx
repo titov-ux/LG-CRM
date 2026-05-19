@@ -20,7 +20,7 @@ export function NotificationsPage() {
   if (!data || data.length === 0) return <EmptyState icon={Inbox} title="Уведомлений нет" />;
 
   return (
-    <div className="space-y-3 px-6 pb-6">
+    <div className="space-y-3 px-6 pb-6 pt-5">
       <div className="flex justify-end">
         <Button size="sm" variant="outline" onClick={() => markAll.mutate()}>
           Прочитать все

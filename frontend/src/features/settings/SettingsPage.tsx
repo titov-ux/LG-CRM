@@ -9,7 +9,7 @@ export function SettingsPage() {
   const toggle = useUIStore((s) => s.toggleSidebar);
 
   return (
-    <div className="flex-1 overflow-auto px-6 pb-6">
+    <div className="flex-1 overflow-auto px-6 pb-6 pt-5">
       <Card>
         <CardHeader>
           <CardTitle>Настройки</CardTitle>

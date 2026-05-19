@@ -29,7 +29,7 @@ export function ClientsListPage() {
   const { data: usersData } = useUsers();
 
   return (
-    <div className="flex-1 overflow-auto px-6 pb-6">
+    <div className="flex-1 overflow-auto px-6 pb-6 pt-5">
       <Card className="overflow-hidden">
         <Table>
           <TableHeader>

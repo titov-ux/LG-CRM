@@ -24,7 +24,7 @@ export function DashboardPage() {
   const maxFunnel = Math.max(1, ...((funnel ?? []).map((f) => f.count)));
 
   return (
-    <div className="flex-1 space-y-3 overflow-auto px-6 pb-6">
+    <div className="flex-1 space-y-3 overflow-auto px-6 pb-6 pt-5">
       <div className="grid grid-cols-4 gap-3">
         {isLoading
           ? Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-20" />)

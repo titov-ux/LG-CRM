@@ -1,6 +1,6 @@
 import { http, HttpResponse } from 'msw';
 import { API_BASE_URL } from '@/lib/constants';
-import type { Candidate, CandidateStatus, Client, Vacancy, VacancyStatus } from '@/api/types';
+import type { Candidate, CandidateStatus, Client, User, Vacancy, VacancyStatus } from '@/api/types';
 import {
   activityDb,
   auditDb,
@@ -35,6 +35,49 @@ export const handlers = [
 
   // === Users ===
   http.get(url('/users'), () => HttpResponse.json(usersDb)),
+  http.post(url('/users'), async ({ request }) => {
+    const body = (await request.json()) as Partial<User>;
+    const email = (body.email ?? '').trim().toLowerCase();
+    if (!email) {
+      return HttpResponse.json({ message: 'Не указан email' }, { status: 400 });
+    }
+    if (usersDb.some((u) => u.email.toLowerCase() === email)) {
+      return HttpResponse.json({ message: 'Пользователь с таким email уже существует' }, { status: 409 });
+    }
+    const fullName = (body.fullName ?? 'Без имени').trim();
+    const initials = fullName
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((w) => w[0]?.toUpperCase() ?? '')
+      .join('') || 'NN';
+    const palette = ['#0f172a', '#7c3aed', '#0891b2', '#db2777', '#ea580c', '#16a34a', '#2563eb', '#b45309'];
+    const color = palette[usersDb.length % palette.length];
+    const created: User = {
+      id: `u-${Date.now()}`,
+      email,
+      fullName,
+      role: (body.role as User['role']) ?? 'recruiter',
+      initials,
+      color,
+      isActive: body.isActive ?? true,
+    };
+    usersDb.unshift(created);
+    return HttpResponse.json(created, { status: 201 });
+  }),
+  http.patch(url('/users/:id'), async ({ params, request }) => {
+    const patch = (await request.json()) as Partial<User>;
+    const u = usersDb.find((x) => x.id === params.id);
+    if (!u) return new HttpResponse(null, { status: 404 });
+    Object.assign(u, patch);
+    return HttpResponse.json(u);
+  }),
+  http.delete(url('/users/:id'), ({ params }) => {
+    const idx = usersDb.findIndex((x) => x.id === params.id);
+    if (idx === -1) return new HttpResponse(null, { status: 404 });
+    usersDb.splice(idx, 1);
+    return HttpResponse.json({ ok: true });
+  }),
 
   // === Clients ===
   http.get(url('/clients'), ({ request }) => {

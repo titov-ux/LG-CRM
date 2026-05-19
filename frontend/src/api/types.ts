@@ -4,7 +4,7 @@
 export type UUID = string;
 
 // === Users ===
-export type Role = 'admin' | 'account_manager' | 'recruiter';
+export type Role = 'admin' | 'account_manager' | 'recruiter' | 'viewer';
 
 export interface User {
   id: UUID;
@@ -14,6 +14,14 @@ export interface User {
   initials: string;
   color: string;
   isActive: boolean;
+}
+
+export interface CreateUserRequest {
+  email: string;
+  fullName: string;
+  role: Role;
+  password?: string;
+  isActive?: boolean;
 }
 
 // === Clients ===

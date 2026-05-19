@@ -5,6 +5,7 @@ import {
   Building2,
   Inbox,
   Settings,
+  ShieldCheck,
   TrendingUp,
   Users,
 } from 'lucide-react';
@@ -40,6 +41,12 @@ const GROUPS: NavGroup[] = [
       { to: '/notifications', label: 'Уведомления', icon: Inbox, badge: 3 },
       { to: '/analytics', label: 'Аналитика', icon: TrendingUp },
       { to: '/audit', label: 'Журнал действий', icon: Activity },
+    ],
+  },
+  {
+    label: 'Администрирование',
+    items: [
+      { to: '/roles', label: 'Роли и доступы', icon: ShieldCheck },
       { to: '/settings', label: 'Настройки', icon: Settings },
     ],
   },

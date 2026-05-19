@@ -10,6 +10,7 @@ const TITLES: Record<string, string> = {
   '/notifications': 'Уведомления',
   '/analytics': 'Аналитика',
   '/audit': 'Журнал действий',
+  '/roles': 'Роли и доступы',
   '/settings': 'Настройки',
 };
 

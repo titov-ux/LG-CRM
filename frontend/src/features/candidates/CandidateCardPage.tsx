@@ -38,6 +38,7 @@ import {
 } from './hooks';
 import { useUsers } from '@/features/users/hooks';
 import { candidateStatuses } from '@/mocks/db/candidates';
+import { CommentsSection } from '@/features/comments/CommentsSection';
 
 function splitStack(value: string | undefined): string[] {
   return (value ?? '')
@@ -323,6 +324,10 @@ export function CandidateCardPage() {
                 })}
               </div>
             </Section>
+
+            <Separator />
+
+            <CommentsSection entityType="candidate" entityId={candidate.id} />
           </div>
         )}
       </SheetContent>

@@ -68,10 +68,6 @@ export interface CreateContactRequest {
   birthday?: string;
 }
 
-export interface CreateClientNoteRequest {
-  text: string;
-}
-
 export interface ContactListItem extends Contact {
   clientName: string;
 }
@@ -174,10 +170,41 @@ export interface Notification {
   userId: UUID;
   kind: 'mention' | 'status_change' | 'system';
   text: string;
-  entityType?: 'vacancy' | 'candidate' | 'client';
+  entityType?: 'vacancy' | 'candidate' | 'client' | 'contact';
   entityId?: UUID;
   read: boolean;
   createdAt: string;
+}
+
+// === Comments ===
+export type CommentEntityType = 'contact' | 'candidate' | 'vacancy' | 'client';
+
+export interface Comment {
+  id: UUID;
+  entityType: CommentEntityType;
+  entityId: UUID;
+  authorId: UUID;
+  /** id родительского комментария — для ответов в нити */
+  parentId: UUID | null;
+  text: string;
+  /** id упомянутых через @ пользователей */
+  mentions: UUID[];
+  createdAt: string;
+  /** Заполняется при редактировании комментария */
+  updatedAt: string | null;
+}
+
+export interface CreateCommentRequest {
+  entityType: CommentEntityType;
+  entityId: UUID;
+  text: string;
+  parentId?: UUID | null;
+  mentions?: UUID[];
+}
+
+export interface UpdateCommentRequest {
+  text: string;
+  mentions?: UUID[];
 }
 
 // === Audit / Activity ===

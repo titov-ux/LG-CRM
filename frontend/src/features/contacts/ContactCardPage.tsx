@@ -26,6 +26,7 @@ import { ContactForm, type ContactFormValues } from '@/features/clients/ContactF
 import { useCreateContact } from '@/features/clients/hooks';
 import { formatDateRu, telegramUrl } from '@/lib/utils';
 import { useContact, useDeleteContact, useUpdateContact } from './hooks';
+import { CommentsSection } from '@/features/comments/CommentsSection';
 
 function toFormValues(contact: ContactListItem): Partial<ContactFormValues> {
   return {
@@ -268,6 +269,10 @@ export function ContactCardPage() {
                   }
                 />
               </div>
+
+              <Separator />
+
+              <CommentsSection entityType="contact" entityId={contact.id} />
             </div>
           )}
         </SheetContent>

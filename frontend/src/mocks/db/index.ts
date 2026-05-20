@@ -6,3 +6,4 @@ export { clientsDb, contactsDb } from './clients';
 export { vacanciesDb, vacancyStatuses } from './vacancies';
 export { candidatesDb, candidateStatuses } from './candidates';
 export { notificationsDb, activityDb, auditDb } from './notifications';
+export { commentsDb } from './comments';

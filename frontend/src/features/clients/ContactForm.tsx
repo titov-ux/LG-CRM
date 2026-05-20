@@ -11,9 +11,17 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
-import type { CreateContactRequest } from '@/api/types';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import type { Client, CreateContactRequest, UUID } from '@/api/types';
 
 const schema = z.object({
+  clientId: z.string().optional(),
   name: z.string().min(2, 'Минимум 2 символа'),
   role: z.string().min(2, 'Укажите должность'),
   email: z.union([z.literal(''), z.string().email('Некорректный email')]),
@@ -25,16 +33,29 @@ const schema = z.object({
 export type ContactFormValues = z.infer<typeof schema>;
 
 interface Props {
-  onSubmit: (values: CreateContactRequest) => void;
+  /**
+   * Если передан список клиентов — рендерим селектор «Клиент» сверху формы,
+   * поле становится обязательным. Используется для глобального «Добавить контакт».
+   * Если не передан — селектор не показываем (клиент задан внешне).
+   */
+  clients?: Pick<Client, 'id' | 'name'>[];
+  /** Если передан clients, второй аргумент содержит выбранный clientId. */
+  onSubmit: (values: CreateContactRequest, clientId?: UUID) => void;
   isPending?: boolean;
   submitLabel?: string;
   defaultValues?: Partial<ContactFormValues>;
 }
 
-export function ContactForm({ onSubmit, isPending, submitLabel = 'Добавить', defaultValues }: Props) {
+export function ContactForm({ clients, onSubmit, isPending, submitLabel = 'Добавить', defaultValues }: Props) {
+  const showClientSelect = !!clients;
   const form = useForm<ContactFormValues>({
-    resolver: zodResolver(schema),
+    resolver: zodResolver(
+      showClientSelect
+        ? schema.refine((v) => !!v.clientId, { message: 'Выберите клиента', path: ['clientId'] })
+        : schema,
+    ),
     defaultValues: {
+      clientId: '',
       name: '',
       role: '',
       email: '',
@@ -46,19 +67,48 @@ export function ContactForm({ onSubmit, isPending, submitLabel = 'Добавит
   });
 
   const handleSubmit = (values: ContactFormValues) => {
-    onSubmit({
-      name: values.name,
-      role: values.role,
-      ...(values.email ? { email: values.email } : {}),
-      ...(values.phone ? { phone: values.phone } : {}),
-      ...(values.telegram ? { telegram: values.telegram } : {}),
-      ...(values.birthday ? { birthday: values.birthday } : {}),
-    });
+    onSubmit(
+      {
+        name: values.name,
+        role: values.role,
+        ...(values.email ? { email: values.email } : {}),
+        ...(values.phone ? { phone: values.phone } : {}),
+        ...(values.telegram ? { telegram: values.telegram } : {}),
+        ...(values.birthday ? { birthday: values.birthday } : {}),
+      },
+      showClientSelect ? values.clientId : undefined,
+    );
   };
 
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4">
+        {showClientSelect && (
+          <FormField
+            control={form.control}
+            name="clientId"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Клиент</FormLabel>
+                <Select onValueChange={field.onChange} value={field.value || ''}>
+                  <FormControl>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Выберите клиента" />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent>
+                    {(clients ?? []).map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        )}
         <FormField
           control={form.control}
           name="name"
@@ -90,7 +140,7 @@ export function ContactForm({ onSubmit, isPending, submitLabel = 'Добавит
           name="email"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Email</FormLabel>
+              <FormLabel>Email (необязательно)</FormLabel>
               <FormControl>
                 <Input {...field} type="email" placeholder="name@company.ru" autoComplete="email" />
               </FormControl>

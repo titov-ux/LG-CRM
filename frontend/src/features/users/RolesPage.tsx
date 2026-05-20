@@ -22,6 +22,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { UserAvatar } from '@/components/common/UserAvatar';
 import type { Role, User } from '@/api/types';
@@ -125,6 +133,7 @@ export function RolesPage() {
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState<Role | 'all'>('all');
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<User | null>(null);
 
   const { data: users, isLoading } = useUsers();
   const updateUser = useUpdateUser();
@@ -180,10 +189,14 @@ export function RolesPage() {
     );
   };
 
-  const handleDelete = (user: User) => {
-    if (!confirm(`Удалить пользователя ${user.fullName}?`)) return;
+  const handleDeleteConfirm = () => {
+    if (!userToDelete) return;
+    const user = userToDelete;
     deleteUser.mutate(user.id, {
-      onSuccess: () => toast.success('Пользователь удалён'),
+      onSuccess: () => {
+        toast.success(`Пользователь «${user.fullName}» удалён`);
+        setUserToDelete(null);
+      },
       onError: () => toast.error('Не удалось удалить пользователя'),
     });
   };
@@ -308,7 +321,7 @@ export function RolesPage() {
                         variant="ghost"
                         size="icon"
                         className="h-8 w-8 text-muted-foreground hover:text-rose-600"
-                        onClick={() => handleDelete(u)}
+                        onClick={() => setUserToDelete(u)}
                         title="Удалить пользователя"
                       >
                         <Trash2 className="h-4 w-4" />
@@ -409,6 +422,39 @@ export function RolesPage() {
       </Tabs>
 
       <AddUserDialog open={dialogOpen} onOpenChange={setDialogOpen} />
+
+      <Dialog
+        open={!!userToDelete}
+        onOpenChange={(o) => !deleteUser.isPending && !o && setUserToDelete(null)}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Удалить пользователя?</DialogTitle>
+            <DialogDescription>
+              {userToDelete && (
+                <>
+                  Пользователь «
+                  <span className="font-medium text-foreground">{userToDelete.fullName}</span>» будет удалён
+                  без возможности восстановления. Его доступы аннулируются.
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setUserToDelete(null)}
+              disabled={deleteUser.isPending}
+            >
+              Отмена
+            </Button>
+            <Button variant="destructive" onClick={handleDeleteConfirm} disabled={deleteUser.isPending}>
+              <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+              {deleteUser.isPending ? 'Удаление…' : 'Удалить'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

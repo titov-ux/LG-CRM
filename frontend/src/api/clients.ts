@@ -1,5 +1,5 @@
 import { api } from './client';
-import type { ActivityEntry, Client, Contact, CreateClientNoteRequest, CreateContactRequest, Page, UUID } from './types';
+import type { Client, Contact, CreateContactRequest, Page, UUID } from './types';
 
 export interface ClientsListParams {
   search?: string;
@@ -19,7 +19,4 @@ export const clientsApi = {
   create: (payload: Partial<Client>) => api.post('clients', { json: payload }).json<Client>(),
   update: (id: UUID, payload: Partial<Client>) => api.patch(`clients/${id}`, { json: payload }).json<Client>(),
   remove: (id: UUID) => api.delete(`clients/${id}`).json<{ ok: true }>(),
-  notes: (id: UUID) => api.get(`clients/${id}/notes`).json<ActivityEntry[]>(),
-  createNote: (id: UUID, payload: CreateClientNoteRequest) =>
-    api.post(`clients/${id}/notes`, { json: payload }).json<ActivityEntry>(),
 };

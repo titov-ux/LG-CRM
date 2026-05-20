@@ -1,11 +1,23 @@
 import { http, HttpResponse } from 'msw';
 import { API_BASE_URL } from '@/lib/constants';
-import type { ActivityEntry, Candidate, CandidateStatus, Client, ContactListItem, User, Vacancy, VacancyStatus } from '@/api/types';
+import type {
+  Candidate,
+  CandidateStatus,
+  Client,
+  Comment,
+  CommentEntityType,
+  ContactListItem,
+  Notification,
+  User,
+  Vacancy,
+  VacancyStatus,
+} from '@/api/types';
 import {
   activityDb,
   auditDb,
   candidatesDb,
   clientsDb,
+  commentsDb,
   contactsDb,
   notificationsDb,
   usersDb,
@@ -184,35 +196,9 @@ export const handlers = [
   http.get(url('/clients/:id/contacts'), ({ params }) => {
     return HttpResponse.json(contactsDb.filter((x) => x.clientId === params.id));
   }),
-  http.get(url('/clients/:id/notes'), ({ params }) => {
-    const notes = activityDb
-      .filter((a) => a.entityType === 'client' && a.entityId === params.id && a.kind === 'note')
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    return HttpResponse.json(notes);
-  }),
-  http.post(url('/clients/:id/notes'), async ({ params, request }) => {
-    const client = clientsDb.find((x) => x.id === params.id);
-    if (!client) return new HttpResponse(null, { status: 404 });
-    const body = (await request.json()) as { text?: string };
-    const text = body.text?.trim();
-    if (!text) {
-      return HttpResponse.json({ message: 'Текст заметки обязателен' }, { status: 400 });
-    }
-    if (text.length > 1000) {
-      return HttpResponse.json({ message: 'Заметка не может быть длиннее 1000 символов' }, { status: 400 });
-    }
-    const created: ActivityEntry = {
-      id: `an-${Date.now()}`,
-      entityType: 'client',
-      entityId: params.id as string,
-      actorId: actorIdFromRequest(request),
-      kind: 'note',
-      text,
-      createdAt: new Date().toISOString(),
-    };
-    activityDb.unshift(created);
-    return HttpResponse.json(created, { status: 201 });
-  }),
+  // Старые заметки клиента теперь живут в едином блоке Комментариев (CommentsSection).
+  // Эндпоинты /clients/:id/notes удалены вместе с ClientNotesSection.
+  // ActivityDb с историческими записями kind='note' сохраняется — может быть показан в общей истории активности.
   http.get(url('/contacts'), ({ request }) => {
     const u = new URL(request.url);
     const search = u.searchParams.get('search')?.toLowerCase() ?? '';
@@ -499,6 +485,132 @@ export const handlers = [
   http.get(url('/candidates/:id/activity'), ({ params }) =>
     HttpResponse.json(activityDb.filter((a) => a.entityType === 'candidate' && a.entityId === params.id)),
   ),
+
+  // === Comments ===
+  // Список комментариев по сущности. Сортировка — по возрастанию даты создания
+  // (старые сверху, ответы идут после своего родителя), как привычно в чатах.
+  http.get(url('/comments'), ({ request }) => {
+    const u = new URL(request.url);
+    const entityType = u.searchParams.get('entityType') as CommentEntityType | null;
+    const entityId = u.searchParams.get('entityId');
+    if (!entityType || !entityId) {
+      return HttpResponse.json({ message: 'entityType и entityId обязательны' }, { status: 400 });
+    }
+    const items = commentsDb
+      .filter((c) => c.entityType === entityType && c.entityId === entityId)
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    return HttpResponse.json(items);
+  }),
+  http.post(url('/comments'), async ({ request }) => {
+    const body = (await request.json()) as {
+      entityType?: CommentEntityType;
+      entityId?: string;
+      text?: string;
+      parentId?: string | null;
+      mentions?: string[];
+    };
+    const text = body.text?.trim();
+    if (!body.entityType || !body.entityId) {
+      return HttpResponse.json({ message: 'entityType и entityId обязательны' }, { status: 400 });
+    }
+    if (!text) {
+      return HttpResponse.json({ message: 'Текст комментария обязателен' }, { status: 400 });
+    }
+    if (text.length > 2000) {
+      return HttpResponse.json({ message: 'Комментарий не может быть длиннее 2000 символов' }, { status: 400 });
+    }
+    if (body.parentId && !commentsDb.some((c) => c.id === body.parentId)) {
+      return HttpResponse.json({ message: 'Родительский комментарий не найден' }, { status: 400 });
+    }
+    const actorId = actorIdFromRequest(request);
+    const mentions = (body.mentions ?? []).filter((id) => usersDb.some((u) => u.id === id));
+    const created: Comment = {
+      id: `cm-${Date.now()}`,
+      entityType: body.entityType,
+      entityId: body.entityId,
+      authorId: actorId,
+      parentId: body.parentId ?? null,
+      text,
+      mentions,
+      createdAt: new Date().toISOString(),
+      updatedAt: null,
+    };
+    commentsDb.push(created);
+
+    // Триггер уведомлений упомянутым пользователям (кроме самого себя).
+    const author = usersDb.find((u) => u.id === actorId);
+    const entityLabel =
+      body.entityType === 'contact'
+        ? 'контакту'
+        : body.entityType === 'candidate'
+          ? 'кандидату'
+          : body.entityType === 'client'
+            ? 'клиенту'
+            : 'вакансии';
+    for (const userId of mentions) {
+      if (userId === actorId) continue;
+      const notif: Notification = {
+        id: `n-${Date.now()}-${userId}`,
+        userId,
+        kind: 'mention',
+        text: `${author?.fullName ?? 'Коллега'} упомянул(а) вас в комментарии к ${entityLabel}`,
+        entityType: body.entityType,
+        entityId: body.entityId,
+        read: false,
+        createdAt: created.createdAt,
+      };
+      notificationsDb.unshift(notif);
+    }
+
+    return HttpResponse.json(created, { status: 201 });
+  }),
+  http.patch(url('/comments/:id'), async ({ params, request }) => {
+    const comment = commentsDb.find((c) => c.id === params.id);
+    if (!comment) return new HttpResponse(null, { status: 404 });
+    const actorId = actorIdFromRequest(request);
+    if (comment.authorId !== actorId) {
+      return HttpResponse.json({ message: 'Редактировать может только автор' }, { status: 403 });
+    }
+    const body = (await request.json()) as { text?: string; mentions?: string[] };
+    const text = body.text?.trim();
+    if (!text) {
+      return HttpResponse.json({ message: 'Текст комментария обязателен' }, { status: 400 });
+    }
+    if (text.length > 2000) {
+      return HttpResponse.json({ message: 'Комментарий не может быть длиннее 2000 символов' }, { status: 400 });
+    }
+    comment.text = text;
+    if (body.mentions) {
+      comment.mentions = body.mentions.filter((id) => usersDb.some((u) => u.id === id));
+    }
+    comment.updatedAt = new Date().toISOString();
+    return HttpResponse.json(comment);
+  }),
+  http.delete(url('/comments/:id'), ({ params, request }) => {
+    const idx = commentsDb.findIndex((c) => c.id === params.id);
+    if (idx === -1) return new HttpResponse(null, { status: 404 });
+    const actorId = actorIdFromRequest(request);
+    if (commentsDb[idx].authorId !== actorId) {
+      return HttpResponse.json({ message: 'Удалить может только автор' }, { status: 403 });
+    }
+    // Удаляем сам комментарий и все ответы на него (чтобы не оставались висячие ветки).
+    const id = commentsDb[idx].id;
+    const toRemove = new Set<string>([id]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const c of commentsDb) {
+        if (c.parentId && toRemove.has(c.parentId) && !toRemove.has(c.id)) {
+          toRemove.add(c.id);
+          changed = true;
+        }
+      }
+    }
+    for (let i = commentsDb.length - 1; i >= 0; i--) {
+      if (toRemove.has(commentsDb[i].id)) commentsDb.splice(i, 1);
+    }
+    return HttpResponse.json({ ok: true });
+  }),
 
   // === Notifications ===
   http.get(url('/notifications'), () => HttpResponse.json(notificationsDb)),

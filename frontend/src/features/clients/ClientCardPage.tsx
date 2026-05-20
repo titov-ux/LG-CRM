@@ -24,7 +24,7 @@ import {
 import { UserAvatar } from '@/components/common/UserAvatar';
 import { AddContactDialog } from './AddContactDialog';
 import { ClientForm, type ClientFormValues } from './ClientForm';
-import { ClientNotesSection } from './ClientNotesSection';
+import { CommentsSection } from '@/features/comments/CommentsSection';
 import { useClient, useClientContacts, useCreateClient, useDeleteClient, useUpdateClient, useUsers } from './hooks';
 import { useVacancies } from '@/features/vacancies/hooks';
 import { vacancyStatuses } from '@/mocks/db/vacancies';
@@ -332,10 +332,6 @@ export function ClientCardPage() {
               onOpenChange={setContactDialogOpen}
             />
 
-            <Section title="Заметки">
-              <ClientNotesSection clientId={id} users={usersData ?? []} />
-            </Section>
-
             <Section title={`Вакансии · ${vacanciesData?.items.length ?? 0}`}>
               <div className="space-y-1.5">
                 {(vacanciesData?.items ?? []).map((v) => {
@@ -364,6 +360,10 @@ export function ClientCardPage() {
                 })}
               </div>
             </Section>
+
+            <Separator />
+
+            <CommentsSection entityType="client" entityId={id} />
           </div>
         )}
       </SheetContent>

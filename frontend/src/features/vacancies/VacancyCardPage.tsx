@@ -40,6 +40,7 @@ import { useCandidates } from '@/features/candidates/hooks';
 import { vacancyStatuses } from '@/mocks/db/vacancies';
 import { formatDateRu, formatMoneyRub } from '@/lib/utils';
 import type { Vacancy } from '@/api/types';
+import { CommentsSection } from '@/features/comments/CommentsSection';
 
 function splitStack(value: string | undefined): string[] {
   return (value ?? '')
@@ -351,6 +352,10 @@ export function VacancyCardPage() {
                 </div>
               )}
             </Section>
+
+            <Separator />
+
+            <CommentsSection entityType="vacancy" entityId={vacancy.id} />
           </div>
         )}
       </SheetContent>

@@ -215,7 +215,7 @@ export function VacancyForm({ defaultValues, onSubmit, isPending, submitLabel = 
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Ставка клиента (₽/ч)</FormLabel>
-                <FormControl><Input type="number" min={0} {...field} /></FormControl>
+                <FormControl><Input type="number" min={0} className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" {...field} /></FormControl>
                 <FormMessage />
               </FormItem>
             )}

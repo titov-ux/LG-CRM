@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from '@tanstack/react-router';
-import { ChevronLeft, Copy, Edit3, Mail, MoreHorizontal, Phone, Plus, X } from 'lucide-react';
+import { ChevronLeft, Copy, Edit3, Mail, MoreHorizontal, Phone, Plus, Send, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
@@ -9,10 +9,12 @@ import { Separator } from '@/components/ui/separator';
 import { UserAvatar } from '@/components/common/UserAvatar';
 import { AddContactDialog } from './AddContactDialog';
 import { ClientForm, type ClientFormValues } from './ClientForm';
+import { ClientNotesSection } from './ClientNotesSection';
 import { useClient, useClientContacts, useCreateClient, useUpdateClient, useUsers } from './hooks';
 import { useVacancies } from '@/features/vacancies/hooks';
 import { vacancyStatuses } from '@/mocks/db/vacancies';
 import type { Client } from '@/api/types';
+import { telegramUrl } from '@/lib/utils';
 
 const STATUS_LABEL: Record<string, string> = {
   lead: 'Лид', in_progress: 'В работе', active: 'Активный', paused: 'Приостановлен', archived: 'Архив',
@@ -25,6 +27,7 @@ function toFormValues(client: Client): Partial<ClientFormValues> {
     industry: client.industry,
     accountManagerId: client.accountManagerId,
     status: client.status,
+    telegramChat: client.telegramChat ?? '',
   };
 }
 
@@ -39,6 +42,7 @@ function toDuplicatePayload(client: Client): Partial<Client> {
     industry: client.industry,
     accountManagerId: client.accountManagerId,
     status: 'lead',
+    ...(client.telegramChat ? { telegramChat: client.telegramChat } : {}),
   };
 }
 
@@ -84,6 +88,9 @@ export function ClientCardPage() {
           industry: values.industry,
           accountManagerId: values.accountManagerId,
           status: values.status,
+          ...(values.telegramChat.trim()
+            ? { telegramChat: values.telegramChat.trim() }
+            : { telegramChat: '' }),
         },
       },
       {
@@ -129,7 +136,7 @@ export function ClientCardPage() {
         {isLoading || !client ? (
           <div className="space-y-3 px-6 py-6"><Skeleton className="h-10 w-3/4" /><Skeleton className="h-32" /></div>
         ) : (
-          <div className="space-y-6 px-6 py-6">
+          <div className="min-w-0 space-y-6 overflow-x-hidden px-6 py-6">
             <div className="space-y-2 pb-4">
               <div className="text-[11.5px] font-medium uppercase tracking-wide text-muted-foreground">
                 Клиент · {client.industry}
@@ -167,6 +174,22 @@ export function ClientCardPage() {
                 }
               />
               <Field label="Отрасль" value={client.industry} />
+              <Field
+                label="Telegram-чат"
+                value={
+                  client.telegramChat ? (
+                    <a
+                      href={telegramUrl(client.telegramChat)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 text-primary hover:underline"
+                    >
+                      <Send className="h-3 w-3" />
+                      {client.telegramChat}
+                    </a>
+                  ) : undefined
+                }
+              />
               <Field label="Открытых вакансий" value={<b className="tnum">{vacanciesData?.items.length ?? 0}</b>} />
               <Field label="Контактных лиц" value={contactsList.length} />
             </div>
@@ -199,9 +222,9 @@ export function ClientCardPage() {
                         <div>
                           <div className="text-[13px] font-medium">{p.name}</div>
                           <div className="text-[11.5px] text-muted-foreground">{p.role}</div>
-                          {(p.email || p.phone) && (
+                          {(p.email || p.phone || p.telegram) && (
                             <div className="mt-0.5 text-[11px] text-muted-foreground">
-                              {[p.email, p.phone].filter(Boolean).join(' · ')}
+                              {[p.email, p.phone, p.telegram].filter(Boolean).join(' · ')}
                             </div>
                           )}
                         </div>
@@ -221,6 +244,18 @@ export function ClientCardPage() {
                             </a>
                           </Button>
                         )}
+                        {p.telegram && (
+                          <Button variant="ghost" size="icon" asChild>
+                            <a
+                              href={telegramUrl(p.telegram)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              aria-label={`Написать в Telegram ${p.name}`}
+                            >
+                              <Send className="h-3.5 w-3.5" />
+                            </a>
+                          </Button>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -233,6 +268,10 @@ export function ClientCardPage() {
               open={contactDialogOpen}
               onOpenChange={setContactDialogOpen}
             />
+
+            <Section title="Заметки">
+              <ClientNotesSection clientId={id} users={usersData ?? []} />
+            </Section>
 
             <Section title={`Вакансии · ${vacanciesData?.items.length ?? 0}`}>
               <div className="space-y-1.5">

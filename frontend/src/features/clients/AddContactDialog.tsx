@@ -25,7 +25,7 @@ export function AddContactDialog({ clientId, open, onOpenChange }: Props) {
         <DialogHeader>
           <DialogTitle>Новое контактное лицо</DialogTitle>
           <DialogDescription>
-            Укажите ФИО и должность. Email и телефон — по желанию.
+            Укажите ФИО и должность. Остальные поля — по желанию.
           </DialogDescription>
         </DialogHeader>
         <ContactForm

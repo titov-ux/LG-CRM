@@ -48,6 +48,7 @@ export function QuickCreateMenu() {
         industry: values.industry,
         accountManagerId: values.accountManagerId,
         status: values.status,
+        ...(values.telegramChat.trim() ? { telegramChat: values.telegramChat.trim() } : {}),
       },
       {
         onSuccess: (c) => {

@@ -11,6 +11,9 @@ export const activityDb: ActivityEntry[] = [
   { id: 'a2', entityType: 'candidate', entityId: 'k1', actorId: 'u4', kind: 'note', text: 'Прошёл техническое интервью на 4/5. Сильные стороны: архитектура, кэширование. Рекомендую к презентации клиенту.', createdAt: '2026-05-18T16:42:00Z' },
   { id: 'a3', entityType: 'candidate', entityId: 'k1', actorId: 'u4', kind: 'call', text: 'Скрининг-звонок 30 минут. Подтвердил готовность к гибриду в Москве.', createdAt: '2026-05-17T11:00:00Z' },
   { id: 'a4', entityType: 'candidate', entityId: 'k1', actorId: 'u4', kind: 'create', text: 'Кандидат добавлен в систему', createdAt: '2026-05-16T09:30:00Z' },
+  { id: 'a5', entityType: 'client', entityId: 'c1', actorId: 'u2', kind: 'note', text: 'Клиент готов расширять команду в Q3. Приоритет — backend и DevOps.', createdAt: '2026-05-18T14:20:00Z' },
+  { id: 'a6', entityType: 'client', entityId: 'c1', actorId: 'u2', kind: 'note', text: 'Встреча с HRD 15 мая: обсудили формат аутстаффа и SLA по закрытию позиций.', createdAt: '2026-05-15T11:05:00Z' },
+  { id: 'a7', entityType: 'client', entityId: 'c4', actorId: 'u3', kind: 'note', text: 'На паузе до утверждения бюджета на второе полугодие.', createdAt: '2026-05-12T09:00:00Z' },
 ];
 
 export const auditDb: AuditEntry[] = [

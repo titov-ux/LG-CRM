@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { clientsApi, type ClientsListParams } from '@/api/clients';
 import { usersApi } from '@/api/users';
-import type { Client, CreateContactRequest, UUID } from '@/api/types';
+import type { Client, CreateClientNoteRequest, CreateContactRequest, UUID } from '@/api/types';
 import { QUERY_DEFAULTS } from '@/lib/constants';
 
 export const clientKeys = {
@@ -9,6 +9,7 @@ export const clientKeys = {
   list: (params: ClientsListParams) => [...clientKeys.all, 'list', params] as const,
   byId: (id: UUID) => [...clientKeys.all, 'byId', id] as const,
   contacts: (id: UUID) => [...clientKeys.all, 'contacts', id] as const,
+  notes: (id: UUID) => [...clientKeys.all, 'notes', id] as const,
 };
 
 export const userKeys = {
@@ -79,6 +80,25 @@ export function useCreateContact(clientId: UUID) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: clientKeys.all });
       queryClient.invalidateQueries({ queryKey: ['contacts'] });
+    },
+  });
+}
+
+export function useClientNotes(id: UUID | undefined) {
+  return useQuery({
+    queryKey: clientKeys.notes(id ?? ''),
+    queryFn: () => clientsApi.notes(id as UUID),
+    enabled: !!id,
+    ...QUERY_DEFAULTS,
+  });
+}
+
+export function useCreateClientNote(clientId: UUID) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: CreateClientNoteRequest) => clientsApi.createNote(clientId, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: clientKeys.notes(clientId) });
     },
   });
 }

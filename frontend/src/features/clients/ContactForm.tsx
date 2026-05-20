@@ -18,6 +18,8 @@ const schema = z.object({
   role: z.string().min(2, 'Укажите должность'),
   email: z.union([z.literal(''), z.string().email('Некорректный email')]),
   phone: z.string(),
+  telegram: z.string(),
+  birthday: z.union([z.literal(''), z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Укажите корректную дату')]),
 });
 
 export type ContactFormValues = z.infer<typeof schema>;
@@ -37,6 +39,8 @@ export function ContactForm({ onSubmit, isPending, submitLabel = 'Добавит
       role: '',
       email: '',
       phone: '',
+      telegram: '',
+      birthday: '',
       ...defaultValues,
     },
   });
@@ -47,6 +51,8 @@ export function ContactForm({ onSubmit, isPending, submitLabel = 'Добавит
       role: values.role,
       ...(values.email ? { email: values.email } : {}),
       ...(values.phone ? { phone: values.phone } : {}),
+      ...(values.telegram ? { telegram: values.telegram } : {}),
+      ...(values.birthday ? { birthday: values.birthday } : {}),
     });
   };
 
@@ -100,6 +106,32 @@ export function ContactForm({ onSubmit, isPending, submitLabel = 'Добавит
               <FormLabel>Телефон</FormLabel>
               <FormControl>
                 <Input {...field} type="tel" placeholder="+7 (495) 000-00-00" autoComplete="tel" />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <FormField
+          control={form.control}
+          name="telegram"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Telegram-аккаунт</FormLabel>
+              <FormControl>
+                <Input {...field} placeholder="@username" autoComplete="off" />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <FormField
+          control={form.control}
+          name="birthday"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>День рождения (необязательно)</FormLabel>
+              <FormControl>
+                <Input {...field} type="date" />
               </FormControl>
               <FormMessage />
             </FormItem>

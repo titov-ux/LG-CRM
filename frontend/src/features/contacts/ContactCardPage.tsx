@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from '@tanstack/react-router';
-import { Building2, ChevronLeft, Copy, Edit3, Mail, MoreHorizontal, Phone, X } from 'lucide-react';
+import { Building2, ChevronLeft, Copy, Edit3, Mail, MoreHorizontal, Phone, Send, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
@@ -9,6 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import type { ContactListItem, CreateContactRequest } from '@/api/types';
 import { ContactForm, type ContactFormValues } from '@/features/clients/ContactForm';
 import { useCreateContact } from '@/features/clients/hooks';
+import { formatDateRu, telegramUrl } from '@/lib/utils';
 import { useContact, useUpdateContact } from './hooks';
 
 function toFormValues(contact: ContactListItem): Partial<ContactFormValues> {
@@ -17,6 +18,8 @@ function toFormValues(contact: ContactListItem): Partial<ContactFormValues> {
     role: contact.role,
     email: contact.email ?? '',
     phone: contact.phone ?? '',
+    telegram: contact.telegram ?? '',
+    birthday: contact.birthday ?? '',
   };
 }
 
@@ -37,6 +40,8 @@ export function ContactCardPage() {
         role: contact.role,
         ...(contact.email ? { email: contact.email } : {}),
         ...(contact.phone ? { phone: contact.phone } : {}),
+        ...(contact.telegram ? { telegram: contact.telegram } : {}),
+        ...(contact.birthday ? { birthday: contact.birthday } : {}),
       },
       {
         onSuccess: (c) => {
@@ -141,6 +146,14 @@ export function ContactCardPage() {
                       </a>
                     </Button>
                   )}
+                  {contact.telegram && (
+                    <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" asChild>
+                      <a href={telegramUrl(contact.telegram)} target="_blank" rel="noopener noreferrer">
+                        <Send className="h-3.5 w-3.5" />
+                        Telegram
+                      </a>
+                    </Button>
+                  )}
                 </div>
               </div>
 
@@ -158,6 +171,25 @@ export function ContactCardPage() {
                   }
                 />
                 <Field label="Телефон" value={contact.phone} />
+                <Field
+                  label="Telegram-аккаунт"
+                  value={
+                    contact.telegram ? (
+                      <a
+                        href={telegramUrl(contact.telegram)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary hover:underline"
+                      >
+                        {contact.telegram}
+                      </a>
+                    ) : undefined
+                  }
+                />
+                <Field
+                  label="День рождения"
+                  value={contact.birthday ? formatDateRu(contact.birthday) : undefined}
+                />
                 <Field
                   label="Клиент"
                   value={

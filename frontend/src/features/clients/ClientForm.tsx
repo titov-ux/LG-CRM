@@ -41,6 +41,7 @@ const schema = z.object({
   industry: z.string().min(2),
   accountManagerId: z.string().min(1, 'Выберите менеджера'),
   status: z.enum(['lead', 'in_progress', 'active', 'paused', 'archived']),
+  telegramChat: z.string(),
 });
 
 export type ClientFormValues = z.infer<typeof schema>;
@@ -64,6 +65,7 @@ export function ClientForm({ defaultValues, onSubmit, isPending, submitLabel = '
       industry: '',
       accountManagerId: '',
       status: 'lead',
+      telegramChat: '',
       ...defaultValues,
     } as ClientFormValues,
   });
@@ -164,6 +166,19 @@ export function ClientForm({ defaultValues, onSubmit, isPending, submitLabel = '
             <FormItem>
               <FormLabel>Отрасль</FormLabel>
               <FormControl><Input {...field} placeholder="IT, Финансы…" /></FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <FormField
+          control={form.control}
+          name="telegramChat"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Telegram-чат (необязательно)</FormLabel>
+              <FormControl>
+                <Input {...field} placeholder="@group или https://t.me/+invite" autoComplete="off" />
+              </FormControl>
               <FormMessage />
             </FormItem>
           )}

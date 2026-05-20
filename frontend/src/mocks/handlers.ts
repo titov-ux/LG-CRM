@@ -1,6 +1,6 @@
 import { http, HttpResponse } from 'msw';
 import { API_BASE_URL } from '@/lib/constants';
-import type { Candidate, CandidateStatus, Client, ContactListItem, User, Vacancy, VacancyStatus } from '@/api/types';
+import type { ActivityEntry, Candidate, CandidateStatus, Client, ContactListItem, User, Vacancy, VacancyStatus } from '@/api/types';
 import {
   activityDb,
   auditDb,
@@ -44,6 +44,13 @@ function nextKanbanOrder<T extends { status: string; kanbanOrder: number }>(db: 
   const inColumn = db.filter((x) => x.status === status);
   if (inColumn.length === 0) return 0;
   return Math.max(...inColumn.map((x) => x.kanbanOrder)) + 1;
+}
+
+function actorIdFromRequest(request: Request): string {
+  const token = request.headers.get('Authorization')?.replace(/^Bearer\s+/i, '') ?? '';
+  const fromToken = token.startsWith('mock.access.') ? token.slice('mock.access.'.length) : null;
+  if (fromToken && usersDb.some((u) => u.id === fromToken)) return fromToken;
+  return usersDb[0]?.id ?? 'u1';
 }
 
 export const handlers = [
@@ -135,6 +142,7 @@ export const handlers = [
       status: body.status ?? 'lead',
       vacanciesCount: 0,
       contactsCount: 0,
+      ...(body.telegramChat?.trim() ? { telegramChat: body.telegramChat.trim() } : {}),
     };
     clientsDb.unshift(created);
     return HttpResponse.json(created, { status: 201 });
@@ -154,12 +162,46 @@ export const handlers = [
         inn: le.inn,
       }));
     }
-    const { legalEntities: _le, ...rest } = patch;
+    const { legalEntities: _le, telegramChat, ...rest } = patch;
+    if (telegramChat !== undefined) {
+      const trimmed = telegramChat.trim();
+      if (trimmed) c.telegramChat = trimmed;
+      else delete c.telegramChat;
+    }
     Object.assign(c, rest);
     return HttpResponse.json(c);
   }),
   http.get(url('/clients/:id/contacts'), ({ params }) => {
     return HttpResponse.json(contactsDb.filter((x) => x.clientId === params.id));
+  }),
+  http.get(url('/clients/:id/notes'), ({ params }) => {
+    const notes = activityDb
+      .filter((a) => a.entityType === 'client' && a.entityId === params.id && a.kind === 'note')
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return HttpResponse.json(notes);
+  }),
+  http.post(url('/clients/:id/notes'), async ({ params, request }) => {
+    const client = clientsDb.find((x) => x.id === params.id);
+    if (!client) return new HttpResponse(null, { status: 404 });
+    const body = (await request.json()) as { text?: string };
+    const text = body.text?.trim();
+    if (!text) {
+      return HttpResponse.json({ message: 'Текст заметки обязателен' }, { status: 400 });
+    }
+    if (text.length > 1000) {
+      return HttpResponse.json({ message: 'Заметка не может быть длиннее 1000 символов' }, { status: 400 });
+    }
+    const created: ActivityEntry = {
+      id: `an-${Date.now()}`,
+      entityType: 'client',
+      entityId: params.id as string,
+      actorId: actorIdFromRequest(request),
+      kind: 'note',
+      text,
+      createdAt: new Date().toISOString(),
+    };
+    activityDb.unshift(created);
+    return HttpResponse.json(created, { status: 201 });
   }),
   http.get(url('/contacts'), ({ request }) => {
     const u = new URL(request.url);
@@ -178,7 +220,9 @@ export const handlers = [
           c.role.toLowerCase().includes(search) ||
           c.clientName.toLowerCase().includes(search) ||
           (c.email?.toLowerCase().includes(search) ?? false) ||
-          (c.phone?.includes(search) ?? false)
+          (c.phone?.includes(search) ?? false) ||
+          (c.telegram?.toLowerCase().includes(search) ?? false) ||
+          (c.birthday?.includes(search) ?? false)
         );
       });
     return HttpResponse.json(paginate(items, u.searchParams.get('page'), u.searchParams.get('pageSize')));
@@ -191,7 +235,14 @@ export const handlers = [
     return HttpResponse.json(item);
   }),
   http.patch(url('/contacts/:id'), async ({ params, request }) => {
-    const body = (await request.json()) as { name?: string; role?: string; email?: string; phone?: string };
+    const body = (await request.json()) as {
+      name?: string;
+      role?: string;
+      email?: string;
+      phone?: string;
+      telegram?: string;
+      birthday?: string;
+    };
     const contact = contactsDb.find((x) => x.id === params.id);
     if (!contact) return new HttpResponse(null, { status: 404 });
     if (body.name !== undefined) contact.name = body.name;
@@ -204,12 +255,27 @@ export const handlers = [
       if (body.phone) contact.phone = body.phone;
       else delete contact.phone;
     }
+    if (body.telegram !== undefined) {
+      if (body.telegram) contact.telegram = body.telegram;
+      else delete contact.telegram;
+    }
+    if (body.birthday !== undefined) {
+      if (body.birthday) contact.birthday = body.birthday;
+      else delete contact.birthday;
+    }
     const client = clientsDb.find((c) => c.id === contact.clientId);
     const item: ContactListItem = { ...contact, clientName: client?.name ?? '—' };
     return HttpResponse.json(item);
   }),
   http.post(url('/clients/:id/contacts'), async ({ params, request }) => {
-    const body = (await request.json()) as { name?: string; role?: string; email?: string; phone?: string };
+    const body = (await request.json()) as {
+      name?: string;
+      role?: string;
+      email?: string;
+      phone?: string;
+      telegram?: string;
+      birthday?: string;
+    };
     const clientId = params.id as string;
     const client = clientsDb.find((c) => c.id === clientId);
     if (!client) return new HttpResponse(null, { status: 404 });
@@ -221,6 +287,8 @@ export const handlers = [
       role: body.role ?? '',
       ...(body.email ? { email: body.email } : {}),
       ...(body.phone ? { phone: body.phone } : {}),
+      ...(body.telegram ? { telegram: body.telegram } : {}),
+      ...(body.birthday ? { birthday: body.birthday } : {}),
     };
     contactsDb.push(created);
     client.contactsCount += 1;

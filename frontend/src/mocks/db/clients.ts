@@ -8,6 +8,7 @@ export const clientsDb: Client[] = [
     industry: 'Ритейл',
     accountManagerId: 'u2',
     status: 'active',
+    telegramChat: 'https://t.me/+X5RetailHR',
     vacanciesCount: 8,
     contactsCount: 3,
   },
@@ -18,6 +19,7 @@ export const clientsDb: Client[] = [
     industry: 'IT-консалтинг',
     accountManagerId: 'u2',
     status: 'active',
+    telegramChat: '@t1_consulting_chat',
     vacanciesCount: 12,
     contactsCount: 5,
   },
@@ -67,8 +69,8 @@ export const clientsDb: Client[] = [
 ];
 
 export const contactsDb: Contact[] = [
-  { id: 'ct1', clientId: 'c1', name: 'Александр Петров', role: 'CTO', email: 'a.petrov@x5.ru', phone: '+7 (495) 555-01-01' },
-  { id: 'ct2', clientId: 'c1', name: 'Ирина Смирнова', role: 'HRD', email: 'i.smirnova@x5.ru', phone: '+7 (495) 555-01-02' },
+  { id: 'ct1', clientId: 'c1', name: 'Александр Петров', role: 'CTO', email: 'a.petrov@x5.ru', phone: '+7 (495) 555-01-01', telegram: '@apetrov', birthday: '1985-03-15' },
+  { id: 'ct2', clientId: 'c1', name: 'Ирина Смирнова', role: 'HRD', email: 'i.smirnova@x5.ru', phone: '+7 (495) 555-01-02', telegram: '@ismirnova', birthday: '1990-07-22' },
   { id: 'ct3', clientId: 'c1', name: 'Михаил Иванов', role: 'Project Manager', email: 'm.ivanov@x5.ru', phone: '+7 (495) 555-01-03' },
   { id: 'ct4', clientId: 'c2', name: 'Олег Захаров', role: 'Delivery Director' },
   { id: 'ct5', clientId: 'c3', name: 'Светлана Белова', role: 'HR Lead' },

@@ -40,6 +40,8 @@ export interface Client {
   industry: string;
   accountManagerId: UUID;
   status: ClientStatus;
+  /** Ссылка или @username общего Telegram-чата с клиентом */
+  telegramChat?: string;
   vacanciesCount: number;
   contactsCount: number;
 }
@@ -51,6 +53,9 @@ export interface Contact {
   role: string;
   email?: string;
   phone?: string;
+  telegram?: string;
+  /** ISO date YYYY-MM-DD */
+  birthday?: string;
 }
 
 export interface CreateContactRequest {
@@ -58,6 +63,13 @@ export interface CreateContactRequest {
   role: string;
   email?: string;
   phone?: string;
+  telegram?: string;
+  /** ISO date YYYY-MM-DD */
+  birthday?: string;
+}
+
+export interface CreateClientNoteRequest {
+  text: string;
 }
 
 export interface ContactListItem extends Contact {

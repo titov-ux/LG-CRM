@@ -44,7 +44,7 @@ export function ContactsListPage() {
               <TableRow
                 key={c.id}
                 className="cursor-pointer"
-                onClick={() => navigate({ to: '/clients/$id', params: { id: c.clientId } })}
+                onClick={() => navigate({ to: '/contacts/$id', params: { id: c.id } })}
               >
                 <TableCell className="font-semibold">{c.name}</TableCell>
                 <TableCell className="text-[12.5px] text-muted-foreground">{c.role}</TableCell>

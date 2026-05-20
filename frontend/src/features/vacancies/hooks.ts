@@ -48,6 +48,43 @@ export function useUpdateVacancy() {
   });
 }
 
+export function useReorderVacanciesKanban() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (updates: { id: UUID; status: VacancyStatus; kanbanOrder: number }[]) =>
+      vacanciesApi.reorderKanban(updates),
+    onMutate: async (updates) => {
+      await queryClient.cancelQueries({ queryKey: vacancyKeys.all });
+      const previous = queryClient.getQueriesData<{ items: Vacancy[] }>({ queryKey: vacancyKeys.all });
+      const updateMap = new Map(updates.map((u) => [u.id, u]));
+      previous.forEach(([key, data]) => {
+        if (!data?.items) return;
+        queryClient.setQueryData(key, {
+          ...data,
+          items: data.items.map((v) => {
+            const u = updateMap.get(v.id);
+            if (!u) return v;
+            const statusChanged = v.status !== u.status;
+            return {
+              ...v,
+              status: u.status,
+              kanbanOrder: u.kanbanOrder,
+              daysInStatus: statusChanged ? 0 : v.daysInStatus,
+            };
+          }),
+        });
+      });
+      return { previous };
+    },
+    onError: (_err, _vars, ctx) => {
+      ctx?.previous.forEach(([key, data]) => queryClient.setQueryData(key, data));
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: vacancyKeys.all });
+    },
+  });
+}
+
 export function useChangeVacancyStatus() {
   const queryClient = useQueryClient();
   return useMutation({

@@ -5,7 +5,7 @@ import { KanbanBoard } from '@/components/kanban/KanbanBoard';
 import type { KanbanStatusDescriptor } from '@/components/kanban/types';
 import type { VacancyStatus } from '@/api/types';
 import { vacancyStatuses } from '@/mocks/db/vacancies';
-import { useVacancies, useChangeVacancyStatus } from './hooks';
+import { useVacancies, useReorderVacanciesKanban } from './hooks';
 import { useClients } from '@/features/clients/hooks';
 import { useUsers } from '@/features/users/hooks';
 import { VacancyKanbanCard } from './VacancyKanbanCard';
@@ -32,7 +32,7 @@ export function VacanciesKanbanPage() {
   });
   const { data: usersData } = useUsers();
   const { data: clientsData } = useClients();
-  const change = useChangeVacancyStatus();
+  const reorder = useReorderVacanciesKanban();
 
   const userMap = useMemo(() => new Map((usersData ?? []).map((u) => [u.id, u])), [usersData]);
   const clientMap = useMemo(() => new Map((clientsData?.items ?? []).map((c) => [c.id, c])), [clientsData]);
@@ -61,15 +61,20 @@ export function VacanciesKanbanPage() {
       statuses={STATUSES}
       items={items}
       onCardClick={(v) => navigate({ to: '/vacancies/$id', params: { id: v.id } })}
-      onStatusChange={(id, status) => {
-        const v = items.find((x) => x.id === id);
-        change.mutate(
-          { id, status },
-          {
-            onSuccess: () => toast.success(`Вакансия «${v?.title}» — статус изменён`),
-            onError: () => toast.error('Не удалось изменить статус'),
+      onReorder={(updates) => {
+        const statusChanged = updates.find((u) => {
+          const original = items.find((x) => x.id === u.id);
+          return original && original.status !== u.status;
+        });
+        reorder.mutate(updates, {
+          onSuccess: () => {
+            if (statusChanged) {
+              const v = items.find((x) => x.id === statusChanged.id);
+              toast.success(`Вакансия «${v?.title}» — статус изменён`);
+            }
           },
-        );
+          onError: () => toast.error('Не удалось изменить порядок'),
+        });
       }}
       renderCard={(v) => (
         <VacancyKanbanCard

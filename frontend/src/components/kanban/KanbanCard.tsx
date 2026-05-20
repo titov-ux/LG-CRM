@@ -15,6 +15,18 @@ export function KanbanCard({ id, onClick, children }: Props) {
     transform: CSS.Translate.toString(transform),
     transition,
   };
+
+  if (isDragging) {
+    return (
+      <div
+        ref={setNodeRef}
+        style={style}
+        className="min-h-[88px] rounded-md border-2 border-dashed border-primary/45 bg-primary/[0.04] transition-all"
+        aria-hidden
+      />
+    );
+  }
+
   return (
     <div
       ref={setNodeRef}
@@ -23,8 +35,7 @@ export function KanbanCard({ id, onClick, children }: Props) {
       {...listeners}
       onClick={onClick}
       className={cn(
-        'group cursor-pointer rounded-md border bg-background p-2.5 shadow-[0_1px_0_rgba(15,23,42,0.02)] transition-all hover:border-slate-300 hover:shadow-[0_2px_4px_rgba(15,23,42,0.04)]',
-        isDragging && 'opacity-40',
+        'group cursor-grab rounded-md border bg-background p-2.5 shadow-[0_1px_0_rgba(15,23,42,0.02)] transition-all hover:border-slate-300 hover:shadow-[0_2px_4px_rgba(15,23,42,0.04)] active:cursor-grabbing',
       )}
     >
       {children}

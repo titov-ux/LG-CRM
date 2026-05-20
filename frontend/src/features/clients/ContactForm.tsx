@@ -26,9 +26,10 @@ interface Props {
   onSubmit: (values: CreateContactRequest) => void;
   isPending?: boolean;
   submitLabel?: string;
+  defaultValues?: Partial<ContactFormValues>;
 }
 
-export function ContactForm({ onSubmit, isPending, submitLabel = 'Добавить' }: Props) {
+export function ContactForm({ onSubmit, isPending, submitLabel = 'Добавить', defaultValues }: Props) {
   const form = useForm<ContactFormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
@@ -36,6 +37,7 @@ export function ContactForm({ onSubmit, isPending, submitLabel = 'Добавит
       role: '',
       email: '',
       phone: '',
+      ...defaultValues,
     },
   });
 

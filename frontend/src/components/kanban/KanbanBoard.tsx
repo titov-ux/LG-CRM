@@ -1,7 +1,8 @@
-import { type ReactNode, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DndContext,
   type DragEndEvent,
+  type DragOverEvent,
   type DragStartEvent,
   DragOverlay,
   PointerSensor,
@@ -10,7 +11,15 @@ import {
 } from '@dnd-kit/core';
 import { KanbanColumn } from './KanbanColumn';
 import { KanbanCard } from './KanbanCard';
-import type { KanbanItem, KanbanStatusDescriptor } from './types';
+import { createKanbanCollisionDetection } from './collisionDetection';
+import type { KanbanItem, KanbanReorderUpdate, KanbanStatusDescriptor } from './types';
+import {
+  applyKanbanPreview,
+  computeKanbanReorder,
+  diffKanbanUpdates,
+  getColumnItems,
+  getKanbanInsertModifier,
+} from './utils';
 
 interface Props<TStatus extends string, TItem extends KanbanItem<TStatus>> {
   statuses: KanbanStatusDescriptor<TStatus>[];
@@ -18,7 +27,7 @@ interface Props<TStatus extends string, TItem extends KanbanItem<TStatus>> {
   renderCard: (item: TItem) => ReactNode;
   renderOverlay?: (item: TItem) => ReactNode;
   onCardClick?: (item: TItem) => void;
-  onStatusChange: (id: string, status: TStatus) => void;
+  onReorder: (updates: KanbanReorderUpdate<TStatus>[]) => void;
   onCreate?: (status: TStatus) => void;
 }
 
@@ -28,42 +37,102 @@ export function KanbanBoard<TStatus extends string, TItem extends KanbanItem<TSt
   renderCard,
   renderOverlay,
   onCardClick,
-  onStatusChange,
+  onReorder,
   onCreate,
 }: Props<TStatus, TItem>) {
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [previewItems, setPreviewItems] = useState<TItem[] | null>(null);
+  const lastOverKeyRef = useRef<string | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
+
+  const statusIds = useMemo(() => new Set(statuses.map((s) => s.id)), [statuses]);
+  const collisionDetection = useMemo(() => createKanbanCollisionDetection(statusIds), [statusIds]);
+
+  const displayItems = previewItems ?? items;
   const active = items.find((i) => i.id === activeId);
+
+  useEffect(() => {
+    if (!activeId) setPreviewItems(null);
+  }, [activeId, items]);
 
   function handleStart(e: DragStartEvent) {
     setActiveId(e.active.id as string);
+    setPreviewItems(null);
+    lastOverKeyRef.current = null;
+  }
+
+  function handleOver(e: DragOverEvent) {
+    const { active: dragged, over } = e;
+    if (!over) return;
+
+    const overId = over.id as string;
+    const modifier = getKanbanInsertModifier(dragged, over);
+    const overKey = `${overId}:${modifier}`;
+    if (overKey === lastOverKeyRef.current) return;
+    lastOverKeyRef.current = overKey;
+
+    const next = applyKanbanPreview(items, statuses, dragged.id as string, overId, modifier);
+    const isOriginalLayout = next.every((item) => {
+      const orig = items.find((i) => i.id === item.id);
+      return orig?.status === item.status && orig?.kanbanOrder === item.kanbanOrder;
+    });
+    setPreviewItems(isOriginalLayout ? null : (next as TItem[]));
   }
 
   function handleEnd(e: DragEndEvent) {
+    const { active: dragged, over } = e;
+    const activeId = dragged.id as string;
+    const currentPreview = previewItems;
+    const lastOverKey = lastOverKeyRef.current;
+
     setActiveId(null);
-    if (!e.over) return;
-    const overId = e.over.id as string;
-    const target =
-      statuses.find((s) => s.id === overId)?.id ??
-      items.find((i) => i.id === overId)?.status ??
-      null;
-    if (!target) return;
-    const dragged = items.find((i) => i.id === e.active.id);
-    if (!dragged || dragged.status === target) return;
-    onStatusChange(dragged.id, target as TStatus);
+    setPreviewItems(null);
+    lastOverKeyRef.current = null;
+
+    if (currentPreview) {
+      const updates = diffKanbanUpdates<TItem, TStatus>(items, currentPreview);
+      if (updates.length) onReorder(updates);
+      return;
+    }
+
+    if (!over || activeId === over.id) return;
+
+    const modifier = getKanbanInsertModifier(dragged, over);
+    const lastOverId = lastOverKey?.split(':')[0];
+    const overId =
+      statusIds.has(over.id as TStatus) && lastOverId && lastOverId !== activeId
+        ? lastOverId
+        : String(over.id);
+
+    const updates = computeKanbanReorder(items, statuses, activeId, overId, modifier);
+    if (updates?.length) onReorder(updates);
+  }
+
+  function handleCancel() {
+    setActiveId(null);
+    setPreviewItems(null);
+    lastOverKeyRef.current = null;
   }
 
   return (
-    <DndContext sensors={sensors} onDragStart={handleStart} onDragEnd={handleEnd} onDragCancel={() => setActiveId(null)}>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={collisionDetection}
+      onDragStart={handleStart}
+      onDragOver={handleOver}
+      onDragEnd={handleEnd}
+      onDragCancel={handleCancel}
+    >
       <div className="flex flex-1 items-start gap-2.5 overflow-x-auto px-6 pb-6 pt-1">
         {statuses.map((status) => {
-          const columnItems = items.filter((i) => i.status === status.id);
+          const columnItems = getColumnItems(displayItems, status.id);
           return (
             <KanbanColumn
               key={status.id}
               status={status}
               count={columnItems.length}
               itemIds={columnItems.map((i) => i.id)}
+              isDragging={!!activeId}
               onCreate={onCreate ? () => onCreate(status.id) : undefined}
             >
               {columnItems.map((item) => (
@@ -76,9 +145,9 @@ export function KanbanBoard<TStatus extends string, TItem extends KanbanItem<TSt
         })}
       </div>
 
-      <DragOverlay>
+      <DragOverlay dropAnimation={{ duration: 180, easing: 'ease' }}>
         {active && (
-          <div className="rounded-md border bg-background p-2.5 shadow-md opacity-95">
+          <div className="rotate-[1deg] cursor-grabbing rounded-md border bg-background p-2.5 shadow-lg opacity-95">
             {renderOverlay ? renderOverlay(active) : renderCard(active)}
           </div>
         )}

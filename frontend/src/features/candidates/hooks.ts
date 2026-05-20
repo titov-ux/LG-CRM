@@ -47,6 +47,53 @@ export function useCreateCandidate() {
   });
 }
 
+export function useUpdateCandidate() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, payload }: { id: UUID; payload: Partial<Candidate> }) =>
+      candidatesApi.update(id, payload),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(candidateKeys.byId(updated.id), updated);
+      queryClient.invalidateQueries({ queryKey: candidateKeys.all });
+    },
+  });
+}
+
+export function useReorderCandidatesKanban() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (updates: { id: UUID; status: CandidateStatus; kanbanOrder: number }[]) =>
+      candidatesApi.reorderKanban(updates),
+    onMutate: async (updates) => {
+      await queryClient.cancelQueries({ queryKey: candidateKeys.all });
+      const previous = queryClient.getQueriesData<{ items: Candidate[] }>({ queryKey: candidateKeys.all });
+      const updateMap = new Map(updates.map((u) => [u.id, u]));
+      previous.forEach(([key, data]) => {
+        if (!data?.items) return;
+        queryClient.setQueryData(key, {
+          ...data,
+          items: data.items.map((c) => {
+            const u = updateMap.get(c.id);
+            if (!u) return c;
+            const statusChanged = c.status !== u.status;
+            return {
+              ...c,
+              status: u.status,
+              kanbanOrder: u.kanbanOrder,
+              daysInStatus: statusChanged ? 0 : c.daysInStatus,
+            };
+          }),
+        });
+      });
+      return { previous };
+    },
+    onError: (_e, _v, ctx) => {
+      ctx?.previous.forEach(([k, d]) => queryClient.setQueryData(k, d));
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: candidateKeys.all }),
+  });
+}
+
 export function useChangeCandidateStatus() {
   const queryClient = useQueryClient();
   return useMutation({

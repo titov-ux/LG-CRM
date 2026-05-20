@@ -71,12 +71,12 @@ export type Priority = 'low' | 'medium' | 'high' | 'urgent';
 
 export type VacancyStatus =
   | 'new'
-  | 'briefing'
   | 'in_work'
   | 'proposed'
   | 'interview'
   | 'offer'
   | 'closed_success'
+  | 'closed'
   | 'paused';
 
 export interface Vacancy {
@@ -95,6 +95,7 @@ export interface Vacancy {
   daysInStatus: number;
   candidatesCount: number;
   deadline: string | null;
+  kanbanOrder: number;
 }
 
 // === Candidates ===
@@ -127,6 +128,7 @@ export interface Candidate {
   hot: boolean;
   email?: string;
   phone?: string;
+  kanbanOrder: number;
 }
 
 // === Matching (vacancy_candidates) ===

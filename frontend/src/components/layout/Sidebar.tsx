@@ -14,6 +14,7 @@ import type { LucideIcon } from 'lucide-react';
 import { Link, useRouterState } from '@tanstack/react-router';
 import { cn } from '@/lib/utils';
 import { useNotifications } from '@/features/notifications/hooks';
+import { AppInfoPopover } from './AppInfoPopover';
 
 interface NavItem {
   to: string;
@@ -62,15 +63,21 @@ export function Sidebar() {
 
   return (
     <aside className="flex w-[232px] shrink-0 flex-col border-r bg-muted/30">
-      <div className="flex items-center gap-2.5 px-3.5 py-4">
-        <div className="flex h-7 w-7 items-center justify-center rounded-md bg-foreground text-[11px] font-bold tracking-tight text-background">
-          ЛГ
-        </div>
-        <div className="flex flex-col leading-tight">
-          <span className="text-[13px] font-semibold tracking-tight">Интеграция</span>
-          <span className="text-[10.5px] text-muted-foreground">CRM · 2026</span>
-        </div>
-      </div>
+      <AppInfoPopover>
+        <button
+          type="button"
+          className="flex w-full items-center gap-2.5 rounded-md px-3.5 py-4 text-left transition-colors hover:bg-background/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          aria-label="Информация о сборке"
+        >
+          <div className="flex h-7 w-7 items-center justify-center rounded-md bg-foreground text-[11px] font-bold tracking-tight text-background">
+            ЛГ
+          </div>
+          <div className="flex flex-col leading-tight">
+            <span className="text-[13px] font-semibold tracking-tight">Интеграция</span>
+            <span className="text-[10.5px] text-muted-foreground">CRM · 2026</span>
+          </div>
+        </button>
+      </AppInfoPopover>
 
       <nav className="flex-1 space-y-4 px-2 py-2">
         {GROUPS.map((group, gi) => (

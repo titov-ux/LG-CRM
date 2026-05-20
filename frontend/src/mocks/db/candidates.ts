@@ -1,4 +1,5 @@
 import type { Candidate, CandidateStatus } from '@/api/types';
+import { assignKanbanOrders } from '@/components/kanban/utils';
 
 export interface CandidateStatusDescriptor {
   id: CandidateStatus;
@@ -18,7 +19,7 @@ export const candidateStatuses: CandidateStatusDescriptor[] = [
   { id: 'reserve', label: 'Резерв', color: '#cbd5e1' },
 ];
 
-export const candidatesDb: Candidate[] = [
+export const candidatesDb: Candidate[] = assignKanbanOrders([
   { id: 'k1', fullName: 'Иван Петров', role: 'Senior Java Developer', grade: 'Senior', experienceYears: 7, stack: ['Java', 'Spring', 'Kafka', 'PostgreSQL', 'Docker'], rate: 3000, format: 'Гибрид', location: 'Москва', source: 'hh.ru', recruiterId: 'u4', status: 'presented', daysInStatus: 3, vacancyIds: ['v1'], hot: false, email: 'ivan.petrov@mail.ru', phone: '+7 (916) 555-12-23' },
   { id: 'k2', fullName: 'Алина Смирнова', role: 'Senior React Developer', grade: 'Senior', experienceYears: 6, stack: ['React', 'TypeScript', 'Next.js'], rate: 2900, format: 'Удалённо', location: 'СПб', source: 'LinkedIn', recruiterId: 'u4', status: 'client_iv', daysInStatus: 9, vacancyIds: ['v2'], hot: true },
   { id: 'k3', fullName: 'Сергей Николаев', role: 'DevOps Engineer', grade: 'Middle', experienceYears: 4, stack: ['Kubernetes', 'AWS', 'Terraform'], rate: 2500, format: 'Удалённо', location: 'Екатеринбург', source: 'Telegram', recruiterId: 'u5', status: 'recruiter_iv', daysInStatus: 2, vacancyIds: ['v3'], hot: false },
@@ -31,4 +32,4 @@ export const candidatesDb: Candidate[] = [
   { id: 'k10', fullName: 'Екатерина Беляева', role: 'Product Analyst', grade: 'Middle', experienceYears: 4, stack: ['SQL', 'Python', 'Tableau', 'PowerBI'], rate: 2400, format: 'Гибрид', location: 'Москва', source: 'hh.ru', recruiterId: 'u4', status: 'screening', daysInStatus: 5, vacancyIds: [], hot: false },
   { id: 'k11', fullName: 'Павел Морозов', role: 'Senior Backend (Java)', grade: 'Senior', experienceYears: 9, stack: ['Java', 'Spring', 'Kafka'], rate: 3100, format: 'Гибрид', location: 'Москва', source: 'Рекомендация', recruiterId: 'u5', status: 'presented', daysInStatus: 2, vacancyIds: ['v1'], hot: false },
   { id: 'k12', fullName: 'Юлия Тарасова', role: 'ML Engineer', grade: 'Senior', experienceYears: 5, stack: ['Python', 'PyTorch', 'TensorFlow'], rate: 3400, format: 'Удалённо', location: 'СПб', source: 'LinkedIn', recruiterId: 'u6', status: 'reserve', daysInStatus: 30, vacancyIds: [], hot: false },
-];
+]);

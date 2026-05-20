@@ -5,7 +5,7 @@ import { KanbanBoard } from '@/components/kanban/KanbanBoard';
 import type { KanbanStatusDescriptor } from '@/components/kanban/types';
 import type { CandidateStatus } from '@/api/types';
 import { candidateStatuses } from '@/mocks/db/candidates';
-import { useCandidates, useChangeCandidateStatus } from './hooks';
+import { useCandidates, useReorderCandidatesKanban } from './hooks';
 import { useUsers } from '@/features/users/hooks';
 import { CandidateKanbanCard } from './CandidateKanbanCard';
 import { useFiltersStore } from '@/stores/filters';
@@ -26,7 +26,7 @@ export function CandidatesKanbanPage() {
     recruiterId: recruiterId ?? undefined,
   });
   const { data: usersData } = useUsers();
-  const change = useChangeCandidateStatus();
+  const reorder = useReorderCandidatesKanban();
 
   const userMap = useMemo(() => new Map((usersData ?? []).map((u) => [u.id, u])), [usersData]);
 
@@ -52,15 +52,20 @@ export function CandidatesKanbanPage() {
       statuses={STATUSES}
       items={items}
       onCardClick={(c) => navigate({ to: '/candidates/$id', params: { id: c.id } })}
-      onStatusChange={(id, status) => {
-        const c = items.find((x) => x.id === id);
-        change.mutate(
-          { id, status },
-          {
-            onSuccess: () => toast.success(`Кандидат «${c?.fullName}» — статус изменён`),
-            onError: () => toast.error('Не удалось изменить статус'),
+      onReorder={(updates) => {
+        const statusChanged = updates.find((u) => {
+          const original = items.find((x) => x.id === u.id);
+          return original && original.status !== u.status;
+        });
+        reorder.mutate(updates, {
+          onSuccess: () => {
+            if (statusChanged) {
+              const c = items.find((x) => x.id === statusChanged.id);
+              toast.success(`Кандидат «${c?.fullName}» — статус изменён`);
+            }
           },
-        );
+          onError: () => toast.error('Не удалось изменить порядок'),
+        });
       }}
       renderCard={(c) => <CandidateKanbanCard candidate={c} recruiter={userMap.get(c.recruiterId)} />}
     />

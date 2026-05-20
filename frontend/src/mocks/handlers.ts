@@ -21,6 +21,31 @@ function paginate<T>(items: T[], pageRaw?: string | null, pageSizeRaw?: string |
   return { items: items.slice(start, start + pageSize), total: items.length, page, pageSize };
 }
 
+function sortByKanbanOrder<T extends { kanbanOrder: number }>(items: T[]) {
+  return [...items].sort((a, b) => a.kanbanOrder - b.kanbanOrder);
+}
+
+function applyKanbanReorder<T extends { id: string; status: string; kanbanOrder: number; daysInStatus: number }>(
+  db: T[],
+  updates: { id: string; status: string; kanbanOrder: number }[],
+) {
+  for (const update of updates) {
+    const item = db.find((x) => x.id === update.id);
+    if (!item) continue;
+    const statusChanged = item.status !== update.status;
+    item.status = update.status as T['status'];
+    item.kanbanOrder = update.kanbanOrder;
+    if (statusChanged) item.daysInStatus = 0;
+  }
+  return updates.map((u) => db.find((x) => x.id === u.id)).filter(Boolean) as T[];
+}
+
+function nextKanbanOrder<T extends { status: string; kanbanOrder: number }>(db: T[], status: string) {
+  const inColumn = db.filter((x) => x.status === status);
+  if (inColumn.length === 0) return 0;
+  return Math.max(...inColumn.map((x) => x.kanbanOrder)) + 1;
+}
+
 export const handlers = [
   // === Auth ===
   http.post(url('/auth/login'), async ({ request }) => {
@@ -158,6 +183,31 @@ export const handlers = [
       });
     return HttpResponse.json(paginate(items, u.searchParams.get('page'), u.searchParams.get('pageSize')));
   }),
+  http.get(url('/contacts/:id'), ({ params }) => {
+    const contact = contactsDb.find((x) => x.id === params.id);
+    if (!contact) return new HttpResponse(null, { status: 404 });
+    const client = clientsDb.find((c) => c.id === contact.clientId);
+    const item: ContactListItem = { ...contact, clientName: client?.name ?? '—' };
+    return HttpResponse.json(item);
+  }),
+  http.patch(url('/contacts/:id'), async ({ params, request }) => {
+    const body = (await request.json()) as { name?: string; role?: string; email?: string; phone?: string };
+    const contact = contactsDb.find((x) => x.id === params.id);
+    if (!contact) return new HttpResponse(null, { status: 404 });
+    if (body.name !== undefined) contact.name = body.name;
+    if (body.role !== undefined) contact.role = body.role;
+    if (body.email !== undefined) {
+      if (body.email) contact.email = body.email;
+      else delete contact.email;
+    }
+    if (body.phone !== undefined) {
+      if (body.phone) contact.phone = body.phone;
+      else delete contact.phone;
+    }
+    const client = clientsDb.find((c) => c.id === contact.clientId);
+    const item: ContactListItem = { ...contact, clientName: client?.name ?? '—' };
+    return HttpResponse.json(item);
+  }),
   http.post(url('/clients/:id/contacts'), async ({ params, request }) => {
     const body = (await request.json()) as { name?: string; role?: string; email?: string; phone?: string };
     const clientId = params.id as string;
@@ -193,7 +243,12 @@ export const handlers = [
       if (recruiterId && !v.recruiterIds.includes(recruiterId)) return false;
       return true;
     });
-    return HttpResponse.json(paginate(items, u.searchParams.get('page'), u.searchParams.get('pageSize')));
+    return HttpResponse.json(paginate(sortByKanbanOrder(items), u.searchParams.get('page'), u.searchParams.get('pageSize')));
+  }),
+  http.put(url('/vacancies/kanban-order'), async ({ request }) => {
+    const body = (await request.json()) as { updates: { id: string; status: VacancyStatus; kanbanOrder: number }[] };
+    const updated = applyKanbanReorder(vacanciesDb, body.updates);
+    return HttpResponse.json(updated);
   }),
   http.post(url('/vacancies'), async ({ request }) => {
     const body = (await request.json()) as Partial<Vacancy>;
@@ -213,6 +268,7 @@ export const handlers = [
       daysInStatus: 0,
       candidatesCount: 0,
       deadline: body.deadline ?? null,
+      kanbanOrder: nextKanbanOrder(vacanciesDb, body.status ?? 'new'),
     };
     vacanciesDb.unshift(created);
     const client = clientsDb.find((c) => c.id === created.clientId);
@@ -267,7 +323,12 @@ export const handlers = [
       if (stack && !c.stack.some((s) => s.toLowerCase().includes(stack.toLowerCase()))) return false;
       return true;
     });
-    return HttpResponse.json(paginate(items, u.searchParams.get('page'), u.searchParams.get('pageSize')));
+    return HttpResponse.json(paginate(sortByKanbanOrder(items), u.searchParams.get('page'), u.searchParams.get('pageSize')));
+  }),
+  http.put(url('/candidates/kanban-order'), async ({ request }) => {
+    const body = (await request.json()) as { updates: { id: string; status: CandidateStatus; kanbanOrder: number }[] };
+    const updated = applyKanbanReorder(candidatesDb, body.updates);
+    return HttpResponse.json(updated);
   }),
   http.post(url('/candidates'), async ({ request }) => {
     const body = (await request.json()) as Partial<Candidate>;
@@ -289,6 +350,7 @@ export const handlers = [
       hot: body.hot ?? false,
       email: body.email,
       phone: body.phone,
+      kanbanOrder: nextKanbanOrder(candidatesDb, body.status ?? 'new'),
     };
     candidatesDb.unshift(created);
     return HttpResponse.json(created, { status: 201 });

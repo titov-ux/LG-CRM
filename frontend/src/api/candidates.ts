@@ -20,4 +20,6 @@ export const candidatesApi = {
     api.patch(`candidates/${id}`, { json: payload }).json<Candidate>(),
   changeStatus: (id: UUID, status: CandidateStatus, comment?: string) =>
     api.patch(`candidates/${id}/status`, { json: { status, comment } }).json<Candidate>(),
+  reorderKanban: (updates: { id: UUID; status: CandidateStatus; kanbanOrder: number }[]) =>
+    api.put('candidates/kanban-order', { json: { updates } }).json<Candidate[]>(),
 };

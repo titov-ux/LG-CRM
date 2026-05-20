@@ -171,6 +171,16 @@ export const handlers = [
     Object.assign(c, rest);
     return HttpResponse.json(c);
   }),
+  http.delete(url('/clients/:id'), ({ params }) => {
+    const idx = clientsDb.findIndex((x) => x.id === params.id);
+    if (idx === -1) return new HttpResponse(null, { status: 404 });
+    clientsDb.splice(idx, 1);
+    // Удалить связанные контакты и сбросить clientId у вакансий клиента (вакансии сами не удаляем — это решение бизнеса).
+    for (let i = contactsDb.length - 1; i >= 0; i--) {
+      if (contactsDb[i].clientId === params.id) contactsDb.splice(i, 1);
+    }
+    return HttpResponse.json({ ok: true });
+  }),
   http.get(url('/clients/:id/contacts'), ({ params }) => {
     return HttpResponse.json(contactsDb.filter((x) => x.clientId === params.id));
   }),
@@ -267,6 +277,14 @@ export const handlers = [
     const item: ContactListItem = { ...contact, clientName: client?.name ?? '—' };
     return HttpResponse.json(item);
   }),
+  http.delete(url('/contacts/:id'), ({ params }) => {
+    const idx = contactsDb.findIndex((x) => x.id === params.id);
+    if (idx === -1) return new HttpResponse(null, { status: 404 });
+    const [removed] = contactsDb.splice(idx, 1);
+    const client = clientsDb.find((c) => c.id === removed.clientId);
+    if (client && client.contactsCount > 0) client.contactsCount -= 1;
+    return HttpResponse.json({ ok: true });
+  }),
   http.post(url('/clients/:id/contacts'), async ({ params, request }) => {
     const body = (await request.json()) as {
       name?: string;
@@ -324,11 +342,11 @@ export const handlers = [
       id: `v-${Date.now()}`,
       title: body.title ?? 'Без названия',
       clientId: body.clientId ?? '',
+      project: body.project,
       grade: body.grade ?? 'Middle',
       stack: body.stack ?? [],
       format: body.format ?? 'Гибрид',
       rateClient: body.rateClient ?? 0,
-      rateMax: body.rateMax ?? 0,
       positions: body.positions ?? 1,
       status: body.status ?? 'new',
       priority: body.priority ?? 'medium',
@@ -337,11 +355,33 @@ export const handlers = [
       candidatesCount: 0,
       deadline: body.deadline ?? null,
       kanbanOrder: nextKanbanOrder(vacanciesDb, body.status ?? 'new'),
+      description: body.description,
+      requirements: body.requirements,
     };
     vacanciesDb.unshift(created);
     const client = clientsDb.find((c) => c.id === created.clientId);
     if (client) client.vacanciesCount += 1;
     return HttpResponse.json(created, { status: 201 });
+  }),
+  // ==========================================================================
+  // [AI-MOCK] МОК-ОБРАБОТЧИК AI-РАСПОЗНАВАНИЯ БРИФА.
+  // --------------------------------------------------------------------------
+  // Когда AI-эндпоинт переедет на боевой backend:
+  //   • УДАЛИТЬ этот handler целиком (msw больше не должен перехватывать запрос),
+  //   • УДАЛИТЬ файл src/features/vacancies/parseVacancyText.ts,
+  //   • в src/features/vacancies/VacancyImportDialog.tsx убрать fallback-блок [AI-MOCK].
+  // Контракт ответа { parsed: ParsedVacancy } должен сохраниться на боевом API.
+  // ==========================================================================
+  http.post(url('/vacancies/parse-text'), async ({ request }) => {
+    const { text } = (await request.json()) as { text?: string };
+    if (!text || !text.trim()) {
+      return HttpResponse.json({ error: 'empty_text' }, { status: 400 });
+    }
+    // Динамический импорт — парсер не тянется в основной бандл моков.
+    const { parseVacancyText } = await import('@/features/vacancies/parseVacancyText');
+    const parsed = parseVacancyText(text);
+    await new Promise((r) => setTimeout(r, 700 + Math.random() * 500)); // имитация задержки LLM
+    return HttpResponse.json({ parsed });
   }),
   http.get(url('/vacancies/:id'), ({ params }) => {
     const v = vacanciesDb.find((x) => x.id === params.id);
@@ -361,6 +401,14 @@ export const handlers = [
     if (!v) return new HttpResponse(null, { status: 404 });
     Object.assign(v, patch);
     return HttpResponse.json(v);
+  }),
+  http.delete(url('/vacancies/:id'), ({ params }) => {
+    const idx = vacanciesDb.findIndex((x) => x.id === params.id);
+    if (idx === -1) return new HttpResponse(null, { status: 404 });
+    const [removed] = vacanciesDb.splice(idx, 1);
+    const client = clientsDb.find((c) => c.id === removed.clientId);
+    if (client && client.vacanciesCount > 0) client.vacanciesCount -= 1;
+    return HttpResponse.json({ ok: true });
   }),
   http.get(url('/vacancies/:id/candidates'), ({ params }) => {
     return HttpResponse.json(
@@ -441,6 +489,12 @@ export const handlers = [
     if (!c) return new HttpResponse(null, { status: 404 });
     Object.assign(c, patch);
     return HttpResponse.json(c);
+  }),
+  http.delete(url('/candidates/:id'), ({ params }) => {
+    const idx = candidatesDb.findIndex((x) => x.id === params.id);
+    if (idx === -1) return new HttpResponse(null, { status: 404 });
+    candidatesDb.splice(idx, 1);
+    return HttpResponse.json({ ok: true });
   }),
   http.get(url('/candidates/:id/activity'), ({ params }) =>
     HttpResponse.json(activityDb.filter((a) => a.entityType === 'candidate' && a.entityId === params.id)),

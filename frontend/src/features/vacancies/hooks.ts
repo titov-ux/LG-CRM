@@ -85,6 +85,23 @@ export function useReorderVacanciesKanban() {
   });
 }
 
+export function useParseVacancyText() {
+  return useMutation({
+    mutationFn: (text: string) => vacanciesApi.parseText(text),
+  });
+}
+
+export function useDeleteVacancy() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: UUID) => vacanciesApi.remove(id),
+    onSuccess: (_data, id) => {
+      queryClient.removeQueries({ queryKey: vacancyKeys.byId(id) });
+      queryClient.invalidateQueries({ queryKey: vacancyKeys.all });
+    },
+  });
+}
+
 export function useChangeVacancyStatus() {
   const queryClient = useQueryClient();
   return useMutation({

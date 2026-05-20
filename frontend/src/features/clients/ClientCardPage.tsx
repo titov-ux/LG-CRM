@@ -1,16 +1,31 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from '@tanstack/react-router';
-import { ChevronLeft, Copy, Edit3, Mail, MoreHorizontal, Phone, Plus, Send, X } from 'lucide-react';
+import { ChevronLeft, Copy, Edit3, Mail, MoreHorizontal, Phone, Plus, Send, Share2, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Separator } from '@/components/ui/separator';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { UserAvatar } from '@/components/common/UserAvatar';
 import { AddContactDialog } from './AddContactDialog';
 import { ClientForm, type ClientFormValues } from './ClientForm';
 import { ClientNotesSection } from './ClientNotesSection';
-import { useClient, useClientContacts, useCreateClient, useUpdateClient, useUsers } from './hooks';
+import { useClient, useClientContacts, useCreateClient, useDeleteClient, useUpdateClient, useUsers } from './hooks';
 import { useVacancies } from '@/features/vacancies/hooks';
 import { vacancyStatuses } from '@/mocks/db/vacancies';
 import type { Client } from '@/api/types';
@@ -57,10 +72,35 @@ export function ClientCardPage() {
   const { data: vacanciesData } = useVacancies({ clientId: id });
   const updateClient = useUpdateClient();
   const createClient = useCreateClient();
+  const deleteClient = useDeleteClient();
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   const am = usersData?.find((u) => u.id === client?.accountManagerId);
   const contactsList = contacts ?? [];
   const close = () => navigate({ to: '/clients' });
+
+  const handleShare = async () => {
+    if (!client) return;
+    const link = `${window.location.origin}/clients/${client.id}`;
+    try {
+      await navigator.clipboard.writeText(link);
+      toast.success('Ссылка на клиента скопирована');
+    } catch {
+      toast.error('Не удалось скопировать ссылку');
+    }
+  };
+
+  const handleDelete = () => {
+    if (!client) return;
+    deleteClient.mutate(client.id, {
+      onSuccess: () => {
+        toast.success(`Клиент «${client.name}» удалён`);
+        setDeleteOpen(false);
+        navigate({ to: '/clients' });
+      },
+      onError: () => toast.error('Не удалось удалить клиента'),
+    });
+  };
 
   const handleCopy = () => {
     if (!client) return;
@@ -128,7 +168,30 @@ export function ClientCardPage() {
             >
               <Copy className="h-3.5 w-3.5" />
             </Button>
-            <Button variant="ghost" size="icon"><MoreHorizontal className="h-3.5 w-3.5" /></Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" disabled={!client} aria-label="Ещё">
+                  <MoreHorizontal className="h-3.5 w-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-44">
+                <DropdownMenuItem onSelect={handleShare}>
+                  <Share2 className="mr-2 h-3.5 w-3.5" />
+                  Поделиться
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    setDeleteOpen(true);
+                  }}
+                  className="text-red-600 focus:bg-red-50 focus:text-red-700 dark:focus:bg-red-950/40"
+                >
+                  <Trash2 className="mr-2 h-3.5 w-3.5" />
+                  Удалить
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
           <Button variant="ghost" size="icon" onClick={close}><X className="h-3.5 w-3.5" /></Button>
         </div>
@@ -322,6 +385,31 @@ export function ClientCardPage() {
         )}
       </SheetContent>
     </Sheet>
+
+    <Dialog open={deleteOpen} onOpenChange={(o) => !deleteClient.isPending && setDeleteOpen(o)}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Удалить клиента?</DialogTitle>
+          <DialogDescription>
+            {client && (
+              <>
+                Клиент «<span className="font-medium text-foreground">{client.name}</span>» и все его контакты будут
+                удалены без возможности восстановления. Вакансии клиента останутся в системе.
+              </>
+            )}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="gap-2 sm:gap-2">
+          <Button variant="outline" onClick={() => setDeleteOpen(false)} disabled={deleteClient.isPending}>
+            Отмена
+          </Button>
+          <Button variant="destructive" onClick={handleDelete} disabled={deleteClient.isPending}>
+            <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+            {deleteClient.isPending ? 'Удаление…' : 'Удалить'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
     </>
   );
 }

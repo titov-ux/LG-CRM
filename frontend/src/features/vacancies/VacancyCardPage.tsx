@@ -1,17 +1,38 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from '@tanstack/react-router';
-import { ChevronLeft, ChevronRight, Copy, Edit3, MoreHorizontal, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Copy, Edit3, MoreHorizontal, Share2, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Separator } from '@/components/ui/separator';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { UserAvatar } from '@/components/common/UserAvatar';
 import { StackTags } from '@/components/common/StackTags';
 import { PriorityBadge } from '@/components/common/PriorityBadge';
 import { KanbanStatusSelect } from '@/components/kanban/KanbanStatusSelect';
 import type { VacancyStatus } from '@/api/types';
-import { useChangeVacancyStatus, useCreateVacancy, useUpdateVacancy, useVacancy } from './hooks';
+import {
+  useChangeVacancyStatus,
+  useCreateVacancy,
+  useDeleteVacancy,
+  useUpdateVacancy,
+  useVacancy,
+} from './hooks';
 import { VacancyForm, type VacancyFormValues } from './VacancyForm';
 import { useClients } from '@/features/clients/hooks';
 import { useUsers } from '@/features/users/hooks';
@@ -31,16 +52,18 @@ function toDuplicatePayload(vacancy: Vacancy): Partial<Vacancy> {
   return {
     title: `${vacancy.title} (копия)`,
     clientId: vacancy.clientId,
+    project: vacancy.project,
     grade: vacancy.grade,
     format: vacancy.format,
     priority: vacancy.priority,
     rateClient: vacancy.rateClient,
-    rateMax: vacancy.rateMax,
     positions: vacancy.positions,
     stack: [...vacancy.stack],
     deadline: vacancy.deadline,
     recruiterIds: [...vacancy.recruiterIds],
     status: 'new',
+    description: vacancy.description,
+    requirements: vacancy.requirements,
   };
 }
 
@@ -48,15 +71,17 @@ function toFormValues(vacancy: Vacancy): Partial<VacancyFormValues> {
   return {
     title: vacancy.title,
     clientId: vacancy.clientId,
+    project: vacancy.project ?? '',
     grade: vacancy.grade,
     format: vacancy.format,
     priority: vacancy.priority,
     rateClient: vacancy.rateClient,
-    rateMax: vacancy.rateMax,
     positions: vacancy.positions,
     stack: vacancy.stack.join(', '),
     deadline: vacancy.deadline ?? '',
     recruiterId: vacancy.recruiterIds[0] ?? '',
+    description: vacancy.description ?? '',
+    requirements: vacancy.requirements ?? '',
   };
 }
 
@@ -70,7 +95,9 @@ export function VacancyCardPage() {
   const updateVacancy = useUpdateVacancy();
   const createVacancy = useCreateVacancy();
   const changeStatus = useChangeVacancyStatus();
+  const deleteVacancy = useDeleteVacancy();
   const [editOpen, setEditOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   const close = () => navigate({ to: '/vacancies' });
   const client = clientsData?.items.find((c) => c.id === vacancy?.clientId);
@@ -86,6 +113,29 @@ export function VacancyCardPage() {
         onError: () => toast.error('Не удалось изменить статус'),
       },
     );
+  };
+
+  const handleShare = async () => {
+    if (!vacancy) return;
+    const link = `${window.location.origin}/vacancies/${vacancy.id}`;
+    try {
+      await navigator.clipboard.writeText(link);
+      toast.success('Ссылка на вакансию скопирована');
+    } catch {
+      toast.error('Не удалось скопировать ссылку');
+    }
+  };
+
+  const handleDelete = () => {
+    if (!vacancy) return;
+    deleteVacancy.mutate(vacancy.id, {
+      onSuccess: () => {
+        toast.success(`Вакансия «${vacancy.title}» удалена`);
+        setDeleteOpen(false);
+        navigate({ to: '/vacancies' });
+      },
+      onError: () => toast.error('Не удалось удалить вакансию'),
+    });
   };
 
   const handleCopy = () => {
@@ -104,15 +154,17 @@ export function VacancyCardPage() {
     const payload = {
       title: values.title,
       clientId: values.clientId,
+      project: values.project?.trim() || undefined,
       grade: values.grade,
       format: values.format,
       priority: values.priority,
       rateClient: Number(values.rateClient),
-      rateMax: Number(values.rateMax),
       positions: Number(values.positions),
       stack: splitStack(values.stack),
       deadline: values.deadline || null,
       recruiterIds: values.recruiterId ? [values.recruiterId] : [],
+      description: values.description?.trim() || undefined,
+      requirements: values.requirements?.trim() || undefined,
     };
     updateVacancy.mutate(
       { id: vacancy.id, payload },
@@ -153,7 +205,30 @@ export function VacancyCardPage() {
             >
               <Copy className="h-3.5 w-3.5" />
             </Button>
-            <Button variant="ghost" size="icon"><MoreHorizontal className="h-3.5 w-3.5" /></Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" disabled={!vacancy} aria-label="Ещё">
+                  <MoreHorizontal className="h-3.5 w-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-44">
+                <DropdownMenuItem onSelect={handleShare}>
+                  <Share2 className="mr-2 h-3.5 w-3.5" />
+                  Поделиться
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    setDeleteOpen(true);
+                  }}
+                  className="text-red-600 focus:bg-red-50 focus:text-red-700 dark:focus:bg-red-950/40"
+                >
+                  <Trash2 className="mr-2 h-3.5 w-3.5" />
+                  Удалить
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
           <Button variant="ghost" size="icon" onClick={close}><X className="h-3.5 w-3.5" /></Button>
         </div>
@@ -189,6 +264,7 @@ export function VacancyCardPage() {
 
             <div className="grid grid-cols-2 gap-x-7 gap-y-3.5 text-sm">
               <Field label="Клиент" value={client?.name} />
+              <Field label="Проект" value={vacancy.project} />
               <Field
                 label="Аккаунт-менеджер"
                 value={
@@ -201,10 +277,25 @@ export function VacancyCardPage() {
                 }
               />
               <Field label="Ставка для клиента" value={`${formatMoneyRub(vacancy.rateClient)} ₽/час`} />
-              <Field label="Бюджет на кандидата" value={`${formatMoneyRub(vacancy.rateMax)} ₽/час`} />
               <Field label="Позиций" value={vacancy.positions} />
               <Field label="Дедлайн" value={formatDateRu(vacancy.deadline)} />
             </div>
+
+            {vacancy.description && (
+              <Section title="Описание вакансии">
+                <p className="whitespace-pre-line text-[13.5px] leading-relaxed text-foreground/90">
+                  {vacancy.description}
+                </p>
+              </Section>
+            )}
+
+            {vacancy.requirements && (
+              <Section title="Требования">
+                <p className="whitespace-pre-line text-[13.5px] leading-relaxed text-foreground/90">
+                  {vacancy.requirements}
+                </p>
+              </Section>
+            )}
 
             <Section title="Стек технологий">
               <StackTags stack={vacancy.stack} variant="accent" />
@@ -281,6 +372,35 @@ export function VacancyCardPage() {
         )}
       </SheetContent>
     </Sheet>
+
+    <Dialog open={deleteOpen} onOpenChange={(o) => !deleteVacancy.isPending && setDeleteOpen(o)}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Удалить вакансию?</DialogTitle>
+          <DialogDescription>
+            {vacancy && (
+              <>
+                Вакансия «<span className="font-medium text-foreground">{vacancy.title}</span>» будет удалена без возможности
+                восстановления. Прикреплённые кандидаты останутся в системе.
+              </>
+            )}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="gap-2 sm:gap-2">
+          <Button variant="outline" onClick={() => setDeleteOpen(false)} disabled={deleteVacancy.isPending}>
+            Отмена
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={handleDelete}
+            disabled={deleteVacancy.isPending}
+          >
+            <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+            {deleteVacancy.isPending ? 'Удаление…' : 'Удалить'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
     </>
   );
 }

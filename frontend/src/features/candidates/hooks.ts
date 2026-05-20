@@ -59,6 +59,17 @@ export function useUpdateCandidate() {
   });
 }
 
+export function useDeleteCandidate() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: UUID) => candidatesApi.remove(id),
+    onSuccess: (_data, id) => {
+      queryClient.removeQueries({ queryKey: candidateKeys.byId(id) });
+      queryClient.invalidateQueries({ queryKey: candidateKeys.all });
+    },
+  });
+}
+
 export function useReorderCandidatesKanban() {
   const queryClient = useQueryClient();
   return useMutation({

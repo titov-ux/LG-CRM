@@ -14,4 +14,5 @@ export const contactsApi = {
   byId: (id: UUID) => api.get(`contacts/${id}`).json<ContactListItem>(),
   update: (id: UUID, payload: CreateContactRequest) =>
     api.patch(`contacts/${id}`, { json: payload }).json<ContactListItem>(),
+  remove: (id: UUID) => api.delete(`contacts/${id}`).json<{ ok: true }>(),
 };

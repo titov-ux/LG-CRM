@@ -1,8 +1,13 @@
+import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
+import { Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { VacancyImportDialog } from './VacancyImportDialog';
+import type { ParsedVacancy } from './types';
 import {
   Form,
   FormControl,
@@ -36,15 +41,17 @@ const PRIORITIES: { id: Priority; label: string }[] = [
 const schema = z.object({
   title: z.string().min(2, 'Минимум 2 символа'),
   clientId: z.string().min(1, 'Выберите клиента'),
+  project: z.string().optional(),
   grade: z.enum(['Junior', 'Middle', 'Senior', 'Lead']),
   format: z.enum(['Удалённо', 'Гибрид', 'Офис']),
   priority: z.enum(['low', 'medium', 'high', 'urgent']),
   rateClient: z.coerce.number().positive('Должно быть больше 0'),
-  rateMax: z.coerce.number().positive('Должно быть больше 0'),
   positions: z.coerce.number().int().positive(),
   stack: z.string().optional(),
   deadline: z.string().optional(),
   recruiterId: z.string().optional(),
+  description: z.string().optional(),
+  requirements: z.string().optional(),
 });
 
 export type VacancyFormValues = z.infer<typeof schema>;
@@ -60,27 +67,64 @@ export function VacancyForm({ defaultValues, onSubmit, isPending, submitLabel = 
   const { data: clientsData } = useClients();
   const { data: users } = useUsers();
   const recruiters = (users ?? []).filter((u) => u.role === 'recruiter');
+  const [importOpen, setImportOpen] = useState(false);
 
   const form = useForm<VacancyFormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
       title: '',
       clientId: '',
-      grade: 'Middle',
-      format: 'Гибрид',
+      project: '',
+      grade: 'Senior',
+      format: 'Удалённо',
       priority: 'medium',
       positions: 1,
       rateClient: 0,
-      rateMax: 0,
       stack: '',
       deadline: '',
       recruiterId: '',
+      description: '',
+      requirements: '',
       ...defaultValues,
     } as VacancyFormValues,
   });
 
+  const applyParsed = (parsed: ParsedVacancy) => {
+    const setIf = (key: keyof VacancyFormValues, value: unknown) => {
+      if (value !== undefined && value !== '' && value !== null) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        form.setValue(key, value as any, { shouldDirty: true, shouldValidate: false });
+      }
+    };
+    setIf('title', parsed.title);
+    setIf('project', parsed.project);
+    setIf('grade', parsed.grade);
+    setIf('format', parsed.format);
+    setIf('priority', parsed.priority);
+    setIf('deadline', parsed.deadline);
+    setIf('rateClient', parsed.rateClient);
+    setIf('stack', parsed.stack);
+    setIf('description', parsed.description);
+    setIf('requirements', parsed.requirements);
+  };
+
   return (
     <Form {...form}>
+      <div className="mb-3 flex justify-start">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => setImportOpen(true)}
+          className="gap-1.5"
+        >
+          <Sparkles className="h-3.5 w-3.5 text-violet-500" />
+          Распознать из текста
+        </Button>
+      </div>
+
+      <VacancyImportDialog open={importOpen} onOpenChange={setImportOpen} onApply={applyParsed} />
+
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
         <FormField
           control={form.control}
@@ -110,6 +154,20 @@ export function VacancyForm({ defaultValues, onSubmit, isPending, submitLabel = 
                   ))}
                 </SelectContent>
               </Select>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={form.control}
+          name="project"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Проект</FormLabel>
+              <FormControl>
+                <Input {...field} placeholder="Например, Биллинг или Mobile Banking" />
+              </FormControl>
               <FormMessage />
             </FormItem>
           )}
@@ -150,24 +208,13 @@ export function VacancyForm({ defaultValues, onSubmit, isPending, submitLabel = 
           />
         </div>
 
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 gap-3">
           <FormField
             control={form.control}
             name="rateClient"
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Ставка клиента (₽/ч)</FormLabel>
-                <FormControl><Input type="number" min={0} {...field} /></FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-          <FormField
-            control={form.control}
-            name="rateMax"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Бюджет кандидата (₽/ч)</FormLabel>
                 <FormControl><Input type="number" min={0} {...field} /></FormControl>
                 <FormMessage />
               </FormItem>
@@ -243,6 +290,42 @@ export function VacancyForm({ defaultValues, onSubmit, isPending, submitLabel = 
               <FormLabel>Стек</FormLabel>
               <FormControl>
                 <Input {...field} placeholder="Java, Spring, Kafka, PostgreSQL" />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={form.control}
+          name="description"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Описание вакансии</FormLabel>
+              <FormControl>
+                <Textarea
+                  {...field}
+                  rows={5}
+                  placeholder="Чем занимается команда, что за проект, особенности работы…"
+                />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={form.control}
+          name="requirements"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Требования</FormLabel>
+              <FormControl>
+                <Textarea
+                  {...field}
+                  rows={6}
+                  placeholder={'Обязательно:\n— …\n\nЖелательно:\n— …'}
+                />
               </FormControl>
               <FormMessage />
             </FormItem>

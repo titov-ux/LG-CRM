@@ -1,12 +1,27 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from '@tanstack/react-router';
 import { toast } from 'sonner';
-import { ArrowRight, ChevronLeft, Copy, Edit3, Mail, MessageCircle, MoreHorizontal, Phone, Plus, X } from 'lucide-react';
+import { ArrowRight, ChevronLeft, Copy, Edit3, Mail, MessageCircle, MoreHorizontal, Phone, Plus, Share2, Trash2, X } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { UserAvatar } from '@/components/common/UserAvatar';
 import { StackTags } from '@/components/common/StackTags';
 import { KanbanStatusSelect } from '@/components/kanban/KanbanStatusSelect';
@@ -18,6 +33,7 @@ import {
   useCandidateActivity,
   useChangeCandidateStatus,
   useCreateCandidate,
+  useDeleteCandidate,
   useUpdateCandidate,
 } from './hooks';
 import { useUsers } from '@/features/users/hooks';
@@ -85,9 +101,34 @@ export function CandidateCardPage() {
   const changeStatus = useChangeCandidateStatus();
   const createCandidate = useCreateCandidate();
   const updateCandidate = useUpdateCandidate();
+  const deleteCandidate = useDeleteCandidate();
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   const close = () => navigate({ to: '/candidates' });
   const recruiter = usersData?.find((u) => u.id === candidate?.recruiterId);
+
+  const handleShare = async () => {
+    if (!candidate) return;
+    const link = `${window.location.origin}/candidates/${candidate.id}`;
+    try {
+      await navigator.clipboard.writeText(link);
+      toast.success('Ссылка на кандидата скопирована');
+    } catch {
+      toast.error('Не удалось скопировать ссылку');
+    }
+  };
+
+  const handleDelete = () => {
+    if (!candidate) return;
+    deleteCandidate.mutate(candidate.id, {
+      onSuccess: () => {
+        toast.success(`Кандидат «${candidate.fullName}» удалён`);
+        setDeleteOpen(false);
+        navigate({ to: '/candidates' });
+      },
+      onError: () => toast.error('Не удалось удалить кандидата'),
+    });
+  };
 
   const handleCopy = () => {
     if (!candidate) return;
@@ -166,7 +207,30 @@ export function CandidateCardPage() {
             >
               <Copy className="h-3.5 w-3.5" />
             </Button>
-            <Button variant="ghost" size="icon"><MoreHorizontal className="h-3.5 w-3.5" /></Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" disabled={!candidate} aria-label="Ещё">
+                  <MoreHorizontal className="h-3.5 w-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-44">
+                <DropdownMenuItem onSelect={handleShare}>
+                  <Share2 className="mr-2 h-3.5 w-3.5" />
+                  Поделиться
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    setDeleteOpen(true);
+                  }}
+                  className="text-red-600 focus:bg-red-50 focus:text-red-700 dark:focus:bg-red-950/40"
+                >
+                  <Trash2 className="mr-2 h-3.5 w-3.5" />
+                  Удалить
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
           <Button variant="ghost" size="icon" onClick={close}><X className="h-3.5 w-3.5" /></Button>
         </div>
@@ -280,6 +344,31 @@ export function CandidateCardPage() {
         )}
       </SheetContent>
     </Sheet>
+
+    <Dialog open={deleteOpen} onOpenChange={(o) => !deleteCandidate.isPending && setDeleteOpen(o)}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Удалить кандидата?</DialogTitle>
+          <DialogDescription>
+            {candidate && (
+              <>
+                Кандидат «<span className="font-medium text-foreground">{candidate.fullName}</span>» будет удалён без возможности
+                восстановления. Связи с вакансиями также пропадут.
+              </>
+            )}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="gap-2 sm:gap-2">
+          <Button variant="outline" onClick={() => setDeleteOpen(false)} disabled={deleteCandidate.isPending}>
+            Отмена
+          </Button>
+          <Button variant="destructive" onClick={handleDelete} disabled={deleteCandidate.isPending}>
+            <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+            {deleteCandidate.isPending ? 'Удаление…' : 'Удалить'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
     </>
   );
 }

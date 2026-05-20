@@ -39,3 +39,17 @@ export function useUpdateContact() {
     },
   });
 }
+
+export function useDeleteContact() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id }: { id: UUID; clientId?: UUID }) => contactsApi.remove(id),
+    onSuccess: (_data, { id, clientId }) => {
+      queryClient.removeQueries({ queryKey: contactKeys.detail(id) });
+      queryClient.invalidateQueries({ queryKey: contactKeys.all });
+      if (clientId) {
+        queryClient.invalidateQueries({ queryKey: clientKeys.contacts(clientId) });
+      }
+    },
+  });
+}

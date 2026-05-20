@@ -95,11 +95,12 @@ export interface Vacancy {
   id: UUID;
   title: string;
   clientId: UUID;
+  /** Название проекта у клиента — у одного клиента их может быть несколько. */
+  project?: string;
   grade: Grade;
   stack: string[];
   format: WorkFormat;
   rateClient: number;
-  rateMax: number;
   positions: number;
   status: VacancyStatus;
   priority: Priority;
@@ -108,6 +109,10 @@ export interface Vacancy {
   candidatesCount: number;
   deadline: string | null;
   kanbanOrder: number;
+  /** Свободное описание вакансии: задачи, проект, особенности */
+  description?: string;
+  /** Требования к кандидату: обязательные и желательные */
+  requirements?: string;
 }
 
 // === Candidates ===

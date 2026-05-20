@@ -18,6 +18,7 @@ export const candidatesApi = {
   create: (payload: Partial<Candidate>) => api.post('candidates', { json: payload }).json<Candidate>(),
   update: (id: UUID, payload: Partial<Candidate>) =>
     api.patch(`candidates/${id}`, { json: payload }).json<Candidate>(),
+  remove: (id: UUID) => api.delete(`candidates/${id}`).json<{ ok: true }>(),
   changeStatus: (id: UUID, status: CandidateStatus, comment?: string) =>
     api.patch(`candidates/${id}/status`, { json: { status, comment } }).json<Candidate>(),
   reorderKanban: (updates: { id: UUID; status: CandidateStatus; kanbanOrder: number }[]) =>

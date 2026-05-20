@@ -65,15 +65,17 @@ export function QuickCreateMenu() {
     const payload = {
       title: values.title,
       clientId: values.clientId,
+      project: values.project?.trim() || undefined,
       grade: values.grade,
       format: values.format,
       priority: values.priority,
       rateClient: Number(values.rateClient),
-      rateMax: Number(values.rateMax),
       positions: Number(values.positions),
       stack: splitStack(values.stack),
       deadline: values.deadline || null,
       recruiterIds: values.recruiterId ? [values.recruiterId] : [],
+      description: values.description?.trim() || undefined,
+      requirements: values.requirements?.trim() || undefined,
     };
     createVacancy.mutate(payload, {
       onSuccess: (v) => {

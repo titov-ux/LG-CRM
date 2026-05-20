@@ -73,6 +73,18 @@ export function useUpdateClient() {
   });
 }
 
+export function useDeleteClient() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: UUID) => clientsApi.remove(id),
+    onSuccess: (_data, id) => {
+      queryClient.removeQueries({ queryKey: clientKeys.byId(id) });
+      queryClient.invalidateQueries({ queryKey: clientKeys.all });
+      queryClient.invalidateQueries({ queryKey: ['contacts'] });
+    },
+  });
+}
+
 export function useCreateContact(clientId: UUID) {
   const queryClient = useQueryClient();
   return useMutation({

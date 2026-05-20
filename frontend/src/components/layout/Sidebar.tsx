@@ -4,6 +4,7 @@ import {
   Briefcase,
   Building2,
   ContactRound,
+  FileText,
   Inbox,
   Settings,
   ShieldCheck,
@@ -38,6 +39,10 @@ const GROUPS: NavGroup[] = [
       { to: '/clients', label: 'Клиенты', icon: Building2 },
       { to: '/contacts', label: 'Контакты', icon: ContactRound },
     ],
+  },
+  {
+    label: 'База знаний',
+    items: [{ to: '/documents', label: 'Документы', icon: FileText }],
   },
   {
     label: 'Прочее',

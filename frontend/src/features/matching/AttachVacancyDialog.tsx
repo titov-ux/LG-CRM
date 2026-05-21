@@ -1,17 +1,34 @@
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { CalendarDays, Users } from 'lucide-react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { AlertTriangle, CalendarDays, Users } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { EngagementBadge } from '@/components/common/EngagementBadge';
 import { useVacancies } from '@/features/vacancies/hooks';
 import { useClients } from '@/features/clients/hooks';
 import { useCandidate } from '@/features/candidates/hooks';
 import { vacancyStatuses } from '@/mocks/db/vacancies';
 import { formatMoneyRub } from '@/lib/utils';
 import { cn } from '@/lib/utils';
+import { engagementLabel } from '@/lib/engagement';
 import { useAttachCandidate } from './hooks';
-import type { Priority, UUID, Vacancy, VacancyStatus } from '@/api/types';
+import { MarginBadge } from './MarginBadge';
+import {
+  DEFAULT_HOURS_PER_MONTH,
+  candidateSalaryExceedsVacancyMax,
+  pairSupportsMargin,
+} from '@/lib/compensation';
+import type { Candidate, Priority, UUID, Vacancy, VacancyStatus } from '@/api/types';
 
 interface Props {
   open: boolean;
@@ -50,19 +67,35 @@ function normalizeStack(stack: string[]): Set<string> {
   return new Set(stack.map((s) => s.toLowerCase().trim()));
 }
 
+function readSavedHoursPerMonth(): number {
+  if (typeof window === 'undefined') return DEFAULT_HOURS_PER_MONTH;
+  const raw = window.localStorage.getItem('crm:hoursPerMonth');
+  const n = raw ? Number(raw) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_HOURS_PER_MONTH;
+}
+
 export function AttachVacancyDialog({ open, onOpenChange, candidateId, excludeIds = [] }: Props) {
   const [search, setSearch] = useState('');
+  const [showAllTypes, setShowAllTypes] = useState(false);
+  // Вакансия, к которой кандидат хочет привязаться, но его оклад выше «Оклад до» —
+  // ждём подтверждения. null = диалог подтверждения закрыт.
+  const [salaryConfirmFor, setSalaryConfirmFor] = useState<Vacancy | null>(null);
   const { data: candidate } = useCandidate(candidateId);
   const { data, isLoading } = useVacancies({ search });
   const { data: clientsData } = useClients();
   const attach = useAttachCandidate();
+  // Часы в месяц — единый параметр расчёта маржи, задаётся в карточке вакансии.
+  const hoursPerMonth = useMemo(
+    () => (open ? readSavedHoursPerMonth() : DEFAULT_HOURS_PER_MONTH),
+    [open],
+  );
 
   const candidateStackSet = useMemo(
     () => normalizeStack(candidate?.stack ?? []),
     [candidate?.stack],
   );
 
-  // Считаем match-скор и сортируем: совпадения → активные → ближе дедлайн → выше приоритет.
+  // Считаем match-скор и сортируем: тип сделки → совпадения → дедлайн → приоритет.
   const items = useMemo(() => {
     const excludeSet = new Set(excludeIds);
     const priorityRank: Record<Priority, number> = { urgent: 0, high: 1, medium: 2, low: 3 };
@@ -70,14 +103,17 @@ export function AttachVacancyDialog({ open, onOpenChange, candidateId, excludeId
     const filtered = (data?.items ?? [])
       .filter((v) => !excludeSet.has(v.id))
       .filter((v) => ACTIVE_STATUSES.includes(v.status))
+      .filter((v) => showAllTypes || !candidate || v.engagementType === candidate.engagementType)
       .map((v) => {
         const matches = v.stack.filter((s) => candidateStackSet.has(s.toLowerCase().trim()));
         const gradeMatch = candidate?.grade === v.grade;
         const score = matches.length + (gradeMatch ? 0.5 : 0);
-        return { vacancy: v, matches, score, gradeMatch };
+        const typeMismatch = !!candidate && v.engagementType !== candidate.engagementType;
+        return { vacancy: v, matches, score, gradeMatch, typeMismatch };
       });
 
     filtered.sort((a, b) => {
+      if (a.typeMismatch !== b.typeMismatch) return a.typeMismatch ? 1 : -1;
       if (b.score !== a.score) return b.score - a.score;
       // Ближе дедлайн — выше; null дедлайны в самый конец.
       const ad = a.vacancy.deadline ? Date.parse(a.vacancy.deadline) : Infinity;
@@ -87,9 +123,42 @@ export function AttachVacancyDialog({ open, onOpenChange, candidateId, excludeId
     });
 
     return filtered;
-  }, [data?.items, excludeIds, candidateStackSet, candidate?.grade]);
+  }, [data?.items, excludeIds, candidateStackSet, candidate, showAllTypes]);
+
+  const hiddenByTypeCount = useMemo(() => {
+    if (!candidate || showAllTypes) return 0;
+    return (data?.items ?? [])
+      .filter((v) => !excludeIds.includes(v.id))
+      .filter((v) => ACTIVE_STATUSES.includes(v.status))
+      .filter((v) => v.engagementType !== candidate.engagementType).length;
+  }, [data?.items, excludeIds, candidate, showAllTypes]);
 
   const clientName = (id: UUID) => clientsData?.items.find((c) => c.id === id)?.name;
+
+  // Выполняем привязку (используется и из обычного клика, и из confirm-диалога).
+  const runAttach = (v: Vacancy) => {
+    attach.mutate(
+      { vacancyId: v.id, candidateId },
+      {
+        onSuccess: () => {
+          toast.success(`Прикреплён к вакансии «${v.title}»`);
+          setSalaryConfirmFor(null);
+          onOpenChange(false);
+        },
+        onError: () => toast.error('Не удалось прикрепить к вакансии'),
+      },
+    );
+  };
+
+  // Клик по «Прикрепить»: для агентской вакансии с превышением оклада сначала
+  // спрашиваем подтверждение, в остальных случаях привязываем сразу.
+  const handleAttachClick = (v: Vacancy) => {
+    if (candidate && candidateSalaryExceedsVacancyMax(v, candidate)) {
+      setSalaryConfirmFor(v);
+      return;
+    }
+    runAttach(v);
+  };
 
   return (
     <Dialog
@@ -101,7 +170,14 @@ export function AttachVacancyDialog({ open, onOpenChange, candidateId, excludeId
     >
       <DialogContent className="max-w-2xl gap-3 p-0">
         <DialogHeader className="border-b px-5 py-4">
-          <DialogTitle className="text-[15px]">Прикрепить к вакансии</DialogTitle>
+          <DialogTitle className="text-[15px]">
+            Прикрепить к вакансии
+            {candidate && (
+              <span className="ml-2 align-middle">
+                <EngagementBadge type={candidate.engagementType} variant="chip" />
+              </span>
+            )}
+          </DialogTitle>
         </DialogHeader>
 
         <div className="space-y-2.5 px-5">
@@ -112,7 +188,18 @@ export function AttachVacancyDialog({ open, onOpenChange, candidateId, excludeId
             autoFocus
             className="h-9"
           />
-          <div className="flex items-center justify-end text-[11.5px] text-muted-foreground">
+          <div className="flex items-center justify-between gap-2 text-[11.5px] text-muted-foreground">
+            <label className="inline-flex cursor-pointer items-center gap-2">
+              <Switch checked={showAllTypes} onCheckedChange={setShowAllTypes} />
+              <span>
+                Показать все типы
+                {hiddenByTypeCount > 0 && !showAllTypes && (
+                  <span className="ml-1 text-muted-foreground/70">
+                    (скрыто {hiddenByTypeCount})
+                  </span>
+                )}
+              </span>
+            </label>
             <span className="tnum">
               {items.length} {pluralize(items.length, 'вакансия', 'вакансии', 'вакансий')}
             </span>
@@ -129,31 +216,105 @@ export function AttachVacancyDialog({ open, onOpenChange, candidateId, excludeId
                 : 'Активных вакансий нет'}
             </div>
           ) : (
-            items.map(({ vacancy: v, matches, gradeMatch }) => (
-              <VacancyRow
-                key={v.id}
-                vacancy={v}
-                clientName={clientName(v.clientId)}
-                matches={matches}
-                candidateStackSet={candidateStackSet}
-                gradeMatch={gradeMatch}
-                pending={attach.isPending}
-                onAttach={() =>
-                  attach.mutate(
-                    { vacancyId: v.id, candidateId },
-                    {
-                      onSuccess: () => {
-                        toast.success(`Прикреплён к вакансии «${v.title}»`);
-                        onOpenChange(false);
-                      },
-                      onError: () => toast.error('Не удалось прикрепить к вакансии'),
-                    },
-                  )
-                }
-              />
-            ))
+            <TooltipProvider delayDuration={150}>
+              {items.map(({ vacancy: v, matches, gradeMatch, typeMismatch }) => (
+                <VacancyRow
+                  key={v.id}
+                  vacancy={v}
+                  candidate={candidate}
+                  hoursPerMonth={hoursPerMonth}
+                  clientName={clientName(v.clientId)}
+                  matches={matches}
+                  candidateStackSet={candidateStackSet}
+                  gradeMatch={gradeMatch}
+                  typeMismatch={typeMismatch}
+                  salaryExceeded={!!candidate && candidateSalaryExceedsVacancyMax(v, candidate)}
+                  pending={attach.isPending}
+                  onAttach={() => handleAttachClick(v)}
+                />
+              ))}
+            </TooltipProvider>
           )}
         </div>
+      </DialogContent>
+
+      {/* Подтверждение: оклад кандидата выше «Оклад до» по агентской вакансии. */}
+      <SalaryExceedConfirmDialog
+        candidate={candidate}
+        vacancy={salaryConfirmFor}
+        pending={attach.isPending}
+        onCancel={() => setSalaryConfirmFor(null)}
+        onConfirm={() => {
+          if (salaryConfirmFor) runAttach(salaryConfirmFor);
+        }}
+      />
+    </Dialog>
+  );
+}
+
+interface SalaryConfirmProps {
+  candidate: Candidate | undefined;
+  vacancy: Vacancy | null;
+  pending: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}
+
+/** Подтверждение прикрепления при превышении оклада. См. AttachCandidateDialog. */
+function SalaryExceedConfirmDialog({
+  candidate,
+  vacancy,
+  pending,
+  onCancel,
+  onConfirm,
+}: SalaryConfirmProps) {
+  const open = !!candidate && !!vacancy && vacancy.salaryMax != null;
+  if (!candidate || !vacancy || vacancy.salaryMax == null) {
+    return (
+      <Dialog open={open} onOpenChange={(o) => !o && onCancel()}>
+        <DialogContent className="max-w-sm" />
+      </Dialog>
+    );
+  }
+  const diff = candidate.rateMonth - vacancy.salaryMax;
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onCancel()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-[15px]">
+            <AlertTriangle className="h-4 w-4 text-amber-600" />
+            Оклад кандидата выше «Оклад до»
+          </DialogTitle>
+          <DialogDescription className="pt-1 text-[13px]">
+            Ожидаемый оклад{' '}
+            <span className="font-medium text-foreground">{candidate.fullName}</span> —{' '}
+            <span className="font-medium text-foreground tnum">
+              {formatMoneyRub(candidate.rateMonth)} ₽/мес
+            </span>
+            , что выше «Оклад до» по вакансии «{vacancy.title}» (
+            <span className="font-medium text-foreground tnum">
+              {formatMoneyRub(vacancy.salaryMax)} ₽/мес
+            </span>
+            ) на{' '}
+            <span className="font-medium text-amber-700 tnum">
+              {formatMoneyRub(diff)} ₽
+            </span>
+            . Точно прикрепить?
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="gap-2 sm:gap-2">
+          <Button variant="outline" size="sm" onClick={onCancel} disabled={pending}>
+            Отмена
+          </Button>
+          <Button
+            size="sm"
+            onClick={onConfirm}
+            disabled={pending}
+            className="bg-amber-600 text-white hover:bg-amber-700"
+          >
+            Всё равно прикрепить
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
@@ -161,26 +322,45 @@ export function AttachVacancyDialog({ open, onOpenChange, candidateId, excludeId
 
 interface RowProps {
   vacancy: Vacancy;
+  candidate: Candidate | undefined;
+  hoursPerMonth: number;
   clientName: string | undefined;
   matches: string[];
   candidateStackSet: Set<string>;
   gradeMatch: boolean;
+  typeMismatch: boolean;
+  /** Оклад кандидата выше «Оклад до» по агентской вакансии. */
+  salaryExceeded: boolean;
   pending: boolean;
   onAttach: () => void;
 }
 
-function VacancyRow({ vacancy, clientName, matches, candidateStackSet, gradeMatch, pending, onAttach }: RowProps) {
+function VacancyRow({
+  vacancy,
+  candidate,
+  hoursPerMonth,
+  clientName,
+  matches,
+  candidateStackSet,
+  gradeMatch,
+  typeMismatch,
+  salaryExceeded,
+  pending,
+  onAttach,
+}: RowProps) {
   const isInactive = !ACTIVE_STATUSES.includes(vacancy.status);
   const showPriority = vacancy.priority === 'high' || vacancy.priority === 'urgent';
   const deadline = shortDate(vacancy.deadline);
   const matchTotal = vacancy.stack.length;
   const hasMatches = matches.length > 0;
+  const blocked = typeMismatch;
 
   return (
     <div
       className={cn(
         'group rounded-md border bg-card px-3 py-2.5 transition-colors hover:bg-muted/40',
         isInactive && 'opacity-70',
+        blocked && 'opacity-60',
       )}
     >
       {/* Шапка: статус-точка, заголовок, мета справа */}
@@ -195,6 +375,7 @@ function VacancyRow({ vacancy, clientName, matches, candidateStackSet, gradeMatc
           <div className="truncate text-[13.5px] font-semibold leading-tight">{vacancy.title}</div>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
+          <EngagementBadge type={vacancy.engagementType} />
           {hasMatches && (
             <span
               className={cn(
@@ -262,8 +443,39 @@ function VacancyRow({ vacancy, clientName, matches, candidateStackSet, gradeMatc
 
       {/* Нижняя мета + кнопка */}
       <div className="mt-2 flex items-center justify-between gap-3 text-[11.5px] text-muted-foreground">
-        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 tnum">
-          <span className="font-medium text-foreground">{formatMoneyRub(vacancy.rateClient)} ₽/ч</span>
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-0.5 tnum">
+          <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
+            {vacancy.engagementType === 'agency'
+              ? vacancy.salaryMax
+                ? `до ${formatMoneyRub(vacancy.salaryMax)} ₽/мес`
+                : '—'
+              : `${formatMoneyRub(vacancy.rateClient)} ₽/ч`}
+            {candidate && pairSupportsMargin(vacancy, candidate) && (
+              <MarginBadge
+                vacancy={vacancy}
+                candidate={candidate}
+                hoursPerMonth={hoursPerMonth}
+                size="sm"
+              />
+            )}
+            {salaryExceeded && candidate && vacancy.salaryMax != null && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span
+                    className="inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 text-[10.5px] font-medium leading-4 text-amber-700 ring-1 ring-inset ring-amber-200/70"
+                    tabIndex={0}
+                  >
+                    <AlertTriangle className="h-3 w-3" />
+                    Оклад выше
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent side="top">
+                  Ожидаемый оклад кандидата {formatMoneyRub(candidate.rateMonth)} ₽/мес выше «Оклад до»{' '}
+                  {formatMoneyRub(vacancy.salaryMax)} ₽/мес по вакансии.
+                </TooltipContent>
+              </Tooltip>
+            )}
+          </span>
           <span className="inline-flex items-center gap-1">
             <Users className="h-3 w-3" />
             {vacancy.positions} {pluralize(vacancy.positions, 'позиция', 'позиции', 'позиций')}
@@ -278,16 +490,37 @@ function VacancyRow({ vacancy, clientName, matches, candidateStackSet, gradeMatc
             </span>
           )}
         </div>
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-7 px-2.5 text-xs opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100 data-[pending=true]:opacity-100"
-          data-pending={pending}
-          onClick={onAttach}
-          disabled={pending}
-        >
-          Прикрепить
-        </Button>
+        {blocked && candidate ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span tabIndex={0}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 px-2.5 text-xs opacity-100"
+                  disabled
+                >
+                  Прикрепить
+                </Button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="left">
+              Тип вакансии ({engagementLabel(vacancy.engagementType)}) не совпадает с типом кандидата (
+              {engagementLabel(candidate.engagementType)}).
+            </TooltipContent>
+          </Tooltip>
+        ) : (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 px-2.5 text-xs opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100 data-[pending=true]:opacity-100"
+            data-pending={pending}
+            onClick={onAttach}
+            disabled={pending}
+          >
+            Прикрепить
+          </Button>
+        )}
       </div>
     </div>
   );

@@ -37,9 +37,14 @@ export function CommentsSection({ entityType, entityId }: Props) {
   const usersList = users ?? [];
 
   // Разбиваем комментарии на корневые и ответы.
+  // Корневые сортируем по убыванию даты — новые сверху, как в большинстве лент.
+  // Ответы внутри ветки сортируются ниже по возрастанию (логика диалога), это
+  // не меняется.
   const { roots, replies } = useMemo(() => {
     const items = comments ?? [];
-    const roots = items.filter((c) => !c.parentId);
+    const roots = items
+      .filter((c) => !c.parentId)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     const replies: Record<string, Comment[]> = {};
     for (const c of items) {
       if (c.parentId) {

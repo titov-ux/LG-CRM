@@ -1,5 +1,12 @@
 import { api } from './client';
-import type { Candidate, CandidateStatus, Page, UUID } from './types';
+import type {
+  Candidate,
+  CandidateStatus,
+  EmploymentType,
+  EngagementType,
+  Page,
+  UUID,
+} from './types';
 
 export interface CandidatesListParams {
   search?: string;
@@ -7,6 +14,8 @@ export interface CandidatesListParams {
   grade?: string;
   recruiterId?: UUID;
   stack?: string;
+  engagementType?: EngagementType;
+  employmentType?: EmploymentType;
   page?: number;
   pageSize?: number;
 }

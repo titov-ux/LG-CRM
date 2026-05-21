@@ -72,6 +72,17 @@ export interface ContactListItem extends Contact {
   clientName: string;
 }
 
+// === Engagement type ===
+/**
+ * Модель работы с кандидатом / форма сделки с клиентом.
+ * - 'outstaff'  — аутстафф: «свой» инженер, работающий у клиента на нашем юр.лице.
+ * - 'agency'    — кадровое агентство: подбор кандидата, которого нанимает клиент к себе.
+ *
+ * Это первичная характеристика и вакансии, и кандидата. Кандидата одного типа
+ * нельзя привязать к вакансии другого типа (валидация на бэке + UI-фильтр).
+ */
+export type EngagementType = 'outstaff' | 'agency';
+
 // === Vacancies ===
 export type Grade = 'Junior' | 'Middle' | 'Senior' | 'Lead';
 export type WorkFormat = 'Удалённо' | 'Гибрид' | 'Офис';
@@ -91,12 +102,18 @@ export interface Vacancy {
   id: UUID;
   title: string;
   clientId: UUID;
+  /** Тип сделки: аутстафф или кадровое агентство. */
+  engagementType: EngagementType;
   /** Название проекта у клиента — у одного клиента их может быть несколько. */
   project?: string;
   grade: Grade;
   stack: string[];
   format: WorkFormat;
+  /** Ставка клиента в ₽/час. Используется для аутстаффа; для агентских вакансий не применяется. */
   rateClient: number;
+  /** Верхняя граница оклада в ₽/мес. Используется только для агентских вакансий, опционально.
+   *  null/undefined трактуем одинаково — «не указан». */
+  salaryMax?: number | null;
   positions: number;
   status: VacancyStatus;
   priority: Priority;
@@ -129,14 +146,25 @@ export type CandidateStatus =
   | 'hired'
   | 'reserve';
 
+/** Тип оформления кандидата:
+ *  - ИП — индивидуальный предприниматель
+ *  - СМЗ — самозанятый (НПД)
+ *  - ТК РФ — трудовой договор по Трудовому кодексу РФ
+ */
+export type EmploymentType = 'ИП' | 'СМЗ' | 'ТК РФ';
+
 export interface Candidate {
   id: UUID;
   fullName: string;
   role: string;
+  /** Тип кандидата: аутстафф или агентский. Должен совпадать с типом вакансии при привязке. */
+  engagementType: EngagementType;
   grade: Grade;
   experienceYears: number;
   stack: string[];
-  rate: number;
+  /** Ожидаемая ставка кандидата, ₽/мес */
+  rateMonth: number;
+  employmentType: EmploymentType;
   format: WorkFormat;
   location: string;
   source: string;
@@ -144,8 +172,10 @@ export interface Candidate {
   status: CandidateStatus;
   daysInStatus: number;
   vacancyIds: UUID[];
-  email?: string;
+  telegram?: string;
   phone?: string;
+  /** ISO date YYYY-MM-DD */
+  birthday?: string;
   kanbanOrder: number;
 }
 

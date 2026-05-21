@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
-import { Briefcase, ChevronDown, Plus, UserPlus, Users } from 'lucide-react';
+import { Briefcase, ChevronDown, Plus, UserPlus } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
@@ -10,14 +10,16 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { ClientForm, type ClientFormValues } from '@/features/clients/ClientForm';
-import { useCreateClient } from '@/features/clients/hooks';
 import { VacancyForm, type VacancyFormValues } from '@/features/vacancies/VacancyForm';
 import { useCreateVacancy } from '@/features/vacancies/hooks';
 import { CandidateForm, type CandidateFormValues } from '@/features/candidates/CandidateForm';
 import { useCreateCandidate } from '@/features/candidates/hooks';
 
-type Kind = 'client' | 'vacancy' | 'candidate' | null;
+// Сквозная кнопка «Создать» в шапке. Сюда сознательно вынесены только сущности,
+// которые могут создаваться из любой точки приложения: вакансия и кандидат.
+// Клиент создаётся только со страницы /clients (там есть собственная кнопка),
+// потому что без контекста выбранного клиента отдельной точки входа не нужно.
+type Kind = 'vacancy' | 'candidate' | null;
 
 function splitStack(value: string | undefined): string[] {
   return (value ?? '')
@@ -30,51 +32,28 @@ export function QuickCreateMenu() {
   const [open, setOpen] = useState<Kind>(null);
   const navigate = useNavigate();
 
-  const createClient = useCreateClient();
   const createVacancy = useCreateVacancy();
   const createCandidate = useCreateCandidate();
 
   const close = () => setOpen(null);
 
-  const handleClient = (values: ClientFormValues) => {
-    createClient.mutate(
-      {
-        name: values.name,
-        legalEntities: values.legalEntities.map((le, i) => ({
-          id: `le-${Date.now()}-${i}`,
-          name: le.name,
-          inn: le.inn,
-        })),
-        industry: values.industry,
-        accountManagerId: values.accountManagerId,
-        status: values.status,
-        ...(values.telegramChat.trim() ? { telegramChat: values.telegramChat.trim() } : {}),
-      },
-      {
-        onSuccess: (c) => {
-          toast.success(`Клиент «${c.name}» создан`);
-          close();
-          navigate({ to: '/clients/$id', params: { id: c.id } });
-        },
-        onError: () => toast.error('Не удалось создать клиента'),
-      },
-    );
-  };
-
   const handleVacancy = (values: VacancyFormValues) => {
+    const isAgency = values.engagementType === 'agency';
     const payload = {
       title: values.title,
       clientId: values.clientId,
+      engagementType: values.engagementType,
       project: values.project?.trim() || undefined,
       grade: values.grade,
       format: values.format,
       priority: values.priority,
-      rateClient: Number(values.rateClient),
+      rateClient: isAgency ? 0 : Number(values.rateClient ?? 0),
+      salaryMax: isAgency ? (values.salaryMax != null ? Number(values.salaryMax) : null) : null,
       positions: Number(values.positions),
       stack: splitStack(values.stack),
       deadline: values.deadline || null,
       accountManagerId: values.accountManagerId,
-      recruiterIds: values.recruiterId ? [values.recruiterId] : [],
+      recruiterIds: values.recruiterIds ?? [],
       description: values.description?.trim() || undefined,
       requirements: values.requirements?.trim() || undefined,
     };
@@ -82,7 +61,7 @@ export function QuickCreateMenu() {
       onSuccess: (v) => {
         toast.success(`Вакансия «${v.title}» создана`);
         close();
-        navigate({ to: '/vacancies/$id', params: { id: v.id } });
+        navigate({ to: '/vacancies' });
       },
       onError: () => toast.error('Не удалось создать вакансию'),
     });
@@ -92,14 +71,17 @@ export function QuickCreateMenu() {
     const payload = {
       fullName: values.fullName,
       role: values.role,
+      engagementType: values.engagementType,
       grade: values.grade,
       experienceYears: Number(values.experienceYears),
       format: values.format,
-      rate: Number(values.rate),
+      rateMonth: Number(values.rateMonth),
+      employmentType: values.employmentType,
       recruiterId: values.recruiterId,
       location: values.location || '',
       source: values.source || 'Прямой поиск',
-      email: values.email || undefined,
+      birthday: values.birthday || undefined,
+      telegram: values.telegram || undefined,
       phone: values.phone || undefined,
       stack: splitStack(values.stack),
     };
@@ -132,22 +114,8 @@ export function QuickCreateMenu() {
             <UserPlus className="mr-2 h-4 w-4" />
             Кандидата
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => setOpen('client')}>
-            <Users className="mr-2 h-4 w-4" />
-            Клиента
-          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-
-      <Sheet open={open === 'client'} onOpenChange={(o) => !o && close()}>
-        <SheetContent className="overflow-y-auto sm:max-w-xl">
-          <SheetHeader className="mb-4">
-            <SheetTitle>Новый клиент</SheetTitle>
-            <SheetDescription>Заполните основные поля. Контакты можно добавить позже.</SheetDescription>
-          </SheetHeader>
-          <ClientForm onSubmit={handleClient} isPending={createClient.isPending} submitLabel="Создать" />
-        </SheetContent>
-      </Sheet>
 
       <Sheet open={open === 'vacancy'} onOpenChange={(o) => !o && close()}>
         <SheetContent className="overflow-y-auto sm:max-w-xl">

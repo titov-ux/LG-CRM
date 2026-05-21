@@ -18,6 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { DateField } from '@/components/forms/DateField';
 import type { Client, CreateContactRequest, UUID } from '@/api/types';
 
 const schema = z.object({
@@ -181,7 +182,7 @@ export function ContactForm({ clients, onSubmit, isPending, submitLabel = 'До�
             <FormItem>
               <FormLabel>День рождения (необязательно)</FormLabel>
               <FormControl>
-                <Input {...field} type="date" />
+                <DateField value={field.value} onChange={field.onChange} onBlur={field.onBlur} />
               </FormControl>
               <FormMessage />
             </FormItem>

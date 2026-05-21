@@ -169,15 +169,23 @@ export const handlers = [
     const u = new URL(request.url);
     const search = u.searchParams.get('search')?.toLowerCase() ?? '';
     const status = u.searchParams.get('status');
-    const items = clientsDb.filter(
-      (c) =>
-        (!search ||
-          c.name.toLowerCase().includes(search) ||
-          c.legalEntities.some(
-            (le) => le.name.toLowerCase().includes(search) || le.inn.includes(search),
-          )) &&
-        (!status || c.status === status),
-    );
+    const accountManagerId = u.searchParams.get('accountManagerId');
+    const industry = u.searchParams.get('industry');
+    const items = clientsDb.filter((c) => {
+      if (
+        search &&
+        !c.name.toLowerCase().includes(search) &&
+        !c.legalEntities.some(
+          (le) => le.name.toLowerCase().includes(search) || le.inn.includes(search),
+        )
+      ) {
+        return false;
+      }
+      if (status && c.status !== status) return false;
+      if (accountManagerId && c.accountManagerId !== accountManagerId) return false;
+      if (industry && c.industry !== industry) return false;
+      return true;
+    });
     return HttpResponse.json(paginate(items, u.searchParams.get('page'), u.searchParams.get('pageSize')));
   }),
   http.post(url('/clients'), async ({ request }) => {
@@ -261,6 +269,10 @@ export const handlers = [
     const u = new URL(request.url);
     const search = u.searchParams.get('search')?.toLowerCase() ?? '';
     const clientId = u.searchParams.get('clientId');
+    const hasEmail = u.searchParams.get('hasEmail');
+    const hasPhone = u.searchParams.get('hasPhone');
+    const hasTelegram = u.searchParams.get('hasTelegram');
+    const hasBirthday = u.searchParams.get('hasBirthday');
     const items: ContactListItem[] = contactsDb
       .map((contact) => {
         const client = clientsDb.find((c) => c.id === contact.clientId);
@@ -268,6 +280,10 @@ export const handlers = [
       })
       .filter((c) => {
         if (clientId && c.clientId !== clientId) return false;
+        if (hasEmail && !c.email) return false;
+        if (hasPhone && !c.phone) return false;
+        if (hasTelegram && !c.telegram) return false;
+        if (hasBirthday && !c.birthday) return false;
         if (!search) return true;
         return (
           c.name.toLowerCase().includes(search) ||
@@ -365,12 +381,14 @@ export const handlers = [
     const priority = u.searchParams.get('priority');
     const clientId = u.searchParams.get('clientId');
     const recruiterId = u.searchParams.get('recruiterId');
+    const engagementType = u.searchParams.get('engagementType');
     const items = vacanciesDb.filter((v) => {
       if (search && !v.title.toLowerCase().includes(search)) return false;
       if (grade && v.grade !== grade) return false;
       if (priority && v.priority !== priority) return false;
       if (clientId && v.clientId !== clientId) return false;
       if (recruiterId && !v.recruiterIds.includes(recruiterId)) return false;
+      if (engagementType && v.engagementType !== engagementType) return false;
       return true;
     });
     return HttpResponse.json(paginate(sortByKanbanOrder(items), u.searchParams.get('page'), u.searchParams.get('pageSize')));
@@ -402,11 +420,13 @@ export const handlers = [
       id: `v-${Date.now()}`,
       title: body.title ?? 'Без названия',
       clientId: body.clientId ?? '',
+      engagementType: body.engagementType ?? 'outstaff',
       project: body.project,
       grade: body.grade ?? 'Middle',
       stack: body.stack ?? [],
       format: body.format ?? 'Гибрид',
       rateClient: body.rateClient ?? 0,
+      salaryMax: body.salaryMax,
       positions: body.positions ?? 1,
       status: body.status ?? 'new',
       priority: body.priority ?? 'medium',
@@ -477,6 +497,22 @@ export const handlers = [
     const patch = (await request.json()) as Partial<Vacancy>;
     const v = vacanciesDb.find((x) => x.id === params.id);
     if (!v) return new HttpResponse(null, { status: 404 });
+    // Менять тип сделки разрешено только если нет «зависших» привязок другого типа.
+    if (patch.engagementType && patch.engagementType !== v.engagementType) {
+      const conflicting = candidatesDb.filter(
+        (c) => c.vacancyIds.includes(v.id) && c.engagementType !== patch.engagementType,
+      );
+      if (conflicting.length > 0) {
+        return HttpResponse.json(
+          {
+            code: 'engagement_type_conflict',
+            message:
+              'К вакансии прикреплены кандидаты другого типа. Сначала открепите их или смените тип.',
+          },
+          { status: 409 },
+        );
+      }
+    }
     Object.assign(v, patch);
     return HttpResponse.json(v);
   }),
@@ -488,6 +524,13 @@ export const handlers = [
     if (client && client.vacanciesCount > 0) client.vacanciesCount -= 1;
     return HttpResponse.json({ ok: true });
   }),
+  http.get(url('/vacancies/:id/activity'), ({ params }) =>
+    HttpResponse.json(
+      activityDb
+        .filter((a) => a.entityType === 'vacancy' && a.entityId === params.id)
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
+    ),
+  ),
   http.get(url('/vacancies/:id/candidates'), ({ params }) => {
     return HttpResponse.json(
       candidatesDb
@@ -509,6 +552,18 @@ export const handlers = [
     const vacancy = vacanciesDb.find((v) => v.id === vacancyId);
     const candidate = candidatesDb.find((c) => c.id === candidateId);
     if (!vacancy || !candidate) return new HttpResponse(null, { status: 404 });
+    // Кандидата и вакансию разных типов сделки соединять нельзя.
+    // Защита на бэке — UI это уже фильтрует, но прямой вызов API не должен обходить правило.
+    if (vacancy.engagementType !== candidate.engagementType) {
+      return HttpResponse.json(
+        {
+          code: 'engagement_type_mismatch',
+          message:
+            'Тип кандидата не совпадает с типом вакансии: их нельзя связать друг с другом.',
+        },
+        { status: 409 },
+      );
+    }
     if (!candidate.vacancyIds.includes(vacancyId)) {
       candidate.vacancyIds.push(vacancyId);
       vacancy.candidatesCount += 1;
@@ -546,11 +601,15 @@ export const handlers = [
     const grade = u.searchParams.get('grade');
     const recruiterId = u.searchParams.get('recruiterId');
     const stack = u.searchParams.get('stack');
+    const engagementType = u.searchParams.get('engagementType');
+    const employmentType = u.searchParams.get('employmentType');
     const items = candidatesDb.filter((c) => {
       if (search && !c.fullName.toLowerCase().includes(search) && !c.role.toLowerCase().includes(search)) return false;
       if (grade && c.grade !== grade) return false;
       if (recruiterId && c.recruiterId !== recruiterId) return false;
       if (stack && !c.stack.some((s) => s.toLowerCase().includes(stack.toLowerCase()))) return false;
+      if (engagementType && c.engagementType !== engagementType) return false;
+      if (employmentType && c.employmentType !== employmentType) return false;
       return true;
     });
     return HttpResponse.json(paginate(sortByKanbanOrder(items), u.searchParams.get('page'), u.searchParams.get('pageSize')));
@@ -581,10 +640,12 @@ export const handlers = [
       id: `cand-${Date.now()}`,
       fullName: body.fullName ?? 'Без имени',
       role: body.role ?? '',
+      engagementType: body.engagementType ?? 'outstaff',
       grade: body.grade ?? 'Middle',
       experienceYears: body.experienceYears ?? 0,
       stack: body.stack ?? [],
-      rate: body.rate ?? 0,
+      rateMonth: body.rateMonth ?? 0,
+      employmentType: body.employmentType ?? 'ИП',
       format: body.format ?? 'Гибрид',
       location: body.location ?? '',
       source: body.source ?? 'Прямой поиск',
@@ -592,7 +653,8 @@ export const handlers = [
       status: body.status ?? 'new',
       daysInStatus: 0,
       vacancyIds: body.vacancyIds ?? [],
-      email: body.email,
+      birthday: body.birthday,
+      telegram: body.telegram,
       phone: body.phone,
       kanbanOrder: nextKanbanOrder(candidatesDb, body.status ?? 'new'),
     };
@@ -632,6 +694,22 @@ export const handlers = [
     const patch = (await request.json()) as Partial<Candidate>;
     const c = candidatesDb.find((x) => x.id === params.id);
     if (!c) return new HttpResponse(null, { status: 404 });
+    if (patch.engagementType && patch.engagementType !== c.engagementType) {
+      const conflicting = c.vacancyIds
+        .map((id) => vacanciesDb.find((v) => v.id === id))
+        .filter((v): v is Vacancy => !!v)
+        .filter((v) => v.engagementType !== patch.engagementType);
+      if (conflicting.length > 0) {
+        return HttpResponse.json(
+          {
+            code: 'engagement_type_conflict',
+            message:
+              'Кандидат прикреплён к вакансиям другого типа. Сначала открепите их или смените тип.',
+          },
+          { status: 409 },
+        );
+      }
+    }
     Object.assign(c, patch);
     return HttpResponse.json(c);
   }),

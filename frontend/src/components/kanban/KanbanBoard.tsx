@@ -26,6 +26,11 @@ interface Props<TStatus extends string, TItem extends KanbanItem<TStatus>> {
   items: TItem[];
   renderCard: (item: TItem) => ReactNode;
   renderOverlay?: (item: TItem) => ReactNode;
+  /**
+   * Цвет левого акцента карточки (3px). Используется для маркировки типа
+   * сделки (engagementType). Если функция не передана — карточки без полоски.
+   */
+  getAccentColor?: (item: TItem) => string | undefined;
   onCardClick?: (item: TItem) => void;
   onReorder: (updates: KanbanReorderUpdate<TStatus>[]) => void;
   onCreate?: (status: TStatus) => void;
@@ -36,6 +41,7 @@ export function KanbanBoard<TStatus extends string, TItem extends KanbanItem<TSt
   items,
   renderCard,
   renderOverlay,
+  getAccentColor,
   onCardClick,
   onReorder,
   onCreate,
@@ -136,7 +142,12 @@ export function KanbanBoard<TStatus extends string, TItem extends KanbanItem<TSt
               onCreate={onCreate ? () => onCreate(status.id) : undefined}
             >
               {columnItems.map((item) => (
-                <KanbanCard key={item.id} id={item.id} onClick={() => onCardClick?.(item)}>
+                <KanbanCard
+                  key={item.id}
+                  id={item.id}
+                  onClick={() => onCardClick?.(item)}
+                  accentColor={getAccentColor?.(item)}
+                >
                   {renderCard(item)}
                 </KanbanCard>
               ))}

@@ -20,8 +20,8 @@ type Action =
 const MATRIX: Record<Action, Role[]> = {
   'client:create': ['admin', 'account_manager'],
   'client:edit': ['admin', 'account_manager'],
-  'vacancy:create': ['admin', 'account_manager'],
-  'vacancy:edit': ['admin', 'account_manager'],
+  'vacancy:create': ['admin', 'account_manager', 'recruiter'],
+  'vacancy:edit': ['admin', 'account_manager', 'recruiter'],
   'vacancy:change_status': ['admin', 'account_manager', 'recruiter'],
   'candidate:create': ['admin', 'recruiter'],
   'candidate:edit': ['admin', 'recruiter'],

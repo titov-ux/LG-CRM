@@ -1,5 +1,5 @@
 import { api } from './client';
-import type { Page, UUID, Vacancy, VacancyStatus } from './types';
+import type { EngagementType, Page, UUID, Vacancy, VacancyStatus } from './types';
 import type { ParsedVacancy } from '@/features/vacancies/types';
 
 export interface VacanciesListParams {
@@ -9,6 +9,7 @@ export interface VacanciesListParams {
   grade?: string;
   priority?: string;
   recruiterId?: UUID;
+  engagementType?: EngagementType;
   page?: number;
   pageSize?: number;
 }

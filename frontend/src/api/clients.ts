@@ -5,13 +5,23 @@ export interface ClientsListParams {
   search?: string;
   status?: string;
   accountManagerId?: UUID;
+  industry?: string;
   page?: number;
   pageSize?: number;
 }
 
+function buildSearchParams(params: ClientsListParams): Record<string, string | number> {
+  const out: Record<string, string | number> = {};
+  for (const [k, v] of Object.entries(params)) {
+    if (v === undefined || v === null || v === '') continue;
+    out[k] = v as string | number;
+  }
+  return out;
+}
+
 export const clientsApi = {
   list: (params: ClientsListParams = {}) =>
-    api.get('clients', { searchParams: params as Record<string, string | number> }).json<Page<Client>>(),
+    api.get('clients', { searchParams: buildSearchParams(params) }).json<Page<Client>>(),
   byId: (id: UUID) => api.get(`clients/${id}`).json<Client>(),
   contacts: (id: UUID) => api.get(`clients/${id}/contacts`).json<Contact[]>(),
   createContact: (clientId: UUID, payload: CreateContactRequest) =>

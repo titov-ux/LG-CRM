@@ -1,20 +1,15 @@
 import { useMemo, useState } from 'react';
 import {
   CalendarRange,
-  Check,
-  ChevronDown,
-  Filter,
   ListFilter,
   Search,
   Tag,
   User as UserIcon,
-  X,
 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
+import { DateField } from '@/components/forms/DateField';
 import {
   Table,
   TableBody,
@@ -23,7 +18,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { cn } from '@/lib/utils';
+import { FilterBar, FilterChip, MenuItem } from '@/components/common/FilterChip';
 import { useAudit } from './hooks';
 import { useUsers } from '@/features/users/hooks';
 
@@ -79,88 +74,6 @@ const EMPTY: Filters = {
   dateFrom: '',
   dateTo: '',
 };
-
-// === Чип-фильтр с поповером ===
-
-function FilterChip({
-  active,
-  icon: Icon,
-  label,
-  value,
-  onClear,
-  children,
-}: {
-  active: boolean;
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  value?: string | null;
-  onClear?: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <Popover>
-      <div
-        className={cn(
-          'group inline-flex h-7 items-center rounded-md border text-[12px] transition-colors',
-          active
-            ? 'border-foreground/15 bg-foreground/[0.04] text-foreground'
-            : 'border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground',
-        )}
-      >
-        <PopoverTrigger asChild>
-          <button
-            type="button"
-            className="flex h-full items-center gap-1.5 px-2 outline-none"
-          >
-            <Icon className="h-3.5 w-3.5" />
-            <span>{label}</span>
-            {active && value && (
-              <>
-                <span className="text-muted-foreground/60">:</span>
-                <span className="font-medium">{value}</span>
-              </>
-            )}
-            {!active && <ChevronDown className="h-3 w-3 opacity-60" />}
-          </button>
-        </PopoverTrigger>
-        {active && onClear && (
-          <button
-            type="button"
-            onClick={onClear}
-            aria-label={`Сбросить фильтр «${label}»`}
-            className="flex h-full items-center px-1.5 text-muted-foreground hover:text-foreground"
-          >
-            <X className="h-3 w-3" />
-          </button>
-        )}
-      </div>
-      <PopoverContent align="start" className="w-60 p-1.5">
-        {children}
-      </PopoverContent>
-    </Popover>
-  );
-}
-
-function MenuItem({
-  selected,
-  onClick,
-  children,
-}: {
-  selected?: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="flex w-full items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-left text-[13px] hover:bg-muted"
-    >
-      <span>{children}</span>
-      {selected && <Check className="h-3.5 w-3.5 text-foreground" />}
-    </button>
-  );
-}
 
 // === Страница ===
 
@@ -223,12 +136,15 @@ export function AuditPage() {
       </div>
 
       {/* Inline filter bar */}
-      <div className="mb-3 flex flex-wrap items-center gap-1 -mx-1 px-1 text-[12px]">
-        <span className="inline-flex h-7 items-center gap-1.5 px-1.5 text-muted-foreground">
-          <Filter className="h-3.5 w-3.5" />
-          <span>Фильтр</span>
-        </span>
-
+      <FilterBar
+        hasActiveFilters={hasActiveFilters}
+        onReset={() => setFilters(EMPTY)}
+        rightSlot={
+          <span className="tnum text-[11.5px] text-muted-foreground/80">
+            {totalCount} {pluralize(totalCount, ['событие', 'события', 'событий'])}
+          </span>
+        }
+      >
         <FilterChip
           active={!!filters.entityType}
           icon={Tag}
@@ -315,11 +231,9 @@ export function AuditPage() {
               <div className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">
                 С даты
               </div>
-              <Input
-                type="date"
+              <DateField
                 value={filters.dateFrom}
-                max={filters.dateTo || undefined}
-                onChange={(e) => set('dateFrom', e.target.value)}
+                onChange={(v) => set('dateFrom', v)}
                 className="h-8"
               />
             </div>
@@ -327,34 +241,15 @@ export function AuditPage() {
               <div className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">
                 По дату
               </div>
-              <Input
-                type="date"
+              <DateField
                 value={filters.dateTo}
-                min={filters.dateFrom || undefined}
-                onChange={(e) => set('dateTo', e.target.value)}
+                onChange={(v) => set('dateTo', v)}
                 className="h-8"
               />
             </div>
           </div>
         </FilterChip>
-
-        <div className="ml-auto flex items-center gap-2">
-          <span className="tnum text-[11.5px] text-muted-foreground/80">
-            {totalCount} {pluralize(totalCount, ['событие', 'события', 'событий'])}
-          </span>
-          {hasActiveFilters && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setFilters(EMPTY)}
-              className="h-7 gap-1 px-2 text-[12px] text-muted-foreground hover:text-foreground"
-            >
-              <X className="h-3 w-3" />
-              Сбросить
-            </Button>
-          )}
-        </div>
-      </div>
+      </FilterBar>
 
       {/* Таблица */}
       <Card className="overflow-hidden">

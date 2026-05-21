@@ -19,22 +19,30 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useUsers } from '@/features/users/hooks';
-import type { Grade, WorkFormat } from '@/api/types';
+import { EngagementTypeField } from '@/components/forms/EngagementTypeField';
+import { DateField } from '@/components/forms/DateField';
+import type { EmploymentType, EngagementType, Grade, WorkFormat } from '@/api/types';
 
 const GRADES: Grade[] = ['Junior', 'Middle', 'Senior', 'Lead'];
 const FORMATS: WorkFormat[] = ['Удалённо', 'Гибрид', 'Офис'];
+const EMPLOYMENT_TYPES: EmploymentType[] = ['ИП', 'СМЗ', 'ТК РФ'];
 
 const schema = z.object({
   fullName: z.string().min(2, 'Введите ФИО'),
   role: z.string().min(2, 'Укажите позицию'),
+  engagementType: z.enum(['outstaff', 'agency'], {
+    required_error: 'Выберите тип',
+  }) as z.ZodType<EngagementType>,
   grade: z.enum(['Junior', 'Middle', 'Senior', 'Lead']),
   experienceYears: z.coerce.number().int().min(0).max(60),
   format: z.enum(['Удалённо', 'Гибрид', 'Офис']),
-  rate: z.coerce.number().nonnegative(),
+  rateMonth: z.coerce.number().nonnegative(),
+  employmentType: z.enum(['ИП', 'СМЗ', 'ТК РФ']),
   recruiterId: z.string().min(1, 'Выберите рекрутера'),
   location: z.string().optional(),
   source: z.string().optional(),
-  email: z.string().email('Некорректный email').optional().or(z.literal('')),
+  birthday: z.string().optional(),
+  telegram: z.string().optional(),
   phone: z.string().optional(),
   stack: z.string().optional(),
 });
@@ -50,21 +58,25 @@ interface Props {
 
 export function CandidateForm({ defaultValues, onSubmit, isPending, submitLabel = 'Сохранить' }: Props) {
   const { data: users } = useUsers();
-  const recruiters = (users ?? []).filter((u) => u.role === 'recruiter');
+  // В качестве «ответственных рекрутеров» можно назначать и админов — они тоже ведут кандидатов.
+  const recruiters = (users ?? []).filter((u) => u.role === 'recruiter' || u.role === 'admin');
 
   const form = useForm<CandidateFormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
       fullName: '',
       role: '',
-      grade: 'Middle',
+      engagementType: 'outstaff',
+      grade: 'Senior',
       experienceYears: 0,
-      format: 'Гибрид',
-      rate: 0,
+      format: 'Удалённо',
+      rateMonth: 0,
+      employmentType: 'ИП',
       recruiterId: '',
       location: '',
       source: 'HeadHunter',
-      email: '',
+      birthday: '',
+      telegram: '',
       phone: '',
       stack: '',
       ...defaultValues,
@@ -74,6 +86,19 @@ export function CandidateForm({ defaultValues, onSubmit, isPending, submitLabel 
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+        <FormField
+          control={form.control}
+          name="engagementType"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Тип</FormLabel>
+              <FormControl>
+                <EngagementTypeField value={field.value} onChange={field.onChange} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
         <FormField
           control={form.control}
           name="fullName"
@@ -114,24 +139,13 @@ export function CandidateForm({ defaultValues, onSubmit, isPending, submitLabel 
             )}
           />
         </div>
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 gap-3">
           <FormField
             control={form.control}
             name="experienceYears"
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Опыт, лет</FormLabel>
-                <FormControl><Input type="number" min={0} {...field} /></FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-          <FormField
-            control={form.control}
-            name="rate"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Ставка (₽/ч)</FormLabel>
                 <FormControl><Input type="number" min={0} {...field} /></FormControl>
                 <FormMessage />
               </FormItem>
@@ -147,6 +161,35 @@ export function CandidateForm({ defaultValues, onSubmit, isPending, submitLabel 
                   <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
                   <SelectContent>
                     {FORMATS.map((f) => <SelectItem key={f} value={f}>{f}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <FormField
+            control={form.control}
+            name="rateMonth"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Ставка (₽/мес)</FormLabel>
+                <FormControl><Input type="number" min={0} {...field} /></FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name="employmentType"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Тип оформления</FormLabel>
+                <Select value={field.value} onValueChange={field.onChange}>
+                  <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
+                  <SelectContent>
+                    {EMPLOYMENT_TYPES.map((e) => <SelectItem key={e} value={e}>{e}</SelectItem>)}
                   </SelectContent>
                 </Select>
                 <FormMessage />
@@ -170,14 +213,27 @@ export function CandidateForm({ defaultValues, onSubmit, isPending, submitLabel 
             </FormItem>
           )}
         />
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-3 gap-3">
           <FormField
             control={form.control}
-            name="email"
+            name="birthday"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Email</FormLabel>
-                <FormControl><Input type="email" {...field} placeholder="ivan@example.com" /></FormControl>
+                <FormLabel>Дата рождения</FormLabel>
+                <FormControl>
+                  <DateField value={field.value} onChange={field.onChange} onBlur={field.onBlur} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name="telegram"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Telegram</FormLabel>
+                <FormControl><Input {...field} placeholder="@ivan_ivanov" /></FormControl>
                 <FormMessage />
               </FormItem>
             )}

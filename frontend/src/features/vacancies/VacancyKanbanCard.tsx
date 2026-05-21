@@ -4,6 +4,7 @@ import { StackTags } from '@/components/common/StackTags';
 import { PriorityBadge } from '@/components/common/PriorityBadge';
 import { DaysBadge } from '@/components/common/DaysBadge';
 import { AvatarStack } from '@/components/common/AvatarStack';
+import { EngagementBadge } from '@/components/common/EngagementBadge';
 
 interface Props {
   vacancy: Vacancy;
@@ -16,9 +17,12 @@ export function VacancyKanbanCard({ vacancy, clientName, recruiters }: Props) {
     <>
       <div className="mb-1.5 flex items-start justify-between gap-2">
         <div className="text-[13px] font-semibold leading-[17px] tracking-tight">{vacancy.title}</div>
-        {(vacancy.priority === 'urgent' || vacancy.priority === 'high') && (
-          <PriorityBadge priority={vacancy.priority} />
-        )}
+        <div className="flex shrink-0 items-center gap-1">
+          {(vacancy.priority === 'urgent' || vacancy.priority === 'high') && (
+            <PriorityBadge priority={vacancy.priority} />
+          )}
+          <EngagementBadge type={vacancy.engagementType} />
+        </div>
       </div>
 
       <div className="mb-2 flex items-center gap-1.5 text-[11.5px] text-muted-foreground">

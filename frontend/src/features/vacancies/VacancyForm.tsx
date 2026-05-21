@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Sparkles } from 'lucide-react';
+import { Check, ChevronDown, Sparkles, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -23,9 +23,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
 import { useClients } from '@/features/clients/hooks';
 import { useUsers } from '@/features/users/hooks';
-import type { Grade, Priority, WorkFormat } from '@/api/types';
+import { EngagementTypeField } from '@/components/forms/EngagementTypeField';
+import { DateField } from '@/components/forms/DateField';
+import { cn } from '@/lib/utils';
+import type { EngagementType, Grade, Priority, WorkFormat } from '@/api/types';
 
 // Полная форма вакансии. Используется и в quick-create, и в drawer редактирования.
 
@@ -38,22 +50,54 @@ const PRIORITIES: { id: Priority; label: string }[] = [
   { id: 'urgent', label: 'Срочно' },
 ];
 
-const schema = z.object({
-  title: z.string().min(2, 'Минимум 2 символа'),
-  clientId: z.string().min(1, 'Выберите клиента'),
-  project: z.string().optional(),
-  grade: z.enum(['Junior', 'Middle', 'Senior', 'Lead']),
-  format: z.enum(['Удалённо', 'Гибрид', 'Офис']),
-  priority: z.enum(['low', 'medium', 'high', 'urgent']),
-  rateClient: z.coerce.number().positive('Должно быть больше 0'),
-  positions: z.coerce.number().int().positive(),
-  stack: z.string().optional(),
-  deadline: z.string().optional(),
-  accountManagerId: z.string().min(1, 'Выберите аккаунт-менеджера'),
-  recruiterId: z.string().optional(),
-  description: z.string().optional(),
-  requirements: z.string().optional(),
-});
+const MAX_CLIENT_RATE = 100_000;
+const MAX_SALARY = 10_000_000;
+
+// Пустую строку из number-инпута приводим к undefined, чтобы поле было реально опциональным
+// (без этого z.coerce.number() для '' превращается в 0 и роняет .positive()).
+const optionalPositiveNumber = z
+  .preprocess(
+    (v) => (v === '' || v === null || v === undefined ? undefined : v),
+    z.coerce.number().positive('Должно быть больше 0').max(MAX_SALARY).optional(),
+  );
+
+const schema = z
+  .object({
+    title: z.string().min(2, 'Минимум 2 символа'),
+    clientId: z.string().min(1, 'Выберите клиента'),
+    engagementType: z.enum(['outstaff', 'agency'], {
+      required_error: 'Выберите тип сделки',
+    }) as z.ZodType<EngagementType>,
+    project: z.string().optional(),
+    grade: z.enum(['Junior', 'Middle', 'Senior', 'Lead']),
+    format: z.enum(['Удалённо', 'Гибрид', 'Офис']),
+    priority: z.enum(['low', 'medium', 'high', 'urgent']),
+    // rateClient валидируется как «обязательный положительный» только для аутстаффа,
+    // см. superRefine ниже. Для агентских вакансий значение не используется.
+    rateClient: z.coerce
+      .number()
+      .max(MAX_CLIENT_RATE, `Не больше ${MAX_CLIENT_RATE.toLocaleString('ru-RU')} ₽/ч`)
+      .optional(),
+    salaryMax: optionalPositiveNumber,
+    positions: z.coerce.number().int().positive(),
+    stack: z.string().optional(),
+    deadline: z.string().optional(),
+    accountManagerId: z.string().min(1, 'Выберите аккаунт-менеджера'),
+    recruiterIds: z.array(z.string()).default([]),
+    description: z.string().optional(),
+    requirements: z.string().optional(),
+  })
+  .superRefine((values, ctx) => {
+    if (values.engagementType === 'outstaff') {
+      if (!values.rateClient || values.rateClient <= 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['rateClient'],
+          message: 'Должно быть больше 0',
+        });
+      }
+    }
+  });
 
 export type VacancyFormValues = z.infer<typeof schema>;
 
@@ -67,7 +111,8 @@ interface Props {
 export function VacancyForm({ defaultValues, onSubmit, isPending, submitLabel = 'Сохранить' }: Props) {
   const { data: clientsData } = useClients();
   const { data: users } = useUsers();
-  const recruiters = (users ?? []).filter((u) => u.role === 'recruiter');
+  // В качестве «ответственных рекрутеров» можно назначать и админов — они тоже ведут вакансии.
+  const recruiters = (users ?? []).filter((u) => u.role === 'recruiter' || u.role === 'admin');
   const accountManagers = (users ?? []).filter((u) => u.role === 'account_manager' && u.isActive);
   const [importOpen, setImportOpen] = useState(false);
 
@@ -76,16 +121,19 @@ export function VacancyForm({ defaultValues, onSubmit, isPending, submitLabel = 
     defaultValues: {
       title: '',
       clientId: '',
+      engagementType: 'outstaff',
       project: '',
       grade: 'Senior',
       format: 'Удалённо',
       priority: 'medium',
       positions: 1,
-      rateClient: 0,
+      // Оставляем поле пустым — пользователь видит плейсхолдер «0», а не реальный ноль.
+      rateClient: undefined,
+      salaryMax: undefined,
       stack: '',
       deadline: '',
       accountManagerId: '',
-      recruiterId: '',
+      recruiterIds: [],
       description: '',
       requirements: '',
       ...defaultValues,
@@ -95,6 +143,8 @@ export function VacancyForm({ defaultValues, onSubmit, isPending, submitLabel = 
   // Если у формы уже есть АМ в defaultValues (режим редактирования), не перезаписываем его.
   const shouldAutofillAm = !defaultValues?.accountManagerId;
   const watchedClientId = useWatch({ control: form.control, name: 'clientId' });
+  const watchedEngagement = useWatch({ control: form.control, name: 'engagementType' });
+  const isAgency = watchedEngagement === 'agency';
   useEffect(() => {
     if (!shouldAutofillAm) return;
 
@@ -149,6 +199,20 @@ export function VacancyForm({ defaultValues, onSubmit, isPending, submitLabel = 
       <VacancyImportDialog open={importOpen} onOpenChange={setImportOpen} onApply={applyParsed} />
 
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+        <FormField
+          control={form.control}
+          name="engagementType"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Тип сделки</FormLabel>
+              <FormControl>
+                <EngagementTypeField value={field.value} onChange={field.onChange} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
         <FormField
           control={form.control}
           name="title"
@@ -232,17 +296,52 @@ export function VacancyForm({ defaultValues, onSubmit, isPending, submitLabel = 
         </div>
 
         <div className="grid grid-cols-2 gap-3">
-          <FormField
-            control={form.control}
-            name="rateClient"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Ставка клиента (₽/ч)</FormLabel>
-                <FormControl><Input type="number" min={0} className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" {...field} /></FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+          {isAgency ? (
+            <FormField
+              control={form.control}
+              name="salaryMax"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Оклад до (₽/мес)</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={MAX_SALARY}
+                      placeholder="0"
+                      className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      {...field}
+                      // 0/undefined/null трактуем одинаково — поле выглядит пустым, виден плейсхолдер.
+                      value={field.value || ''}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          ) : (
+            <FormField
+              control={form.control}
+              name="rateClient"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Ставка клиента (₽/ч)</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={MAX_CLIENT_RATE}
+                      placeholder="0"
+                      className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      {...field}
+                      value={field.value || ''}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          )}
           <FormField
             control={form.control}
             name="positions"
@@ -279,7 +378,9 @@ export function VacancyForm({ defaultValues, onSubmit, isPending, submitLabel = 
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Дедлайн</FormLabel>
-                <FormControl><Input type="date" {...field} /></FormControl>
+                <FormControl>
+                  <DateField value={field.value} onChange={field.onChange} onBlur={field.onBlur} />
+                </FormControl>
                 <FormMessage />
               </FormItem>
             )}
@@ -310,21 +411,107 @@ export function VacancyForm({ defaultValues, onSubmit, isPending, submitLabel = 
           />
           <FormField
             control={form.control}
-            name="recruiterId"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Ответственный рекрутер</FormLabel>
-                <Select value={field.value || undefined} onValueChange={field.onChange}>
-                  <FormControl><SelectTrigger><SelectValue placeholder="Не назначен" /></SelectTrigger></FormControl>
-                  <SelectContent>
-                    {recruiters.map((r) => (
-                      <SelectItem key={r.id} value={r.id}>{r.fullName}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <FormMessage />
-              </FormItem>
-            )}
+            name="recruiterIds"
+            render={({ field }) => {
+              const selected = field.value ?? [];
+              const toggle = (id: string) => {
+                if (selected.includes(id)) {
+                  field.onChange(selected.filter((x) => x !== id));
+                } else {
+                  field.onChange([...selected, id]);
+                }
+              };
+              const selectedUsers = selected
+                .map((id) => recruiters.find((r) => r.id === id))
+                .filter(Boolean) as typeof recruiters;
+              return (
+                <FormItem>
+                  <FormLabel>Ответственные рекрутеры</FormLabel>
+                  <Popover>
+                    <FormControl>
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          className={cn(
+                            'flex min-h-10 w-full items-center justify-between gap-2 rounded-md border border-input bg-background px-3 py-1.5 text-sm ring-offset-background',
+                            'focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2',
+                          )}
+                        >
+                          <div className="flex flex-1 flex-wrap items-center gap-1">
+                            {selectedUsers.length === 0 ? (
+                              <span className="text-muted-foreground">Не назначены</span>
+                            ) : (
+                              selectedUsers.map((u) => (
+                                <span
+                                  key={u.id}
+                                  className="inline-flex items-center gap-1 rounded-full bg-muted py-0.5 pl-2 pr-1 text-xs"
+                                >
+                                  {u.fullName}
+                                  <span
+                                    role="button"
+                                    tabIndex={0}
+                                    aria-label={`Убрать ${u.fullName}`}
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      toggle(u.id);
+                                    }}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter' || e.key === ' ') {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        toggle(u.id);
+                                      }
+                                    }}
+                                    className="flex h-4 w-4 cursor-pointer items-center justify-center rounded-full text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </span>
+                                </span>
+                              ))
+                            )}
+                          </div>
+                          <ChevronDown className="h-4 w-4 shrink-0 opacity-60" />
+                        </button>
+                      </PopoverTrigger>
+                    </FormControl>
+                    <PopoverContent align="start" className="w-[--radix-popover-trigger-width] p-0">
+                      <Command>
+                        <CommandInput placeholder="Поиск рекрутера…" />
+                        <CommandList>
+                          <CommandEmpty>Ничего не найдено</CommandEmpty>
+                          <CommandGroup>
+                            {recruiters.map((r) => {
+                              const isSelected = selected.includes(r.id);
+                              return (
+                                <CommandItem
+                                  key={r.id}
+                                  value={r.fullName}
+                                  onSelect={() => toggle(r.id)}
+                                >
+                                  <div
+                                    className={cn(
+                                      'mr-2 flex h-4 w-4 items-center justify-center rounded-sm border',
+                                      isSelected
+                                        ? 'border-primary bg-primary text-primary-foreground'
+                                        : 'border-input',
+                                    )}
+                                  >
+                                    {isSelected && <Check className="h-3 w-3" />}
+                                  </div>
+                                  <span>{r.fullName}</span>
+                                </CommandItem>
+                              );
+                            })}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                  <FormMessage />
+                </FormItem>
+              );
+            }}
           />
         </div>
 

@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { vacanciesApi, type VacanciesListParams } from '@/api/vacancies';
+import { auditApi } from '@/api/audit';
 import type { UUID, Vacancy, VacancyStatus } from '@/api/types';
 import { QUERY_DEFAULTS } from '@/lib/constants';
 
@@ -7,6 +8,7 @@ export const vacancyKeys = {
   all: ['vacancies'] as const,
   list: (params: VacanciesListParams) => [...vacancyKeys.all, 'list', params] as const,
   byId: (id: UUID) => [...vacancyKeys.all, 'byId', id] as const,
+  activity: (id: UUID) => [...vacancyKeys.all, 'activity', id] as const,
 };
 
 export function useVacancies(params: VacanciesListParams = {}) {
@@ -21,6 +23,15 @@ export function useVacancy(id: UUID | undefined) {
   return useQuery({
     queryKey: vacancyKeys.byId(id ?? ''),
     queryFn: () => vacanciesApi.byId(id as UUID),
+    enabled: !!id,
+    ...QUERY_DEFAULTS,
+  });
+}
+
+export function useVacancyActivity(id: UUID | undefined) {
+  return useQuery({
+    queryKey: vacancyKeys.activity(id ?? ''),
+    queryFn: () => auditApi.activity('vacancy', id as UUID),
     enabled: !!id,
     ...QUERY_DEFAULTS,
   });

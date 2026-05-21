@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from '@tanstack/react-router';
-import { ChevronLeft, ChevronRight, Copy, Edit3, MoreHorizontal, Plus, Share2, Trash2, X } from 'lucide-react';
+import { ArrowRight, ChevronLeft, ClipboardCopy, Copy, Edit3, Mail, MessageCircle, MoreHorizontal, Phone, Plus, Share2, Trash2, UserPlus, X } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
@@ -24,6 +25,7 @@ import {
 import { UserAvatar } from '@/components/common/UserAvatar';
 import { StackTags } from '@/components/common/StackTags';
 import { PriorityBadge } from '@/components/common/PriorityBadge';
+import { EngagementBadge } from '@/components/common/EngagementBadge';
 import { KanbanStatusSelect } from '@/components/kanban/KanbanStatusSelect';
 import type { VacancyStatus } from '@/api/types';
 import {
@@ -32,6 +34,7 @@ import {
   useDeleteVacancy,
   useUpdateVacancy,
   useVacancy,
+  useVacancyActivity,
 } from './hooks';
 import { VacancyForm, type VacancyFormValues } from './VacancyForm';
 import { useClients } from '@/features/clients/hooks';
@@ -40,9 +43,12 @@ import { useCandidates } from '@/features/candidates/hooks';
 import { vacancyStatuses } from '@/mocks/db/vacancies';
 import { formatDateRu, formatMoneyRub } from '@/lib/utils';
 import type { Vacancy } from '@/api/types';
+import { useAuthStore } from '@/stores/auth';
 import { CommentsSection } from '@/features/comments/CommentsSection';
 import { AttachCandidateDialog } from '@/features/matching/AttachCandidateDialog';
 import { useAttachCandidate, useDetachCandidate } from '@/features/matching/hooks';
+import { MatchCompensationRow } from '@/features/matching/MatchCompensationRow';
+import { DEFAULT_HOURS_PER_MONTH, vacancyMaxNetSalary } from '@/lib/compensation';
 
 function splitStack(value: string | undefined): string[] {
   return (value ?? '')
@@ -55,11 +61,13 @@ function toDuplicatePayload(vacancy: Vacancy): Partial<Vacancy> {
   return {
     title: `${vacancy.title} (копия)`,
     clientId: vacancy.clientId,
+    engagementType: vacancy.engagementType,
     project: vacancy.project,
     grade: vacancy.grade,
     format: vacancy.format,
     priority: vacancy.priority,
     rateClient: vacancy.rateClient,
+    salaryMax: vacancy.salaryMax,
     positions: vacancy.positions,
     stack: [...vacancy.stack],
     deadline: vacancy.deadline,
@@ -71,20 +79,31 @@ function toDuplicatePayload(vacancy: Vacancy): Partial<Vacancy> {
   };
 }
 
+const ACTIVITY_ICON: Record<string, LucideIcon> = {
+  status: ArrowRight,
+  note: MessageCircle,
+  call: Phone,
+  email: Mail,
+  create: Plus,
+};
+const ACTIVITY_PREVIEW_LIMIT = 5;
+
 function toFormValues(vacancy: Vacancy): Partial<VacancyFormValues> {
   return {
     title: vacancy.title,
     clientId: vacancy.clientId,
+    engagementType: vacancy.engagementType,
     project: vacancy.project ?? '',
     grade: vacancy.grade,
     format: vacancy.format,
     priority: vacancy.priority,
     rateClient: vacancy.rateClient,
+    salaryMax: vacancy.salaryMax ?? undefined,
     positions: vacancy.positions,
     stack: vacancy.stack.join(', '),
     deadline: vacancy.deadline ?? '',
     accountManagerId: vacancy.accountManagerId,
-    recruiterId: vacancy.recruiterIds[0] ?? '',
+    recruiterIds: [...vacancy.recruiterIds],
     description: vacancy.description ?? '',
     requirements: vacancy.requirements ?? '',
   };
@@ -94,9 +113,11 @@ export function VacancyCardPage() {
   const navigate = useNavigate();
   const { id } = useParams({ from: '/_authed/vacancies/$id' });
   const { data: vacancy, isLoading } = useVacancy(id);
+  const { data: activity, isLoading: activityLoading, isError: activityError } = useVacancyActivity(id);
   const { data: clientsData } = useClients();
   const { data: usersData } = useUsers();
   const { data: candidatesData } = useCandidates();
+  const currentUser = useAuthStore((s) => s.user);
   const updateVacancy = useUpdateVacancy();
   const createVacancy = useCreateVacancy();
   const changeStatus = useChangeVacancyStatus();
@@ -106,6 +127,8 @@ export function VacancyCardPage() {
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
+  const [activityExpanded, setActivityExpanded] = useState(false);
+  const hoursPerMonth = DEFAULT_HOURS_PER_MONTH;
 
   const close = () => navigate({ to: '/vacancies' });
   const client = clientsData?.items.find((c) => c.id === vacancy?.clientId);
@@ -113,6 +136,9 @@ export function VacancyCardPage() {
   const accountManagerId = vacancy?.accountManagerId || client?.accountManagerId;
   const accountManager = usersData?.find((u) => u.id === accountManagerId);
   const attached = (candidatesData?.items ?? []).filter((c) => vacancy && c.vacancyIds.includes(vacancy.id));
+  const activityItems = activity ?? [];
+  const hiddenActivityCount = Math.max(activityItems.length - ACTIVITY_PREVIEW_LIMIT, 0);
+  const visibleActivity = activityExpanded ? activityItems : activityItems.slice(0, ACTIVITY_PREVIEW_LIMIT);
 
   const handleStatusChange = (status: VacancyStatus) => {
     if (!vacancy || status === vacancy.status) return;
@@ -133,6 +159,35 @@ export function VacancyCardPage() {
       toast.success('Ссылка на вакансию скопирована');
     } catch {
       toast.error('Не удалось скопировать ссылку');
+    }
+  };
+
+  // Текст вакансии для отправки кандидату в мессенджер.
+  // Включает только содержательные блоки (проект, описание, требования);
+  // пустые поля пропускаются, чтобы не отправлять кандидату «голые» заголовки.
+  const buildCandidateText = (v: Vacancy): string => {
+    const blocks: string[] = [];
+    blocks.push(v.title);
+    if (v.project?.trim()) {
+      blocks.push(`Проект: ${v.project.trim()}`);
+    }
+    if (v.description?.trim()) {
+      blocks.push(`Описание вакансии:\n${v.description.trim()}`);
+    }
+    if (v.requirements?.trim()) {
+      blocks.push(`Требования:\n${v.requirements.trim()}`);
+    }
+    return blocks.join('\n\n');
+  };
+
+  const handleCopyForCandidate = async () => {
+    if (!vacancy) return;
+    const text = buildCandidateText(vacancy);
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success('Текст вакансии скопирован — можно отправлять кандидату');
+    } catch {
+      toast.error('Не удалось скопировать текст вакансии');
     }
   };
 
@@ -177,21 +232,46 @@ export function VacancyCardPage() {
     );
   };
 
+  const canSelfAssignRecruiter = Boolean(
+    currentUser &&
+      (currentUser.role === 'admin' || currentUser.role === 'recruiter') &&
+      vacancy &&
+      !vacancy.recruiterIds.includes(currentUser.id),
+  );
+
+  const handleAssignSelfAsRecruiter = () => {
+    if (!vacancy || !currentUser) return;
+    if (vacancy.recruiterIds.includes(currentUser.id)) return;
+    const nextRecruiterIds = [...vacancy.recruiterIds, currentUser.id];
+    updateVacancy.mutate(
+      { id: vacancy.id, payload: { recruiterIds: nextRecruiterIds } },
+      {
+        onSuccess: () => toast.success('Вы назначены рекрутером по вакансии'),
+        onError: () => toast.error('Не удалось назначить себя рекрутером'),
+      },
+    );
+  };
+
   const handleEdit = (values: VacancyFormValues) => {
     if (!vacancy) return;
+    const isAgency = values.engagementType === 'agency';
     const payload = {
       title: values.title,
       clientId: values.clientId,
+      engagementType: values.engagementType,
       project: values.project?.trim() || undefined,
       grade: values.grade,
       format: values.format,
       priority: values.priority,
-      rateClient: Number(values.rateClient),
+      // Для аутстаффа ведём почасовую ставку, для агентства — опциональный оклад «до».
+      rateClient: isAgency ? 0 : Number(values.rateClient ?? 0),
+      // Явный null при outstaff → бэкенд/мок чистит залипшее значение от прошлой агентской версии.
+      salaryMax: isAgency ? (values.salaryMax != null ? Number(values.salaryMax) : null) : null,
       positions: Number(values.positions),
       stack: splitStack(values.stack),
       deadline: values.deadline || null,
       accountManagerId: values.accountManagerId,
-      recruiterIds: values.recruiterId ? [values.recruiterId] : [],
+      recruiterIds: values.recruiterIds ?? [],
       description: values.description?.trim() || undefined,
       requirements: values.requirements?.trim() || undefined,
     };
@@ -233,6 +313,16 @@ export function VacancyCardPage() {
               aria-label="Скопировать вакансию"
             >
               <Copy className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              disabled={!vacancy}
+              onClick={handleCopyForCandidate}
+              aria-label="Скопировать текст для кандидата"
+              title="Скопировать текст для кандидата"
+            >
+              <ClipboardCopy className="h-3.5 w-3.5" />
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -282,6 +372,7 @@ export function VacancyCardPage() {
                   onValueChange={handleStatusChange}
                   disabled={changeStatus.isPending}
                 />
+                <EngagementBadge type={vacancy.engagementType} variant="chip" />
                 <PriorityBadge priority={vacancy.priority} />
                 <span className="text-xs text-muted-foreground">
                   {vacancy.grade} · {vacancy.format}
@@ -305,7 +396,49 @@ export function VacancyCardPage() {
                   )
                 }
               />
-              <Field label="Ставка для клиента" value={`${formatMoneyRub(vacancy.rateClient)} ₽/час`} />
+              {vacancy.engagementType === 'agency' ? (
+                <Field
+                  label="Оклад до"
+                  value={
+                    vacancy.salaryMax ? `${formatMoneyRub(vacancy.salaryMax)} ₽/мес` : undefined
+                  }
+                />
+              ) : (
+                <>
+                  <Field label="Ставка для клиента" value={`${formatMoneyRub(vacancy.rateClient)} ₽/час`} />
+                  <Field
+                    label="Оклад до (на руки)"
+                    value={
+                      vacancy.rateClient > 0 ? (
+                        <span className="flex flex-col gap-0.5 text-[13px] leading-tight">
+                          <span>
+                            <span className="text-muted-foreground">ИП / СМЗ:</span>{' '}
+                            {formatMoneyRub(
+                              vacancyMaxNetSalary({
+                                rateClient: vacancy.rateClient,
+                                employmentType: 'ИП',
+                                hoursPerMonth,
+                              }),
+                            )}{' '}
+                            ₽/мес
+                          </span>
+                          <span>
+                            <span className="text-muted-foreground">ТК РФ:</span>{' '}
+                            {formatMoneyRub(
+                              vacancyMaxNetSalary({
+                                rateClient: vacancy.rateClient,
+                                employmentType: 'ТК РФ',
+                                hoursPerMonth,
+                              }),
+                            )}{' '}
+                            ₽/мес
+                          </span>
+                        </span>
+                      ) : undefined
+                    }
+                  />
+                </>
+              )}
               <Field label="Позиций" value={vacancy.positions} />
               <Field label="Дедлайн" value={formatDateRu(vacancy.deadline)} />
             </div>
@@ -330,7 +463,23 @@ export function VacancyCardPage() {
               <StackTags stack={vacancy.stack} variant="accent" />
             </Section>
 
-            <Section title="Назначенные рекрутеры">
+            <Section
+              title="Назначенные рекрутеры"
+              action={
+                canSelfAssignRecruiter ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 gap-1 px-2 text-xs"
+                    onClick={handleAssignSelfAsRecruiter}
+                    disabled={updateVacancy.isPending}
+                  >
+                    <UserPlus className="h-3.5 w-3.5" />
+                    Назначить себя
+                  </Button>
+                ) : null
+              }
+            >
               {vacancy.recruiterIds.length === 0 ? (
                 <span className="text-xs text-muted-foreground">Не назначены</span>
               ) : (
@@ -352,15 +501,17 @@ export function VacancyCardPage() {
             <Section
               title={`Прикреплённые кандидаты · ${attached.length}`}
               action={
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 gap-1 px-2 text-xs"
-                  onClick={() => setAttachOpen(true)}
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  Прикрепить
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 gap-1 px-2 text-xs"
+                    onClick={() => setAttachOpen(true)}
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Прикрепить
+                  </Button>
+                </div>
               }
             >
               {attached.length === 0 ? (
@@ -368,41 +519,62 @@ export function VacancyCardPage() {
               ) : (
                 <div className="space-y-1.5">
                   {attached.map((c) => (
-                    <div
+                    <MatchCompensationRow
                       key={c.id}
-                      className="group flex items-center rounded-md border bg-muted/30 hover:bg-muted"
-                    >
-                      <button
-                        type="button"
-                        onClick={() => navigate({ to: '/candidates/$id', params: { id: c.id } })}
-                        className="flex min-w-0 flex-1 items-center gap-2.5 px-3 py-2.5 text-left"
-                      >
-                        <UserAvatar
-                          user={{ fullName: c.fullName, initials: c.fullName.split(' ').map((p) => p[0]).slice(0, 2).join(''), color: '#475569' }}
-                          size={26}
-                        />
-                        <div className="min-w-0">
-                          <div className="truncate text-[13px] font-semibold">{c.fullName}</div>
-                          <div className="truncate text-[11.5px] text-muted-foreground">{c.role}</div>
-                        </div>
-                      </button>
-                      <div className="flex shrink-0 items-center gap-1 pr-2">
-                        <span className="tnum text-xs font-semibold">{formatMoneyRub(c.rate)} ₽</span>
-                        <button
-                          type="button"
-                          onClick={() => handleDetachCandidate(c.id, c.fullName)}
-                          disabled={detachCandidate.isPending}
-                          aria-label={`Открепить ${c.fullName}`}
-                          title="Открепить от вакансии"
-                          className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-background hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                        <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
-                      </div>
-                    </div>
+                      vacancy={vacancy}
+                      candidate={c}
+                      hoursPerMonth={hoursPerMonth}
+                      onOpen={() => navigate({ to: '/candidates/$id', params: { id: c.id } })}
+                      onDetach={() => handleDetachCandidate(c.id, c.fullName)}
+                      detachDisabled={detachCandidate.isPending}
+                    />
                   ))}
                 </div>
+              )}
+            </Section>
+
+            <Section title="История взаимодействий">
+              {activityLoading && (
+                <div className="text-xs text-muted-foreground">Загрузка…</div>
+              )}
+              {activityError && !activityLoading && (
+                <div className="text-xs text-red-600">Не удалось загрузить историю.</div>
+              )}
+              {!activityLoading && !activityError && (!activity || activity.length === 0) && (
+                <div className="text-xs text-muted-foreground">Записей пока нет.</div>
+              )}
+              <div className="flex flex-col">
+                {visibleActivity.map((entry, i, arr) => {
+                  const Icon = ACTIVITY_ICON[entry.kind] ?? Plus;
+                  const actor = usersData?.find((u) => u.id === entry.actorId);
+                  return (
+                    <div key={entry.id} className="relative flex gap-2.5 pb-3.5 last:pb-0">
+                      {i < arr.length - 1 && (
+                        <div className="absolute left-[11px] top-6 bottom-0 w-px bg-border" />
+                      )}
+                      <div className="z-10 flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full border bg-background">
+                        <Icon className="h-2.5 w-2.5 text-muted-foreground" strokeWidth={1.8} />
+                      </div>
+                      <div className="flex-1">
+                        <div className="text-[13px] leading-5">{entry.text}</div>
+                        <div className="mt-0.5 text-[11.5px] text-muted-foreground">
+                          {actor?.fullName ?? '—'} · {new Date(entry.createdAt).toLocaleString('ru-RU')}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {hiddenActivityCount > 0 && !activityLoading && !activityError && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => setActivityExpanded((prev) => !prev)}
+                >
+                  {activityExpanded ? 'Свернуть' : `Показать ещё ${hiddenActivityCount}`}
+                </Button>
               )}
             </Section>
 

@@ -24,9 +24,10 @@ import {
 } from '@/components/ui/dialog';
 import { UserAvatar } from '@/components/common/UserAvatar';
 import { StackTags } from '@/components/common/StackTags';
+import { EngagementBadge } from '@/components/common/EngagementBadge';
 import { KanbanStatusSelect } from '@/components/kanban/KanbanStatusSelect';
 import type { Candidate, CandidateStatus } from '@/api/types';
-import { formatMoneyRub } from '@/lib/utils';
+import { formatMoneyRub, telegramUrl } from '@/lib/utils';
 import { CandidateForm, type CandidateFormValues } from './CandidateForm';
 import {
   useCandidate,
@@ -55,14 +56,17 @@ function toFormValues(candidate: Candidate): Partial<CandidateFormValues> {
   return {
     fullName: candidate.fullName,
     role: candidate.role,
+    engagementType: candidate.engagementType,
     grade: candidate.grade,
     experienceYears: candidate.experienceYears,
     format: candidate.format,
-    rate: candidate.rate,
+    rateMonth: candidate.rateMonth,
+    employmentType: candidate.employmentType,
     recruiterId: candidate.recruiterId,
     location: candidate.location,
     source: candidate.source,
-    email: candidate.email ?? '',
+    birthday: candidate.birthday ?? '',
+    telegram: candidate.telegram ?? '',
     phone: candidate.phone ?? '',
     stack: candidate.stack.join(', '),
   };
@@ -72,16 +76,19 @@ function toDuplicatePayload(candidate: Candidate): Partial<Candidate> {
   return {
     fullName: `${candidate.fullName} (копия)`,
     role: candidate.role,
+    engagementType: candidate.engagementType,
     grade: candidate.grade,
     experienceYears: candidate.experienceYears,
     stack: [...candidate.stack],
-    rate: candidate.rate,
+    rateMonth: candidate.rateMonth,
+    employmentType: candidate.employmentType,
     format: candidate.format,
     location: candidate.location,
     source: candidate.source,
+    birthday: candidate.birthday,
     recruiterId: candidate.recruiterId,
     status: 'new',
-    email: candidate.email,
+    telegram: candidate.telegram,
     phone: candidate.phone,
     vacancyIds: [...candidate.vacancyIds],
   };
@@ -94,6 +101,7 @@ const ACTIVITY_ICON: Record<string, LucideIcon> = {
   email: Mail,
   create: Plus,
 };
+const ACTIVITY_PREVIEW_LIMIT = 5;
 
 export function CandidateCardPage() {
   const navigate = useNavigate();
@@ -112,12 +120,16 @@ export function CandidateCardPage() {
   const attachCandidate = useAttachCandidate();
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
+  const [activityExpanded, setActivityExpanded] = useState(false);
 
   const close = () => navigate({ to: '/candidates' });
   const recruiter = usersData?.find((u) => u.id === candidate?.recruiterId);
   const attachedVacancies = (vacanciesData?.items ?? []).filter(
     (v) => candidate && candidate.vacancyIds.includes(v.id),
   );
+  const activityItems = activity ?? [];
+  const hiddenActivityCount = Math.max(activityItems.length - ACTIVITY_PREVIEW_LIMIT, 0);
+  const visibleActivity = activityExpanded ? activityItems : activityItems.slice(0, ACTIVITY_PREVIEW_LIMIT);
 
   const handleShare = async () => {
     if (!candidate) return;
@@ -179,14 +191,17 @@ export function CandidateCardPage() {
         payload: {
           fullName: values.fullName,
           role: values.role,
+          engagementType: values.engagementType,
           grade: values.grade,
           experienceYears: Number(values.experienceYears),
           format: values.format,
-          rate: Number(values.rate),
+          rateMonth: Number(values.rateMonth),
+          employmentType: values.employmentType,
           recruiterId: values.recruiterId,
           location: values.location || '',
           source: values.source || '',
-          email: values.email || undefined,
+          birthday: values.birthday || undefined,
+          telegram: values.telegram || undefined,
           phone: values.phone || undefined,
           stack: splitStack(values.stack),
         },
@@ -297,6 +312,7 @@ export function CandidateCardPage() {
                   onValueChange={handleStatusChange}
                   disabled={changeStatus.isPending}
                 />
+                <EngagementBadge type={candidate.engagementType} variant="chip" />
                 <span className="text-xs text-muted-foreground">
                   {candidate.experienceYears} лет опыта · {candidate.location}
                 </span>
@@ -306,11 +322,24 @@ export function CandidateCardPage() {
             <Separator />
 
             <div className="grid grid-cols-2 gap-x-7 gap-y-3.5 text-sm">
-              <Field label="Email" value={candidate.email && <span className="flex items-center gap-1.5"><Mail className="h-3 w-3 text-muted-foreground" />{candidate.email}</span>} />
+              <Field
+                label="Telegram"
+                value={candidate.telegram && (
+                  <span className="flex items-center">
+                    <a href={telegramUrl(candidate.telegram)} target="_blank" rel="noopener noreferrer" className="hover:underline">
+                      {candidate.telegram}
+                    </a>
+                  </span>
+                )}
+              />
               <Field label="Телефон" value={candidate.phone && <span className="flex items-center gap-1.5"><Phone className="h-3 w-3 text-muted-foreground" />{candidate.phone}</span>} />
-              <Field label="Ожидаемая ставка" value={<span className="font-semibold">{formatMoneyRub(candidate.rate)} ₽/час</span>} />
+              <Field label="Ожидаемая ставка" value={<span className="font-semibold">{formatMoneyRub(candidate.rateMonth)} ₽/мес</span>} />
+              <Field label="Тип оформления" value={candidate.employmentType} />
+              <Field
+                label="Дата рождения"
+                value={candidate.birthday ? new Date(candidate.birthday).toLocaleDateString('ru-RU') : undefined}
+              />
               <Field label="Формат работы" value={candidate.format} />
-              <Field label="Источник" value={candidate.source} />
               <Field
                 label="Ответственный рекрутер"
                 value={
@@ -362,7 +391,13 @@ export function CandidateCardPage() {
                           </div>
                         </button>
                         <div className="flex shrink-0 items-center gap-1 pr-2">
-                          <span className="tnum text-xs font-semibold">{formatMoneyRub(v.rateClient)} ₽</span>
+                          <span className="tnum text-xs font-semibold">
+                            {v.engagementType === 'agency'
+                              ? v.salaryMax
+                                ? `до ${formatMoneyRub(v.salaryMax)} ₽`
+                                : '—'
+                              : `${formatMoneyRub(v.rateClient)} ₽`}
+                          </span>
                           <button
                             type="button"
                             onClick={() => handleDetachVacancy(v.id, v.title)}
@@ -383,11 +418,11 @@ export function CandidateCardPage() {
             </Section>
 
             <Section title="История взаимодействий">
-              {(!activity || activity.length === 0) && (
+              {activityItems.length === 0 && (
                 <div className="text-xs text-muted-foreground">Записей пока нет.</div>
               )}
               <div className="flex flex-col">
-                {(activity ?? []).map((entry, i, arr) => {
+                {visibleActivity.map((entry, i, arr) => {
                   const Icon = ACTIVITY_ICON[entry.kind] ?? Plus;
                   const actor = usersData?.find((u) => u.id === entry.actorId);
                   return (
@@ -408,6 +443,17 @@ export function CandidateCardPage() {
                   );
                 })}
               </div>
+              {hiddenActivityCount > 0 && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => setActivityExpanded((prev) => !prev)}
+                >
+                  {activityExpanded ? 'Свернуть' : `Показать ещё ${hiddenActivityCount}`}
+                </Button>
+              )}
             </Section>
 
             <Separator />

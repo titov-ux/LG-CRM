@@ -1,6 +1,7 @@
 import * as React from 'react';
-import { CalendarIcon } from 'lucide-react';
-import { format, isValid } from 'date-fns';
+import { CalendarIcon, ChevronLeft, ChevronRight } from 'lucide-react';
+import { addMonths, format, isValid, setMonth, setYear } from 'date-fns';
+import { ru } from 'date-fns/locale';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
@@ -89,10 +90,41 @@ function isoToDisplay(iso: string | undefined | null): string {
   return d ? format(d, DISPLAY_FORMAT) : '';
 }
 
+function formatDigitsAsDate(rawDigits: string): string {
+  const digits = rawDigits.replace(/\D/g, '').slice(0, 8);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}.${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}.${digits.slice(2, 4)}.${digits.slice(4)}`;
+}
+
+/**
+ * Нормализуем ввод «на лету», чтобы поле не прыгало между форматами:
+ * - принимаем любые символы, но оставляем только цифры
+ * - автоматически ставим точки: 01011990 -> 01.01.1990
+ * - ограничиваем длину до 8 цифр (ддммгггг)
+ */
+function normalizeTyping(raw: string): string {
+  return formatDigitsAsDate(raw);
+}
+
+function capitalizeFirst(s: string): string {
+  if (!s) return s;
+  return s[0].toUpperCase() + s.slice(1);
+}
+
+type PickerStep = 'day' | 'year' | 'month';
+
+function clampByMaxDate(date: Date, maxDate?: Date): Date {
+  if (!maxDate) return date;
+  return date > maxDate ? maxDate : date;
+}
+
 export interface DateFieldProps {
   /** ISO YYYY-MM-DD или пустая строка / undefined. */
   value: string | undefined | null;
   onChange: (isoOrEmpty: string) => void;
+  /** Верхняя граница выбора (включительно), например today для даты рождения. */
+  maxDate?: Date;
   disabled?: boolean;
   placeholder?: string;
   className?: string;
@@ -105,6 +137,7 @@ export interface DateFieldProps {
 export function DateField({
   value,
   onChange,
+  maxDate,
   disabled,
   placeholder = 'дд.мм.гггг',
   className,
@@ -114,11 +147,40 @@ export function DateField({
 }: DateFieldProps) {
   const [open, setOpen] = React.useState(false);
   const [text, setText] = React.useState<string>(() => isoToDisplay(value));
+  const selectedDate = isoToDate(value);
+  const [pickerMonth, setPickerMonth] = React.useState<Date>(() =>
+    clampByMaxDate(selectedDate ?? new Date(), maxDate),
+  );
+  const [pickerStep, setPickerStep] = React.useState<PickerStep>('day');
+  const [yearPageStart, setYearPageStart] = React.useState<number>(() => (selectedDate ?? new Date()).getFullYear() - 6);
+  const maxYear = maxDate?.getFullYear();
+  const maxMonthIndex = maxDate?.getMonth();
+  const nextMonth = React.useMemo(() => addMonths(pickerMonth, 1), [pickerMonth]);
+  const isNextMonthDisabled = !!maxDate && (
+    nextMonth.getFullYear() > maxDate.getFullYear()
+    || (nextMonth.getFullYear() === maxDate.getFullYear() && nextMonth.getMonth() > maxDate.getMonth())
+  );
+
+  const monthOptions = React.useMemo(
+    () =>
+      Array.from({ length: 12 }, (_, i) =>
+        capitalizeFirst(format(new Date(2024, i, 1), 'LLLL', { locale: ru })),
+      ),
+    [],
+  );
 
   // Синхронизируем локальный текст при внешних изменениях value (например, reset формы).
   React.useEffect(() => {
     setText(isoToDisplay(value));
   }, [value]);
+
+  React.useEffect(() => {
+    if (!open) return;
+    const base = clampByMaxDate(selectedDate ?? new Date(), maxDate);
+    setPickerMonth(base);
+    setPickerStep('day');
+    setYearPageStart(base.getFullYear() - 6);
+  }, [open, selectedDate, maxDate]);
 
   const commitText = (raw: string) => {
     const trimmed = raw.trim();
@@ -138,8 +200,6 @@ export function DateField({
     }
   };
 
-  const selectedDate = isoToDate(value);
-
   return (
     <div className={cn('relative', className)}>
       <Input
@@ -151,7 +211,7 @@ export function DateField({
         placeholder={placeholder}
         value={text}
         disabled={disabled}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => setText(normalizeTyping(e.target.value))}
         onBlur={() => {
           commitText(text);
           onBlur?.();
@@ -175,21 +235,162 @@ export function DateField({
           </button>
         </PopoverTrigger>
         <PopoverContent className="w-auto p-0" align="end">
-          <Calendar
-            mode="single"
-            selected={selectedDate}
-            defaultMonth={selectedDate}
-            onSelect={(d) => {
-              if (d) {
-                onChange(format(d, ISO_FORMAT));
-                setText(format(d, DISPLAY_FORMAT));
-              } else {
-                onChange('');
-                setText('');
-              }
-              setOpen(false);
-            }}
-          />
+          {pickerStep === 'day' && (
+            <>
+              <div className="flex items-center justify-between px-3 pt-3">
+                <button
+                  type="button"
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-md border text-muted-foreground hover:bg-accent hover:text-foreground"
+                  onClick={() => setPickerMonth((prev) => addMonths(prev, -1))}
+                  aria-label="Предыдущий месяц"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  className="text-sm font-medium capitalize hover:underline"
+                  onClick={() => {
+                    setYearPageStart(pickerMonth.getFullYear() - 6);
+                    setPickerStep('year');
+                  }}
+                >
+                  {capitalizeFirst(format(pickerMonth, 'LLLL yyyy', { locale: ru }))}
+                </button>
+                <button
+                  type="button"
+                  className={cn(
+                    'inline-flex h-7 w-7 items-center justify-center rounded-md border text-muted-foreground hover:bg-accent hover:text-foreground',
+                    isNextMonthDisabled && 'cursor-not-allowed opacity-40 hover:bg-transparent hover:text-muted-foreground',
+                  )}
+                  onClick={() => {
+                    if (isNextMonthDisabled) return;
+                    setPickerMonth((prev) => addMonths(prev, 1));
+                  }}
+                  aria-label="Следующий месяц"
+                  disabled={isNextMonthDisabled}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+              <Calendar
+                mode="single"
+                selected={selectedDate}
+                month={pickerMonth}
+                onMonthChange={setPickerMonth}
+                hidden={maxDate ? { after: maxDate } : undefined}
+                disabled={maxDate ? { after: maxDate } : undefined}
+                className="pt-1"
+                classNames={{
+                  caption: 'hidden',
+                  nav: 'hidden',
+                }}
+                onSelect={(d) => {
+                  if (d) {
+                    onChange(format(d, ISO_FORMAT));
+                    setText(format(d, DISPLAY_FORMAT));
+                  } else {
+                    onChange('');
+                    setText('');
+                  }
+                  setOpen(false);
+                }}
+              />
+            </>
+          )}
+
+          {pickerStep === 'year' && (
+            <div className="w-[280px] p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <button
+                  type="button"
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-md border text-muted-foreground hover:bg-accent hover:text-foreground"
+                  onClick={() => setYearPageStart((y) => y - 12)}
+                  aria-label="Предыдущие годы"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+                <div className="text-sm font-medium">
+                  {yearPageStart} - {yearPageStart + 11}
+                </div>
+                <button
+                  type="button"
+                  className={cn(
+                    'inline-flex h-7 w-7 items-center justify-center rounded-md border text-muted-foreground hover:bg-accent hover:text-foreground',
+                    maxYear != null &&
+                      yearPageStart + 12 > maxYear &&
+                      'cursor-not-allowed opacity-40 hover:bg-transparent hover:text-muted-foreground',
+                  )}
+                  onClick={() => {
+                    if (maxYear != null && yearPageStart + 12 > maxYear) return;
+                    setYearPageStart((y) => y + 12);
+                  }}
+                  aria-label="Следующие годы"
+                  disabled={maxYear != null && yearPageStart + 12 > maxYear}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="grid grid-cols-3 gap-1.5">
+                {Array.from({ length: 12 }, (_, i) => yearPageStart + i).map((year) => {
+                  const active = pickerMonth.getFullYear() === year;
+                  const yearDisabled = maxYear != null && year > maxYear;
+                  return (
+                    <button
+                      key={year}
+                      type="button"
+                      className={cn(
+                        'h-8 rounded-md text-sm hover:bg-accent',
+                        active && 'bg-primary text-primary-foreground hover:bg-primary',
+                        yearDisabled && 'cursor-not-allowed opacity-40 hover:bg-transparent',
+                      )}
+                      onClick={() => {
+                        if (yearDisabled) return;
+                        setPickerMonth((prev) => setYear(prev, year));
+                        setPickerStep('month');
+                      }}
+                      disabled={yearDisabled}
+                    >
+                      {year}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {pickerStep === 'month' && (
+            <div className="w-[280px] p-3">
+              <div className="mb-2 text-center text-sm font-medium">{pickerMonth.getFullYear()}</div>
+              <div className="grid grid-cols-3 gap-1.5">
+                {monthOptions.map((label, monthIndex) => {
+                  const active = pickerMonth.getMonth() === monthIndex;
+                  const year = pickerMonth.getFullYear();
+                  const monthDisabled =
+                    maxYear != null &&
+                    (year > maxYear || (year === maxYear && maxMonthIndex != null && monthIndex > maxMonthIndex));
+                  return (
+                    <button
+                      key={label}
+                      type="button"
+                      className={cn(
+                        'h-8 rounded-md text-sm hover:bg-accent',
+                        active && 'bg-primary text-primary-foreground hover:bg-primary',
+                        monthDisabled && 'cursor-not-allowed opacity-40 hover:bg-transparent',
+                      )}
+                      onClick={() => {
+                        if (monthDisabled) return;
+                        setPickerMonth((prev) => setMonth(prev, monthIndex));
+                        setPickerStep('day');
+                      }}
+                      disabled={monthDisabled}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </PopoverContent>
       </Popover>
     </div>

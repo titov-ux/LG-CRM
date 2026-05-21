@@ -239,7 +239,6 @@ export interface Candidate {
   employmentType: EmploymentType;
   format: WorkFormat;
   location: string;
-  source: string;
   recruiterId: UUID;
   status: CandidateStatus;
   daysInStatus: number;

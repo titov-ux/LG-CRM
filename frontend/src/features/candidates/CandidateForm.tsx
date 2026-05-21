@@ -99,7 +99,6 @@ const schema = z.object({
   employmentType: z.enum(['ИП', 'СМЗ', 'ТК РФ']),
   recruiterId: z.string().min(1, 'Выберите рекрутера'),
   location: z.string().optional(),
-  source: z.string().optional(),
   birthday: z.string().optional(),
   telegram: z.string().optional(),
   phone: z.string().optional(),
@@ -140,7 +139,6 @@ export function CandidateForm({ defaultValues, onSubmit, isPending, submitLabel 
       employmentType: 'ИП',
       recruiterId: '',
       location: '',
-      source: 'HeadHunter',
       birthday: '',
       telegram: '',
       phone: '',
@@ -300,7 +298,12 @@ export function CandidateForm({ defaultValues, onSubmit, isPending, submitLabel 
                 <FormItem>
                   <FormLabel>Дата рождения</FormLabel>
                   <FormControl>
-                    <DateField value={field.value} onChange={field.onChange} onBlur={field.onBlur} />
+                    <DateField
+                      value={field.value}
+                      onChange={field.onChange}
+                      onBlur={field.onBlur}
+                      maxDate={new Date()}
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -353,17 +356,6 @@ export function CandidateForm({ defaultValues, onSubmit, isPending, submitLabel 
               )}
             />
           </div>
-          <FormField
-            control={form.control}
-            name="source"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Источник</FormLabel>
-                <FormControl><Input {...field} placeholder="HeadHunter, LinkedIn…" /></FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
         </FormSection>
 
         {/* === Сопроводительное письмо === */}

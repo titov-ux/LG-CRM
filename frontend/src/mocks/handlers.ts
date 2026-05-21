@@ -656,7 +656,6 @@ export const handlers = [
       employmentType: body.employmentType ?? 'ИП',
       format: body.format ?? 'Гибрид',
       location: body.location ?? '',
-      source: body.source ?? 'Прямой поиск',
       recruiterId: body.recruiterId ?? 'u4',
       status: body.status ?? 'new',
       daysInStatus: 0,

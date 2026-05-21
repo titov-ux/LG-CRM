@@ -23,6 +23,13 @@ function Calendar({ className, classNames, showOutsideDays = true, ...props }: C
         month: 'flex flex-col gap-3',
         caption: 'flex justify-center pt-1 relative items-center w-full',
         caption_label: 'text-sm font-medium capitalize',
+        caption_dropdowns: 'flex items-center gap-2',
+        dropdown: cn(
+          'h-8 rounded-md border border-input bg-background px-2 text-sm',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+        ),
+        dropdown_month: 'capitalize',
+        dropdown_year: '',
         nav: 'flex items-center gap-1',
         nav_button: cn(
           buttonVariants({ variant: 'outline' }),
@@ -49,6 +56,7 @@ function Calendar({ className, classNames, showOutsideDays = true, ...props }: C
         day_outside: 'day-outside text-muted-foreground/60 aria-selected:text-muted-foreground',
         day_disabled: 'text-muted-foreground opacity-50',
         day_hidden: 'invisible',
+        vhidden: 'sr-only',
         ...classNames,
       }}
       components={{

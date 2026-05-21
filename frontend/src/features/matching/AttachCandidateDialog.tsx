@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { MapPin, Briefcase, AlertTriangle } from 'lucide-react';
+import { MapPin, AlertTriangle } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -502,12 +502,6 @@ function CandidateRow({
           </span>
           <span>{c.employmentType}</span>
           <span>{c.format}</span>
-          {c.source && (
-            <span className="inline-flex items-center gap-1">
-              <Briefcase className="h-3 w-3" />
-              {c.source}
-            </span>
-          )}
           {c.vacancyIds.length > 0 && (
             <span className="text-muted-foreground/70">
               уже на {c.vacancyIds.length}{' '}

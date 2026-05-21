@@ -182,7 +182,12 @@ export function ContactForm({ clients, onSubmit, isPending, submitLabel = 'До�
             <FormItem>
               <FormLabel>День рождения (необязательно)</FormLabel>
               <FormControl>
-                <DateField value={field.value} onChange={field.onChange} onBlur={field.onBlur} />
+                <DateField
+                  value={field.value}
+                  onChange={field.onChange}
+                  onBlur={field.onBlur}
+                  maxDate={new Date()}
+                />
               </FormControl>
               <FormMessage />
             </FormItem>

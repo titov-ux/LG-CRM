@@ -173,7 +173,7 @@ export function VacancyCardPage() {
       blocks.push(`Проект: ${v.project.trim()}`);
     }
     if (v.description?.trim()) {
-      blocks.push(`Описание вакансии:\n${v.description.trim()}`);
+      blocks.push(`Описание:\n${v.description.trim()}`);
     }
     if (v.requirements?.trim()) {
       blocks.push(`Требования:\n${v.requirements.trim()}`);
@@ -446,7 +446,7 @@ export function VacancyCardPage() {
             </div>
 
             {vacancy.description && (
-              <Section title="Описание вакансии">
+              <Section title="Описание">
                 <p className="whitespace-pre-line text-[13.5px] leading-relaxed text-foreground/90">
                   {vacancy.description}
                 </p>

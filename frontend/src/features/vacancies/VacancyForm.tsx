@@ -534,7 +534,7 @@ export function VacancyForm({ defaultValues, onSubmit, isPending, submitLabel = 
           name="description"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Описание вакансии</FormLabel>
+              <FormLabel>Описание</FormLabel>
               <FormControl>
                 <Textarea
                   {...field}

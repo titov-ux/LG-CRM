@@ -79,7 +79,6 @@ export function QuickCreateMenu() {
       employmentType: values.employmentType,
       recruiterId: values.recruiterId,
       location: values.location || '',
-      source: values.source || 'Прямой поиск',
       birthday: values.birthday || undefined,
       telegram: values.telegram || undefined,
       phone: values.phone || undefined,

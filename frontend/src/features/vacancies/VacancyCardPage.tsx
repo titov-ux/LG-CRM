@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from '@tanstack/react-router';
-import { ChevronLeft, ChevronRight, Copy, Edit3, MoreHorizontal, Share2, Trash2, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Copy, Edit3, MoreHorizontal, Plus, Share2, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
@@ -41,6 +41,8 @@ import { vacancyStatuses } from '@/mocks/db/vacancies';
 import { formatDateRu, formatMoneyRub } from '@/lib/utils';
 import type { Vacancy } from '@/api/types';
 import { CommentsSection } from '@/features/comments/CommentsSection';
+import { AttachCandidateDialog } from '@/features/matching/AttachCandidateDialog';
+import { useAttachCandidate, useDetachCandidate } from '@/features/matching/hooks';
 
 function splitStack(value: string | undefined): string[] {
   return (value ?? '')
@@ -61,6 +63,7 @@ function toDuplicatePayload(vacancy: Vacancy): Partial<Vacancy> {
     positions: vacancy.positions,
     stack: [...vacancy.stack],
     deadline: vacancy.deadline,
+    accountManagerId: vacancy.accountManagerId,
     recruiterIds: [...vacancy.recruiterIds],
     status: 'new',
     description: vacancy.description,
@@ -80,6 +83,7 @@ function toFormValues(vacancy: Vacancy): Partial<VacancyFormValues> {
     positions: vacancy.positions,
     stack: vacancy.stack.join(', '),
     deadline: vacancy.deadline ?? '',
+    accountManagerId: vacancy.accountManagerId,
     recruiterId: vacancy.recruiterIds[0] ?? '',
     description: vacancy.description ?? '',
     requirements: vacancy.requirements ?? '',
@@ -97,12 +101,17 @@ export function VacancyCardPage() {
   const createVacancy = useCreateVacancy();
   const changeStatus = useChangeVacancyStatus();
   const deleteVacancy = useDeleteVacancy();
+  const detachCandidate = useDetachCandidate();
+  const attachCandidate = useAttachCandidate();
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [attachOpen, setAttachOpen] = useState(false);
 
   const close = () => navigate({ to: '/vacancies' });
   const client = clientsData?.items.find((c) => c.id === vacancy?.clientId);
-  const accountManager = usersData?.find((u) => u.id === client?.accountManagerId);
+  // АМ берётся с самой вакансии; на старых записях без поля — fallback на АМ клиента.
+  const accountManagerId = vacancy?.accountManagerId || client?.accountManagerId;
+  const accountManager = usersData?.find((u) => u.id === accountManagerId);
   const attached = (candidatesData?.items ?? []).filter((c) => vacancy && c.vacancyIds.includes(vacancy.id));
 
   const handleStatusChange = (status: VacancyStatus) => {
@@ -150,6 +159,24 @@ export function VacancyCardPage() {
     });
   };
 
+  const handleDetachCandidate = (candidateId: string, candidateName: string) => {
+    if (!vacancy) return;
+    detachCandidate.mutate(
+      { vacancyId: vacancy.id, candidateId },
+      {
+        onSuccess: () => {
+          toast.success(`${candidateName} откреплён от вакансии`, {
+            action: {
+              label: 'Вернуть',
+              onClick: () => attachCandidate.mutate({ vacancyId: vacancy.id, candidateId }),
+            },
+          });
+        },
+        onError: () => toast.error('Не удалось открепить кандидата'),
+      },
+    );
+  };
+
   const handleEdit = (values: VacancyFormValues) => {
     if (!vacancy) return;
     const payload = {
@@ -163,6 +190,7 @@ export function VacancyCardPage() {
       positions: Number(values.positions),
       stack: splitStack(values.stack),
       deadline: values.deadline || null,
+      accountManagerId: values.accountManagerId,
       recruiterIds: values.recruiterId ? [values.recruiterId] : [],
       description: values.description?.trim() || undefined,
       requirements: values.requirements?.trim() || undefined,
@@ -321,33 +349,58 @@ export function VacancyCardPage() {
               )}
             </Section>
 
-            <Section title={`Прикреплённые кандидаты · ${attached.length}`}>
+            <Section
+              title={`Прикреплённые кандидаты · ${attached.length}`}
+              action={
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 gap-1 px-2 text-xs"
+                  onClick={() => setAttachOpen(true)}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Прикрепить
+                </Button>
+              }
+            >
               {attached.length === 0 ? (
                 <div className="py-2 text-xs text-muted-foreground">Кандидаты пока не прикреплены.</div>
               ) : (
                 <div className="space-y-1.5">
                   {attached.map((c) => (
-                    <button
+                    <div
                       key={c.id}
-                      type="button"
-                      onClick={() => navigate({ to: '/candidates/$id', params: { id: c.id } })}
-                      className="flex w-full items-center justify-between rounded-md border bg-muted/30 px-3 py-2.5 text-left hover:bg-muted"
+                      className="group flex items-center rounded-md border bg-muted/30 hover:bg-muted"
                     >
-                      <div className="flex items-center gap-2.5">
+                      <button
+                        type="button"
+                        onClick={() => navigate({ to: '/candidates/$id', params: { id: c.id } })}
+                        className="flex min-w-0 flex-1 items-center gap-2.5 px-3 py-2.5 text-left"
+                      >
                         <UserAvatar
                           user={{ fullName: c.fullName, initials: c.fullName.split(' ').map((p) => p[0]).slice(0, 2).join(''), color: '#475569' }}
                           size={26}
                         />
-                        <div>
-                          <div className="text-[13px] font-semibold">{c.fullName}</div>
-                          <div className="text-[11.5px] text-muted-foreground">{c.role}</div>
+                        <div className="min-w-0">
+                          <div className="truncate text-[13px] font-semibold">{c.fullName}</div>
+                          <div className="truncate text-[11.5px] text-muted-foreground">{c.role}</div>
                         </div>
-                      </div>
-                      <div className="flex items-center gap-2">
+                      </button>
+                      <div className="flex shrink-0 items-center gap-1 pr-2">
                         <span className="tnum text-xs font-semibold">{formatMoneyRub(c.rate)} ₽</span>
+                        <button
+                          type="button"
+                          onClick={() => handleDetachCandidate(c.id, c.fullName)}
+                          disabled={detachCandidate.isPending}
+                          aria-label={`Открепить ${c.fullName}`}
+                          title="Открепить от вакансии"
+                          className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-background hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
                         <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
                       </div>
-                    </button>
+                    </div>
                   ))}
                 </div>
               )}
@@ -406,6 +459,15 @@ export function VacancyCardPage() {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    {vacancy && (
+      <AttachCandidateDialog
+        open={attachOpen}
+        onOpenChange={setAttachOpen}
+        vacancyId={vacancy.id}
+        excludeIds={attached.map((c) => c.id)}
+      />
+    )}
     </>
   );
 }
@@ -419,10 +481,21 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({
+  title,
+  action,
+  children,
+}: {
+  title: string;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
   return (
     <div className="space-y-3">
-      <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{title}</div>
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{title}</div>
+        {action}
+      </div>
       {children}
     </div>
   );

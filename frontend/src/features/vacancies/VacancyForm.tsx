@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useForm } from 'react-hook-form';
+import { useEffect, useState } from 'react';
+import { useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Sparkles } from 'lucide-react';
@@ -49,6 +49,7 @@ const schema = z.object({
   positions: z.coerce.number().int().positive(),
   stack: z.string().optional(),
   deadline: z.string().optional(),
+  accountManagerId: z.string().min(1, 'Выберите аккаунт-менеджера'),
   recruiterId: z.string().optional(),
   description: z.string().optional(),
   requirements: z.string().optional(),
@@ -67,6 +68,7 @@ export function VacancyForm({ defaultValues, onSubmit, isPending, submitLabel = 
   const { data: clientsData } = useClients();
   const { data: users } = useUsers();
   const recruiters = (users ?? []).filter((u) => u.role === 'recruiter');
+  const accountManagers = (users ?? []).filter((u) => u.role === 'account_manager' && u.isActive);
   const [importOpen, setImportOpen] = useState(false);
 
   const form = useForm<VacancyFormValues>({
@@ -82,12 +84,33 @@ export function VacancyForm({ defaultValues, onSubmit, isPending, submitLabel = 
       rateClient: 0,
       stack: '',
       deadline: '',
+      accountManagerId: '',
       recruiterId: '',
       description: '',
       requirements: '',
       ...defaultValues,
     } as VacancyFormValues,
   });
+
+  // Если у формы уже есть АМ в defaultValues (режим редактирования), не перезаписываем его.
+  const shouldAutofillAm = !defaultValues?.accountManagerId;
+  const watchedClientId = useWatch({ control: form.control, name: 'clientId' });
+  useEffect(() => {
+    if (!shouldAutofillAm) return;
+
+    if (!watchedClientId) {
+      if (form.getValues('accountManagerId')) {
+        form.setValue('accountManagerId', '', { shouldDirty: false, shouldValidate: false });
+      }
+      return;
+    }
+
+    const client = clientsData?.items.find((c) => c.id === watchedClientId);
+    const nextAccountManagerId = client?.accountManagerId ?? '';
+    if (nextAccountManagerId && form.getValues('accountManagerId') !== nextAccountManagerId) {
+      form.setValue('accountManagerId', nextAccountManagerId, { shouldDirty: false, shouldValidate: false });
+    }
+  }, [watchedClientId, clientsData, form, shouldAutofillAm]);
 
   const applyParsed = (parsed: ParsedVacancy) => {
     const setIf = (key: keyof VacancyFormValues, value: unknown) => {
@@ -263,24 +286,47 @@ export function VacancyForm({ defaultValues, onSubmit, isPending, submitLabel = 
           />
         </div>
 
-        <FormField
-          control={form.control}
-          name="recruiterId"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Ответственный рекрутер</FormLabel>
-              <Select value={field.value || undefined} onValueChange={field.onChange}>
-                <FormControl><SelectTrigger><SelectValue placeholder="Не назначен" /></SelectTrigger></FormControl>
-                <SelectContent>
-                  {recruiters.map((r) => (
-                    <SelectItem key={r.id} value={r.id}>{r.fullName}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
+        <div className="grid grid-cols-2 gap-3">
+          <FormField
+            control={form.control}
+            name="accountManagerId"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Ответственный менеджер</FormLabel>
+                <Select
+                  value={field.value || undefined}
+                  onValueChange={field.onChange}
+                >
+                  <FormControl><SelectTrigger><SelectValue placeholder="Не назначен" /></SelectTrigger></FormControl>
+                  <SelectContent>
+                    {accountManagers.map((u) => (
+                      <SelectItem key={u.id} value={u.id}>{u.fullName}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name="recruiterId"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Ответственный рекрутер</FormLabel>
+                <Select value={field.value || undefined} onValueChange={field.onChange}>
+                  <FormControl><SelectTrigger><SelectValue placeholder="Не назначен" /></SelectTrigger></FormControl>
+                  <SelectContent>
+                    {recruiters.map((r) => (
+                      <SelectItem key={r.id} value={r.id}>{r.fullName}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </div>
 
         <FormField
           control={form.control}

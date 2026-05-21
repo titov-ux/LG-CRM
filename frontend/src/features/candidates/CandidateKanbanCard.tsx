@@ -12,14 +12,7 @@ interface Props {
 export function CandidateKanbanCard({ candidate, recruiter }: Props) {
   return (
     <>
-      <div className="mb-1 flex items-start justify-between gap-2">
-        <div className="text-[13px] font-semibold leading-[17px] tracking-tight">{candidate.fullName}</div>
-        {candidate.hot && (
-          <span title="Горячий: в работе по 2+ вакансиям" className="inline-flex h-[18px] w-[18px] items-center justify-center rounded-full bg-amber-100">
-            <span className="text-[11px]">🔥</span>
-          </span>
-        )}
-      </div>
+      <div className="mb-1 text-[13px] font-semibold leading-[17px] tracking-tight">{candidate.fullName}</div>
 
       <div className="mb-2 text-[11.5px] text-muted-foreground">
         {candidate.role} <span className="text-slate-300">· </span>

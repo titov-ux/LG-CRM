@@ -82,7 +82,7 @@ export type VacancyStatus =
   | 'in_work'
   | 'proposed'
   | 'interview'
-  | 'offer'
+  | 'waiting_os'
   | 'closed_success'
   | 'closed'
   | 'paused';
@@ -100,6 +100,11 @@ export interface Vacancy {
   positions: number;
   status: VacancyStatus;
   priority: Priority;
+  /**
+   * Аккаунт-менеджер, отвечающий за вакансию.
+   * По умолчанию наследуется от клиента, но может быть переопределён вручную.
+   */
+  accountManagerId: UUID;
   recruiterIds: UUID[];
   daysInStatus: number;
   candidatesCount: number;
@@ -114,12 +119,13 @@ export interface Vacancy {
 // === Candidates ===
 export type CandidateStatus =
   | 'new'
-  | 'screening'
   | 'recruiter_iv'
   | 'ready'
   | 'presented'
-  | 'client_iv'
+  | 'waiting_os'
   | 'offer'
+  | 'rejected_client'
+  | 'rejected_candidate'
   | 'hired'
   | 'reserve';
 
@@ -138,7 +144,6 @@ export interface Candidate {
   status: CandidateStatus;
   daysInStatus: number;
   vacancyIds: UUID[];
-  hot: boolean;
   email?: string;
   phone?: string;
   kanbanOrder: number;

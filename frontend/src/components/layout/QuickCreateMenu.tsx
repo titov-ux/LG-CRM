@@ -73,6 +73,7 @@ export function QuickCreateMenu() {
       positions: Number(values.positions),
       stack: splitStack(values.stack),
       deadline: values.deadline || null,
+      accountManagerId: values.accountManagerId,
       recruiterIds: values.recruiterId ? [values.recruiterId] : [],
       description: values.description?.trim() || undefined,
       requirements: values.requirements?.trim() || undefined,

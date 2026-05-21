@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from '@tanstack/react-router';
 import { toast } from 'sonner';
-import { ArrowRight, ChevronLeft, Copy, Edit3, Mail, MessageCircle, MoreHorizontal, Phone, Plus, Share2, Trash2, X } from 'lucide-react';
+import { ArrowRight, ChevronLeft, ChevronRight, Copy, Edit3, Mail, MessageCircle, MoreHorizontal, Phone, Plus, Share2, Trash2, X } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
@@ -37,8 +37,12 @@ import {
   useUpdateCandidate,
 } from './hooks';
 import { useUsers } from '@/features/users/hooks';
+import { useVacancies } from '@/features/vacancies/hooks';
+import { useClients } from '@/features/clients/hooks';
 import { candidateStatuses } from '@/mocks/db/candidates';
 import { CommentsSection } from '@/features/comments/CommentsSection';
+import { AttachVacancyDialog } from '@/features/matching/AttachVacancyDialog';
+import { useAttachCandidate, useDetachCandidate } from '@/features/matching/hooks';
 
 function splitStack(value: string | undefined): string[] {
   return (value ?? '')
@@ -80,7 +84,6 @@ function toDuplicatePayload(candidate: Candidate): Partial<Candidate> {
     email: candidate.email,
     phone: candidate.phone,
     vacancyIds: [...candidate.vacancyIds],
-    hot: candidate.hot,
   };
 }
 
@@ -99,14 +102,22 @@ export function CandidateCardPage() {
   const { data: candidate, isLoading } = useCandidate(id);
   const { data: activity } = useCandidateActivity(id);
   const { data: usersData } = useUsers();
+  const { data: vacanciesData } = useVacancies();
+  const { data: clientsData } = useClients();
   const changeStatus = useChangeCandidateStatus();
   const createCandidate = useCreateCandidate();
   const updateCandidate = useUpdateCandidate();
   const deleteCandidate = useDeleteCandidate();
+  const detachCandidate = useDetachCandidate();
+  const attachCandidate = useAttachCandidate();
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [attachOpen, setAttachOpen] = useState(false);
 
   const close = () => navigate({ to: '/candidates' });
   const recruiter = usersData?.find((u) => u.id === candidate?.recruiterId);
+  const attachedVacancies = (vacanciesData?.items ?? []).filter(
+    (v) => candidate && candidate.vacancyIds.includes(v.id),
+  );
 
   const handleShare = async () => {
     if (!candidate) return;
@@ -140,6 +151,24 @@ export function CandidateCardPage() {
       },
       onError: () => toast.error('Не удалось скопировать кандидата'),
     });
+  };
+
+  const handleDetachVacancy = (vacancyId: string, vacancyTitle: string) => {
+    if (!candidate) return;
+    detachCandidate.mutate(
+      { vacancyId, candidateId: candidate.id },
+      {
+        onSuccess: () => {
+          toast.success(`Откреплён от вакансии «${vacancyTitle}»`, {
+            action: {
+              label: 'Вернуть',
+              onClick: () => attachCandidate.mutate({ vacancyId, candidateId: candidate.id }),
+            },
+          });
+        },
+        onError: () => toast.error('Не удалось открепить от вакансии'),
+      },
+    );
   };
 
   const handleEdit = (values: CandidateFormValues) => {
@@ -297,6 +326,62 @@ export function CandidateCardPage() {
 
             <Section title="Стек технологий"><StackTags stack={candidate.stack} variant="accent" /></Section>
 
+            <Section
+              title={`Прикреплённые вакансии · ${attachedVacancies.length}`}
+              action={
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 gap-1 px-2 text-xs"
+                  onClick={() => setAttachOpen(true)}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Прикрепить
+                </Button>
+              }
+            >
+              {attachedVacancies.length === 0 ? (
+                <div className="py-2 text-xs text-muted-foreground">Вакансии пока не прикреплены.</div>
+              ) : (
+                <div className="space-y-1.5">
+                  {attachedVacancies.map((v) => {
+                    const client = clientsData?.items.find((c) => c.id === v.clientId);
+                    return (
+                      <div
+                        key={v.id}
+                        className="group flex items-center rounded-md border bg-muted/30 hover:bg-muted"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => navigate({ to: '/vacancies/$id', params: { id: v.id } })}
+                          className="flex min-w-0 flex-1 flex-col px-3 py-2.5 text-left"
+                        >
+                          <div className="truncate text-[13px] font-semibold">{v.title}</div>
+                          <div className="truncate text-[11.5px] text-muted-foreground">
+                            {client?.name ?? '—'} · {v.grade} · {v.format}
+                          </div>
+                        </button>
+                        <div className="flex shrink-0 items-center gap-1 pr-2">
+                          <span className="tnum text-xs font-semibold">{formatMoneyRub(v.rateClient)} ₽</span>
+                          <button
+                            type="button"
+                            onClick={() => handleDetachVacancy(v.id, v.title)}
+                            disabled={detachCandidate.isPending}
+                            aria-label={`Открепить от вакансии «${v.title}»`}
+                            title="Открепить от вакансии"
+                            className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-background hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                          <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </Section>
+
             <Section title="История взаимодействий">
               {(!activity || activity.length === 0) && (
                 <div className="text-xs text-muted-foreground">Записей пока нет.</div>
@@ -374,6 +459,15 @@ export function CandidateCardPage() {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    {candidate && (
+      <AttachVacancyDialog
+        open={attachOpen}
+        onOpenChange={setAttachOpen}
+        candidateId={candidate.id}
+        excludeIds={candidate.vacancyIds}
+      />
+    )}
     </>
   );
 }
@@ -387,10 +481,21 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({
+  title,
+  action,
+  children,
+}: {
+  title: string;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
   return (
     <div className="space-y-3">
-      <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{title}</div>
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{title}</div>
+        {action}
+      </div>
       {children}
     </div>
   );

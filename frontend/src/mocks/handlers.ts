@@ -1,9 +1,11 @@
 import { http, HttpResponse } from 'msw';
 import { API_BASE_URL } from '@/lib/constants';
 import type {
+  ActivityEntry,
   Candidate,
   CandidateStatus,
   Client,
+  ClientStatus,
   Comment,
   CommentEntityType,
   ContactListItem,
@@ -15,6 +17,7 @@ import type {
 import {
   activityDb,
   auditDb,
+  candidateStatuses,
   candidatesDb,
   clientsDb,
   commentsDb,
@@ -22,6 +25,7 @@ import {
   notificationsDb,
   usersDb,
   vacanciesDb,
+  vacancyStatuses,
 } from './db';
 
 const url = (path: string) => `${API_BASE_URL}${path.startsWith('/') ? '' : '/'}${path}`;
@@ -63,6 +67,43 @@ function actorIdFromRequest(request: Request): string {
   const fromToken = token.startsWith('mock.access.') ? token.slice('mock.access.'.length) : null;
   if (fromToken && usersDb.some((u) => u.id === fromToken)) return fromToken;
   return usersDb[0]?.id ?? 'u1';
+}
+
+// === Автозапись истории взаимодействий ===
+// Все доменные операции (создание сущности, смена статуса и т.п.) должны
+// дописывать строку в activityDb через pushActivity, чтобы она появилась
+// в блоке «История взаимодействий» в карточке.
+//
+// На боевом backend этот side-effect должен жить на сервере: фронт сам
+// в activity ничего не пишет, кроме явных событий (заметка/звонок/email).
+let activitySeq = 0;
+function pushActivity(entry: Omit<ActivityEntry, 'id' | 'createdAt'>): ActivityEntry {
+  const created: ActivityEntry = {
+    ...entry,
+    id: `a-${Date.now()}-${++activitySeq}`,
+    createdAt: new Date().toISOString(),
+  };
+  // unshift, чтобы свежие записи лежали в начале массива
+  // (плюс GET .../activity сортирует по дате — это страховка).
+  activityDb.unshift(created);
+  return created;
+}
+
+function candidateStatusLabel(id: CandidateStatus): string {
+  return candidateStatuses.find((s) => s.id === id)?.label ?? id;
+}
+function vacancyStatusLabel(id: VacancyStatus): string {
+  return vacancyStatuses.find((s) => s.id === id)?.label ?? id;
+}
+const CLIENT_STATUS_LABEL: Record<ClientStatus, string> = {
+  lead: 'Лид',
+  in_progress: 'В работе',
+  active: 'Активный',
+  paused: 'На паузе',
+  archived: 'Архив',
+};
+function clientStatusLabel(id: ClientStatus): string {
+  return CLIENT_STATUS_LABEL[id] ?? id;
 }
 
 export const handlers = [
@@ -157,6 +198,13 @@ export const handlers = [
       ...(body.telegramChat?.trim() ? { telegramChat: body.telegramChat.trim() } : {}),
     };
     clientsDb.unshift(created);
+    pushActivity({
+      entityType: 'client',
+      entityId: created.id,
+      actorId: actorIdFromRequest(request),
+      kind: 'create',
+      text: 'Клиент добавлен в систему',
+    });
     return HttpResponse.json(created, { status: 201 });
   }),
   http.get(url('/clients/:id'), ({ params }) => {
@@ -167,6 +215,7 @@ export const handlers = [
     const patch = (await request.json()) as Partial<Client>;
     const c = clientsDb.find((x) => x.id === params.id);
     if (!c) return new HttpResponse(null, { status: 404 });
+    const prevStatus = c.status;
     if (patch.legalEntities) {
       c.legalEntities = patch.legalEntities.map((le, i) => ({
         id: le.id ?? `le-${Date.now()}-${i}`,
@@ -181,6 +230,15 @@ export const handlers = [
       else delete c.telegramChat;
     }
     Object.assign(c, rest);
+    if (patch.status && patch.status !== prevStatus) {
+      pushActivity({
+        entityType: 'client',
+        entityId: c.id,
+        actorId: actorIdFromRequest(request),
+        kind: 'status',
+        text: `Статус изменён на «${clientStatusLabel(patch.status)}»`,
+      });
+    }
     return HttpResponse.json(c);
   }),
   http.delete(url('/clients/:id'), ({ params }) => {
@@ -319,11 +377,27 @@ export const handlers = [
   }),
   http.put(url('/vacancies/kanban-order'), async ({ request }) => {
     const body = (await request.json()) as { updates: { id: string; status: VacancyStatus; kanbanOrder: number }[] };
+    // См. комментарий в /candidates/kanban-order — логируем только реальную смену статуса.
+    const before = new Map(vacanciesDb.map((v) => [v.id, v.status]));
     const updated = applyKanbanReorder(vacanciesDb, body.updates);
+    const actorId = actorIdFromRequest(request);
+    for (const u of body.updates) {
+      const prev = before.get(u.id);
+      if (prev && prev !== u.status) {
+        pushActivity({
+          entityType: 'vacancy',
+          entityId: u.id,
+          actorId,
+          kind: 'status',
+          text: `Статус изменён на «${vacancyStatusLabel(u.status)}»`,
+        });
+      }
+    }
     return HttpResponse.json(updated);
   }),
   http.post(url('/vacancies'), async ({ request }) => {
     const body = (await request.json()) as Partial<Vacancy>;
+    const client = clientsDb.find((c) => c.id === (body.clientId ?? ''));
     const created: Vacancy = {
       id: `v-${Date.now()}`,
       title: body.title ?? 'Без названия',
@@ -336,6 +410,8 @@ export const handlers = [
       positions: body.positions ?? 1,
       status: body.status ?? 'new',
       priority: body.priority ?? 'medium',
+      // Если фронт не передал АМ — наследуем от клиента (страховка для старого кода).
+      accountManagerId: body.accountManagerId ?? client?.accountManagerId ?? '',
       recruiterIds: body.recruiterIds ?? [],
       daysInStatus: 0,
       candidatesCount: 0,
@@ -345,8 +421,14 @@ export const handlers = [
       requirements: body.requirements,
     };
     vacanciesDb.unshift(created);
-    const client = clientsDb.find((c) => c.id === created.clientId);
     if (client) client.vacanciesCount += 1;
+    pushActivity({
+      entityType: 'vacancy',
+      entityId: created.id,
+      actorId: actorIdFromRequest(request),
+      kind: 'create',
+      text: 'Вакансия добавлена в систему',
+    });
     return HttpResponse.json(created, { status: 201 });
   }),
   // ==========================================================================
@@ -377,8 +459,18 @@ export const handlers = [
     const body = (await request.json()) as { status: VacancyStatus };
     const v = vacanciesDb.find((x) => x.id === params.id);
     if (!v) return new HttpResponse(null, { status: 404 });
+    const prev = v.status;
     v.status = body.status;
     v.daysInStatus = 0;
+    if (prev !== body.status) {
+      pushActivity({
+        entityType: 'vacancy',
+        entityId: v.id,
+        actorId: actorIdFromRequest(request),
+        kind: 'status',
+        text: `Статус изменён на «${vacancyStatusLabel(body.status)}»`,
+      });
+    }
     return HttpResponse.json(v);
   }),
   http.patch(url('/vacancies/:id'), async ({ params, request }) => {
@@ -410,6 +502,42 @@ export const handlers = [
         })),
     );
   }),
+  http.post(url('/vacancies/:id/candidates'), async ({ params, request }) => {
+    const vacancyId = params.id as string;
+    const body = (await request.json()) as { candidateId?: string };
+    const candidateId = body.candidateId ?? '';
+    const vacancy = vacanciesDb.find((v) => v.id === vacancyId);
+    const candidate = candidatesDb.find((c) => c.id === candidateId);
+    if (!vacancy || !candidate) return new HttpResponse(null, { status: 404 });
+    if (!candidate.vacancyIds.includes(vacancyId)) {
+      candidate.vacancyIds.push(vacancyId);
+      vacancy.candidatesCount += 1;
+    }
+    return HttpResponse.json({
+      id: `m-${vacancyId}-${candidateId}`,
+      vacancyId,
+      candidateId,
+      status: 'submitted',
+      addedById: 'u4',
+      addedAt: new Date().toISOString(),
+    });
+  }),
+  // Открепить кандидата от вакансии. matchId синтетический: `m-{vacancyId}-{candidateId}`.
+  http.delete(url('/matches/:matchId'), ({ params }) => {
+    const matchId = params.matchId as string;
+    const m = matchId.match(/^m-(.+?)-([^-]+)$/);
+    if (!m) return new HttpResponse(null, { status: 404 });
+    const [, vacancyId, candidateId] = m;
+    const vacancy = vacanciesDb.find((v) => v.id === vacancyId);
+    const candidate = candidatesDb.find((c) => c.id === candidateId);
+    if (!vacancy || !candidate) return new HttpResponse(null, { status: 404 });
+    const idx = candidate.vacancyIds.indexOf(vacancyId);
+    if (idx !== -1) {
+      candidate.vacancyIds.splice(idx, 1);
+      if (vacancy.candidatesCount > 0) vacancy.candidatesCount -= 1;
+    }
+    return HttpResponse.json({ ok: true });
+  }),
 
   // === Candidates ===
   http.get(url('/candidates'), ({ request }) => {
@@ -429,7 +557,22 @@ export const handlers = [
   }),
   http.put(url('/candidates/kanban-order'), async ({ request }) => {
     const body = (await request.json()) as { updates: { id: string; status: CandidateStatus; kanbanOrder: number }[] };
+    // Запоминаем предыдущие статусы, чтобы залогировать только реальную смену.
+    const before = new Map(candidatesDb.map((c) => [c.id, c.status]));
     const updated = applyKanbanReorder(candidatesDb, body.updates);
+    const actorId = actorIdFromRequest(request);
+    for (const u of body.updates) {
+      const prev = before.get(u.id);
+      if (prev && prev !== u.status) {
+        pushActivity({
+          entityType: 'candidate',
+          entityId: u.id,
+          actorId,
+          kind: 'status',
+          text: `Статус изменён на «${candidateStatusLabel(u.status)}»`,
+        });
+      }
+    }
     return HttpResponse.json(updated);
   }),
   http.post(url('/candidates'), async ({ request }) => {
@@ -449,12 +592,18 @@ export const handlers = [
       status: body.status ?? 'new',
       daysInStatus: 0,
       vacancyIds: body.vacancyIds ?? [],
-      hot: body.hot ?? false,
       email: body.email,
       phone: body.phone,
       kanbanOrder: nextKanbanOrder(candidatesDb, body.status ?? 'new'),
     };
     candidatesDb.unshift(created);
+    pushActivity({
+      entityType: 'candidate',
+      entityId: created.id,
+      actorId: actorIdFromRequest(request),
+      kind: 'create',
+      text: 'Кандидат добавлен в систему',
+    });
     return HttpResponse.json(created, { status: 201 });
   }),
   http.get(url('/candidates/:id'), ({ params }) => {
@@ -465,8 +614,18 @@ export const handlers = [
     const body = (await request.json()) as { status: CandidateStatus };
     const c = candidatesDb.find((x) => x.id === params.id);
     if (!c) return new HttpResponse(null, { status: 404 });
+    const prev = c.status;
     c.status = body.status;
     c.daysInStatus = 0;
+    if (prev !== body.status) {
+      pushActivity({
+        entityType: 'candidate',
+        entityId: c.id,
+        actorId: actorIdFromRequest(request),
+        kind: 'status',
+        text: `Статус изменён на «${candidateStatusLabel(body.status)}»`,
+      });
+    }
     return HttpResponse.json(c);
   }),
   http.patch(url('/candidates/:id'), async ({ params, request }) => {
@@ -483,7 +642,11 @@ export const handlers = [
     return HttpResponse.json({ ok: true });
   }),
   http.get(url('/candidates/:id/activity'), ({ params }) =>
-    HttpResponse.json(activityDb.filter((a) => a.entityType === 'candidate' && a.entityId === params.id)),
+    HttpResponse.json(
+      activityDb
+        .filter((a) => a.entityType === 'candidate' && a.entityId === params.id)
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
+    ),
   ),
 
   // === Comments ===
@@ -626,12 +789,50 @@ export const handlers = [
   }),
 
   // === Audit ===
-  http.get(url('/audit'), () => HttpResponse.json(auditDb)),
+  http.get(url('/audit'), ({ request }) => {
+    const u = new URL(request.url);
+    const entityType = u.searchParams.get('entityType');
+    const entityId = u.searchParams.get('entityId');
+    const actorId = u.searchParams.get('actorId');
+    const field = u.searchParams.get('field');
+    const dateFrom = u.searchParams.get('dateFrom'); // YYYY-MM-DD
+    const dateTo = u.searchParams.get('dateTo');     // YYYY-MM-DD
+    const search = u.searchParams.get('search')?.trim().toLowerCase() ?? '';
+
+    // верхняя граница периода — конец дня
+    const fromTs = dateFrom ? new Date(`${dateFrom}T00:00:00.000Z`).getTime() : null;
+    const toTs = dateTo ? new Date(`${dateTo}T23:59:59.999Z`).getTime() : null;
+
+    const filtered = auditDb.filter((row) => {
+      if (entityType && row.entityType !== entityType) return false;
+      if (entityId && row.entityId !== entityId) return false;
+      if (actorId && row.actorId !== actorId) return false;
+      if (field && row.field !== field) return false;
+      const ts = new Date(row.createdAt).getTime();
+      if (fromTs !== null && ts < fromTs) return false;
+      if (toTs !== null && ts > toTs) return false;
+      if (search) {
+        const hay = [row.field, row.before ?? '', row.after ?? '', row.entityId]
+          .join(' ')
+          .toLowerCase();
+        if (!hay.includes(search)) return false;
+      }
+      return true;
+    });
+
+    // Свежие — сверху
+    const sorted = [...filtered].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
+    return HttpResponse.json(sorted);
+  }),
 
   // === Analytics ===
   http.get(url('/analytics/summary'), () => {
     const openVacancies = vacanciesDb.filter((v) => !['closed_success', 'paused'].includes(v.status)).length;
-    const activeCandidates = candidatesDb.filter((c) => !['hired', 'reserve'].includes(c.status)).length;
+    const activeCandidates = candidatesDb.filter(
+      (c) => !['hired', 'reserve', 'rejected_client', 'rejected_candidate'].includes(c.status),
+    ).length;
     const closedThisMonth = vacanciesDb.filter((v) => v.status === 'closed_success').length;
     const hiredThisMonth = candidatesDb.filter((c) => c.status === 'hired').length;
     return HttpResponse.json({
@@ -654,7 +855,9 @@ export const handlers = [
       .filter((u) => u.role === 'recruiter')
       .map((u) => ({
         recruiterId: u.id,
-        activeCount: candidatesDb.filter((c) => c.recruiterId === u.id && !['hired', 'reserve'].includes(c.status)).length,
+        activeCount: candidatesDb.filter(
+          (c) => c.recruiterId === u.id && !['hired', 'reserve', 'rejected_client', 'rejected_candidate'].includes(c.status),
+        ).length,
       }));
     return HttpResponse.json(out);
   }),

@@ -9,6 +9,7 @@ export type Role = 'admin' | 'account_manager' | 'recruiter' | 'viewer';
 export interface User {
   id: UUID;
   email: string;
+  telegram?: string;
   fullName: string;
   role: Role;
   initials: string;
@@ -18,6 +19,7 @@ export interface User {
 
 export interface CreateUserRequest {
   email: string;
+  telegram?: string;
   fullName: string;
   role: Role;
   password?: string;
@@ -153,6 +155,76 @@ export type CandidateStatus =
  */
 export type EmploymentType = 'ИП' | 'СМЗ' | 'ТК РФ';
 
+/**
+ * Категория навыков из резюме. Каждый блок («Языки программирования»,
+ * «Технологии», «Администрирование» и т.п.) — отдельная категория со
+ * своим списком элементов. Это гибче плоского `stack`, который остаётся
+ * как сводный список для канбана/поиска.
+ */
+export interface SkillCategory {
+  /** Идентификатор для useFieldArray и стабильных ключей в React. */
+  id: string;
+  /** Например: «Языки программирования», «Технологии», «DevOps и автоматизация». */
+  name: string;
+  /** Конкретные навыки/технологии этой категории. */
+  items: string[];
+}
+
+/**
+ * Опыт работы. Даты — в формате YYYY-MM (без числа), так как в резюме
+ * указываются месяц и год. endMonth=null означает «по настоящее время».
+ */
+export interface CandidateExperience {
+  id: string;
+  company: string;
+  position: string;
+  /** YYYY-MM */
+  startMonth: string;
+  /** YYYY-MM или null = «по настоящее время» */
+  endMonth: string | null;
+  /** Краткое описание проекта/контекста, в котором кандидат работал. */
+  project?: string;
+  /** Ключевые задачи и достижения — отдельные пункты для буллетов. */
+  achievements: string[];
+  /** Стек, использовавшийся в этом проекте/месте работы. */
+  stack: string[];
+}
+
+/** Образование (вуз, ссуз и т.п.). */
+export interface CandidateEducation {
+  id: string;
+  /** Например: «Магистр», «Бакалавр», «Специалист». */
+  degree: string;
+  /** Учебное заведение. */
+  institution: string;
+  /** Город учебного заведения, опционально. */
+  city?: string;
+  /** Год окончания. */
+  graduationYear: number;
+  /** Факультет / специальность. */
+  specialty?: string;
+}
+
+/** Курсы, сертификаты, повышения квалификации. */
+export interface CandidateCertification {
+  id: string;
+  /** Название программы или сертификата. */
+  title: string;
+  /** Кто проводил/выдал (организация). */
+  issuer: string;
+  /** Свободный период: «2017-2025», «2023», «Январь 2024» — как в резюме. */
+  period?: string;
+}
+
+/** Уровень владения языком по CEFR + «родной». */
+export type LanguageLevel = 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2' | 'родной';
+
+export interface CandidateLanguage {
+  /** Название языка («Русский», «Английский», ...). */
+  language: string;
+  level: LanguageLevel;
+}
+
 export interface Candidate {
   id: UUID;
   fullName: string;
@@ -174,9 +246,22 @@ export interface Candidate {
   vacancyIds: UUID[];
   telegram?: string;
   phone?: string;
+  email?: string;
   /** ISO date YYYY-MM-DD */
   birthday?: string;
   kanbanOrder: number;
+  /** Сопроводительное письмо / краткая самопрезентация кандидата. */
+  summary?: string;
+  /** Категоризованные навыки (как блоки в резюме). */
+  skillCategories?: SkillCategory[];
+  /** Опыт работы (от свежего к старому). */
+  experience?: CandidateExperience[];
+  /** Образование. */
+  education?: CandidateEducation[];
+  /** Курсы / повышение квалификации. */
+  certifications?: CandidateCertification[];
+  /** Знание языков. */
+  languages?: CandidateLanguage[];
 }
 
 // === Matching (vacancy_candidates) ===

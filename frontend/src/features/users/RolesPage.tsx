@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
-import { Check, Minus, Plus, Search, ShieldCheck, Trash2, UserPlus } from 'lucide-react';
+import { Check, Minus, Plus, RotateCcw, Search, ShieldCheck, Trash2, UserPlus } from 'lucide-react';
 import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -36,6 +37,12 @@ import type { Role, User } from '@/api/types';
 import { useDeleteUser, useUpdateUser, useUsers } from './hooks';
 import { AddUserDialog } from './AddUserDialog';
 import { ROLE_DESCRIPTION, ROLE_LABEL } from './UserForm';
+import type { MatrixPermission } from '@/lib/permissions';
+import {
+  usePermissionsMatrix,
+  useResetPermissionsMatrix,
+  useTogglePermission,
+} from '@/features/permissions/hooks';
 
 const ROLE_BADGE_CLASS: Record<Role, string> = {
   admin: 'bg-rose-100 text-rose-700 hover:bg-rose-100',
@@ -43,88 +50,6 @@ const ROLE_BADGE_CLASS: Record<Role, string> = {
   recruiter: 'bg-emerald-100 text-emerald-700 hover:bg-emerald-100',
   viewer: 'bg-slate-100 text-slate-700 hover:bg-slate-100',
 };
-
-interface PermissionRow {
-  group: string;
-  permission: string;
-  description: string;
-  matrix: Record<Role, boolean>;
-}
-
-const PERMISSIONS: PermissionRow[] = [
-  {
-    group: 'Клиенты',
-    permission: 'Просмотр карточек клиентов',
-    description: 'Доступ к списку и карточкам клиентов.',
-    matrix: { admin: true, account_manager: true, recruiter: true, viewer: true },
-  },
-  {
-    group: 'Клиенты',
-    permission: 'Создание и редактирование',
-    description: 'Создавать, изменять данные клиентов и контакты.',
-    matrix: { admin: true, account_manager: true, recruiter: false, viewer: false },
-  },
-  {
-    group: 'Клиенты',
-    permission: 'Удаление / архив',
-    description: 'Перевод клиентов в архив или удаление.',
-    matrix: { admin: true, account_manager: false, recruiter: false, viewer: false },
-  },
-  {
-    group: 'Вакансии',
-    permission: 'Просмотр всех вакансий',
-    description: 'Видеть все вакансии компании, а не только свои.',
-    matrix: { admin: true, account_manager: true, recruiter: false, viewer: true },
-  },
-  {
-    group: 'Вакансии',
-    permission: 'Создание / редактирование',
-    description: 'Заводить новые вакансии и менять их статусы.',
-    matrix: { admin: true, account_manager: true, recruiter: true, viewer: false },
-  },
-  {
-    group: 'Вакансии',
-    permission: 'Назначение рекрутера',
-    description: 'Распределять рекрутеров по вакансиям.',
-    matrix: { admin: true, account_manager: true, recruiter: false, viewer: false },
-  },
-  {
-    group: 'Кандидаты',
-    permission: 'Просмотр базы кандидатов',
-    description: 'Поиск и фильтрация кандидатов.',
-    matrix: { admin: true, account_manager: true, recruiter: true, viewer: true },
-  },
-  {
-    group: 'Кандидаты',
-    permission: 'Создание / редактирование',
-    description: 'Добавлять и редактировать карточки кандидатов.',
-    matrix: { admin: true, account_manager: false, recruiter: true, viewer: false },
-  },
-  {
-    group: 'Кандидаты',
-    permission: 'Презентация клиенту',
-    description: 'Отправлять подборку кандидатов клиенту.',
-    matrix: { admin: true, account_manager: true, recruiter: true, viewer: false },
-  },
-  {
-    group: 'Аналитика',
-    permission: 'Доступ к аналитике',
-    description: 'Доступ к разделу «Аналитика» и выгрузкам.',
-    matrix: { admin: true, account_manager: true, recruiter: false, viewer: true },
-  },
-  {
-    group: 'Администрирование',
-    permission: 'Журнал действий',
-    description: 'Просмотр аудит-логов изменений.',
-    matrix: { admin: true, account_manager: false, recruiter: false, viewer: false },
-  },
-  {
-    group: 'Администрирование',
-    permission: 'Управление пользователями',
-    description: 'Создание сотрудников, выдача ролей и доступов.',
-    matrix: { admin: true, account_manager: false, recruiter: false, viewer: false },
-  },
-];
 
 const ROLES_ORDER: Role[] = ['admin', 'account_manager', 'recruiter', 'viewer'];
 
@@ -138,6 +63,10 @@ export function RolesPage() {
   const { data: users, isLoading } = useUsers();
   const updateUser = useUpdateUser();
   const deleteUser = useDeleteUser();
+
+  const { permissions, isFetching: isPermissionsFetching } = usePermissionsMatrix();
+  const togglePermissionMutation = useTogglePermission();
+  const resetPermissionsMutation = useResetPermissionsMatrix();
 
   const filtered = useMemo(() => {
     const list = users ?? [];
@@ -352,7 +281,7 @@ export function RolesPage() {
                 <CardContent className="pt-0">
                   <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
                     <ShieldCheck className="h-3.5 w-3.5" />
-                    {countAllowed(r)} из {PERMISSIONS.length} прав
+                    {countAllowed(permissions, r)} из {permissions.length} прав
                   </div>
                 </CardContent>
               </Card>
@@ -360,12 +289,36 @@ export function RolesPage() {
           </div>
 
           <Card className="overflow-hidden">
-            <CardHeader>
-              <CardTitle>Матрица доступов</CardTitle>
-              <CardDescription>
-                Какие действия доступны каждой роли. Доступы фиксируются на уровне роли —
-                чтобы выдать сотруднику больше прав, измените его роль.
-              </CardDescription>
+            <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0">
+              <div className="space-y-1.5">
+                <CardTitle>
+                  Матрица доступов
+                  {isPermissionsFetching && (
+                    <span className="ml-2 text-[11px] font-normal uppercase tracking-wider text-muted-foreground">
+                      синхронизация…
+                    </span>
+                  )}
+                </CardTitle>
+                <CardDescription>
+                  Кликните по ячейке, чтобы переключить право для роли. Изменения
+                  сохраняются на сервере и сразу применяются ко всем сотрудникам.
+                </CardDescription>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="shrink-0 gap-1.5"
+                disabled={resetPermissionsMutation.isPending}
+                onClick={() => {
+                  resetPermissionsMutation.mutate(undefined, {
+                    onSuccess: () => toast.success('Матрица доступов сброшена к умолчаниям'),
+                    onError: () => toast.error('Не удалось сбросить матрицу'),
+                  });
+                }}
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                {resetPermissionsMutation.isPending ? 'Сброс…' : 'Сбросить'}
+              </Button>
             </CardHeader>
             <Table>
               <TableHeader>
@@ -379,11 +332,11 @@ export function RolesPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {PERMISSIONS.map((p, i) => {
-                  const prev = PERMISSIONS[i - 1];
+                {permissions.map((p, i) => {
+                  const prev = permissions[i - 1];
                   const showGroup = !prev || prev.group !== p.group;
                   return (
-                    <TableRow key={`${p.group}-${p.permission}`}>
+                    <TableRow key={p.id}>
                       <TableCell>
                         {showGroup && (
                           <div className="mb-0.5 text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground/80">
@@ -393,15 +346,46 @@ export function RolesPage() {
                         <div className="text-[13px] font-medium">{p.permission}</div>
                         <div className="text-[11.5px] text-muted-foreground">{p.description}</div>
                       </TableCell>
-                      {ROLES_ORDER.map((r) => (
-                        <TableCell key={r} className="text-center">
-                          {p.matrix[r] ? (
-                            <Check className="mx-auto h-4 w-4 text-emerald-600" />
-                          ) : (
-                            <Minus className="mx-auto h-4 w-4 text-muted-foreground/40" />
-                          )}
-                        </TableCell>
-                      ))}
+                      {ROLES_ORDER.map((r) => {
+                        const allowed = p.matrix[r];
+                        const busy =
+                          togglePermissionMutation.isPending &&
+                          togglePermissionMutation.variables?.id === p.id &&
+                          togglePermissionMutation.variables?.role === r;
+                        return (
+                          <TableCell key={r} className="p-0 text-center">
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={allowed}
+                              aria-busy={busy || undefined}
+                              aria-label={`${p.permission} — ${ROLE_LABEL[r]}: ${allowed ? 'разрешено' : 'запрещено'}`}
+                              disabled={resetPermissionsMutation.isPending}
+                              onClick={() =>
+                                togglePermissionMutation.mutate(
+                                  { id: p.id, role: r, allowed: !allowed },
+                                  {
+                                    onError: () =>
+                                      toast.error('Не удалось обновить право'),
+                                  },
+                                )
+                              }
+                              className={cn(
+                                'group mx-auto flex h-9 w-9 items-center justify-center rounded-md transition-colors',
+                                'hover:bg-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1',
+                                'disabled:cursor-not-allowed disabled:opacity-50',
+                                busy && 'animate-pulse',
+                              )}
+                            >
+                              {allowed ? (
+                                <Check className="h-4 w-4 text-emerald-600 transition-transform group-hover:scale-110" />
+                              ) : (
+                                <Minus className="h-4 w-4 text-muted-foreground/40 transition-colors group-hover:text-muted-foreground" />
+                              )}
+                            </button>
+                          </TableCell>
+                        );
+                      })}
                     </TableRow>
                   );
                 })}
@@ -470,6 +454,6 @@ function StatCard({ label, value, accent }: { label: string; value: number; acce
   );
 }
 
-function countAllowed(role: Role) {
-  return PERMISSIONS.filter((p) => p.matrix[role]).length;
+function countAllowed(rows: MatrixPermission[], role: Role) {
+  return rows.filter((p) => p.matrix[role]).length;
 }

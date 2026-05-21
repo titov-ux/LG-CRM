@@ -19,6 +19,7 @@ interface FiltersState {
   priority: Priority | null;
   clientId: string | null;
   recruiterId: string | null;
+  accountManagerId: string | null;
   engagementType: EngagementType | null;
   employmentType: EmploymentType | null;
   setSearch: (v: string) => void;
@@ -26,6 +27,7 @@ interface FiltersState {
   setPriority: (v: Priority | null) => void;
   setClientId: (v: string | null) => void;
   setRecruiterId: (v: string | null) => void;
+  setAccountManagerId: (v: string | null) => void;
   setEngagementType: (v: EngagementType | null) => void;
   setEmploymentType: (v: EmploymentType | null) => void;
   /** Сбрасывает все фильтры кроме строки поиска. */
@@ -39,6 +41,7 @@ const EMPTY_BOARD = {
   priority: null,
   clientId: null,
   recruiterId: null,
+  accountManagerId: null,
   engagementType: null,
   employmentType: null,
 } as const;
@@ -51,6 +54,7 @@ export const useFiltersStore = create<FiltersState>((set) => ({
   setPriority: (priority) => set({ priority }),
   setClientId: (clientId) => set({ clientId }),
   setRecruiterId: (recruiterId) => set({ recruiterId }),
+  setAccountManagerId: (accountManagerId) => set({ accountManagerId }),
   setEngagementType: (engagementType) => set({ engagementType }),
   setEmploymentType: (employmentType) => set({ employmentType }),
   resetBoardFilters: () => set({ ...EMPTY_BOARD }),

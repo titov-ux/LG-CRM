@@ -1,11 +1,12 @@
 import {
   Activity,
-  BarChart3,
   Briefcase,
   Building2,
   ContactRound,
   FileText,
+  Home,
   Inbox,
+  MessageSquare,
   Settings,
   ShieldCheck,
   TrendingUp,
@@ -22,6 +23,8 @@ interface NavItem {
   label: string;
   icon: LucideIcon;
   badge?: number;
+  tag?: string;
+  tagHint?: string;
 }
 
 interface NavGroup {
@@ -30,7 +33,7 @@ interface NavGroup {
 }
 
 const GROUPS: NavGroup[] = [
-  { items: [{ to: '/dashboard', label: 'Главная', icon: BarChart3 }] },
+  { items: [{ to: '/dashboard', label: 'Главная', icon: Home }] },
   {
     label: 'Работа',
     items: [
@@ -38,6 +41,7 @@ const GROUPS: NavGroup[] = [
       { to: '/candidates', label: 'Кандидаты', icon: Users },
       { to: '/clients', label: 'Клиенты', icon: Building2 },
       { to: '/contacts', label: 'Контакты', icon: ContactRound },
+      { to: '/chat', label: 'Чат', icon: MessageSquare },
     ],
   },
   {
@@ -111,6 +115,14 @@ export function Sidebar() {
                     >
                       <Icon className="h-4 w-4" strokeWidth={1.8} />
                       <span className="flex-1">{item.label}</span>
+                      {item.tag && (
+                        <span
+                          title={item.tagHint}
+                          className="rounded border border-border/60 bg-muted/60 px-1.5 text-[10px] font-semibold uppercase leading-4 tracking-wide text-muted-foreground"
+                        >
+                          {item.tag}
+                        </span>
+                      )}
                       {badge != null && badge > 0 && (
                         <span className="tnum rounded bg-red-500 px-1.5 text-[10px] font-semibold leading-4 text-white">
                           {badge}

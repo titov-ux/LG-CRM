@@ -42,6 +42,7 @@ export function useResolvedProfileUser(): {
           initials: target.initials,
           color: target.color,
           email: target.email!,
+          telegram: typeof target.telegram === 'string' ? target.telegram : undefined,
           role: target.role!,
           isActive: target.isActive ?? true,
         },

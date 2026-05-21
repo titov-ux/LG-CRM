@@ -1,10 +1,10 @@
 import { Building2, Users } from 'lucide-react';
 import type { Vacancy, User } from '@/api/types';
-import { StackTags } from '@/components/common/StackTags';
 import { PriorityBadge } from '@/components/common/PriorityBadge';
 import { DaysBadge } from '@/components/common/DaysBadge';
 import { AvatarStack } from '@/components/common/AvatarStack';
 import { EngagementBadge } from '@/components/common/EngagementBadge';
+import { formatMoneyRub } from '@/lib/utils';
 
 interface Props {
   vacancy: Vacancy;
@@ -12,7 +12,23 @@ interface Props {
   recruiters: User[];
 }
 
+function vacancyPay(vacancy: Vacancy): string {
+  if (vacancy.engagementType === 'agency') {
+    return vacancy.salaryMax != null
+      ? `до ${formatMoneyRub(vacancy.salaryMax)} ₽/мес`
+      : 'оклад не указан';
+  }
+  return vacancy.rateClient > 0
+    ? `${formatMoneyRub(vacancy.rateClient)} ₽/час`
+    : 'ставка не указана';
+}
+
 export function VacancyKanbanCard({ vacancy, clientName, recruiters }: Props) {
+  const hasPay =
+    vacancy.engagementType === 'agency'
+      ? vacancy.salaryMax != null
+      : vacancy.rateClient > 0;
+
   return (
     <>
       <div className="mb-1.5 flex items-start justify-between gap-2">
@@ -32,7 +48,14 @@ export function VacancyKanbanCard({ vacancy, clientName, recruiters }: Props) {
         <span>{vacancy.grade}</span>
       </div>
 
-      <StackTags stack={vacancy.stack} max={3} className="mb-2.5" />
+      <div
+        className={
+          'mb-2.5 tnum text-[13px] font-semibold ' +
+          (hasPay ? 'text-foreground' : 'text-muted-foreground font-normal italic')
+        }
+      >
+        {vacancyPay(vacancy)}
+      </div>
 
       <div className="flex items-center justify-between border-t pt-2">
         <div className="flex items-center gap-2 text-[11px] text-muted-foreground">

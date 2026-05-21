@@ -39,6 +39,7 @@ export const ROLE_DESCRIPTION: Record<Role, string> = {
 const schema = z.object({
   fullName: z.string().min(2, 'Минимум 2 символа').max(120),
   email: z.string().email('Введите корректный email'),
+  telegram: z.string(),
   role: z.enum(['admin', 'account_manager', 'recruiter', 'viewer']),
   password: z
     .string()
@@ -64,6 +65,7 @@ export function UserForm({ defaultValues, onSubmit, isPending, submitLabel = 'С
     defaultValues: {
       fullName: '',
       email: '',
+      telegram: '',
       role: 'recruiter',
       password: '',
       isActive: true,
@@ -73,7 +75,15 @@ export function UserForm({ defaultValues, onSubmit, isPending, submitLabel = 'С
 
   return (
     <Form {...form}>
-      <form onSubmit={form.handleSubmit((v) => onSubmit(v))} className="space-y-4">
+      <form
+        onSubmit={form.handleSubmit((v) =>
+          onSubmit({
+            ...v,
+            ...(v.telegram.trim() ? { telegram: v.telegram.trim() } : {}),
+          }),
+        )}
+        className="space-y-4"
+      >
         <FormField
           control={form.control}
           name="fullName"
@@ -102,6 +112,21 @@ export function UserForm({ defaultValues, onSubmit, isPending, submitLabel = 'С
                   autoComplete="email"
                 />
               </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={form.control}
+          name="telegram"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Telegram</FormLabel>
+              <FormControl>
+                <Input {...field} placeholder="@username" autoComplete="off" />
+              </FormControl>
+              <FormDescription>Необязательно. Будет показан в карточке профиля сотрудника.</FormDescription>
               <FormMessage />
             </FormItem>
           )}

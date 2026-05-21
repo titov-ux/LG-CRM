@@ -99,6 +99,32 @@ export function CandidatesKanbanPage() {
           }
         >
           <FilterChip
+            active={!!recruiterId}
+            icon={UserIcon}
+            label="Рекрутер"
+            value={recruiterLabel}
+            onClear={() => setRecruiterId(null)}
+          >
+            <div className="max-h-64 overflow-y-auto">
+              <MenuItem
+                selected={!recruiterId}
+                onClick={() => setRecruiterId(null)}
+              >
+                Все рекрутеры
+              </MenuItem>
+              {recruiters.map((u) => (
+                <MenuItem
+                  key={u.id}
+                  selected={recruiterId === u.id}
+                  onClick={() => setRecruiterId(u.id)}
+                >
+                  {u.fullName}
+                </MenuItem>
+              ))}
+            </div>
+          </FilterChip>
+
+          <FilterChip
             active={!!grade}
             icon={GraduationCap}
             label="Грейд"
@@ -167,32 +193,6 @@ export function CandidatesKanbanPage() {
                 {e}
               </MenuItem>
             ))}
-          </FilterChip>
-
-          <FilterChip
-            active={!!recruiterId}
-            icon={UserIcon}
-            label="Рекрутер"
-            value={recruiterLabel}
-            onClear={() => setRecruiterId(null)}
-          >
-            <div className="max-h-64 overflow-y-auto">
-              <MenuItem
-                selected={!recruiterId}
-                onClick={() => setRecruiterId(null)}
-              >
-                Все рекрутеры
-              </MenuItem>
-              {recruiters.map((u) => (
-                <MenuItem
-                  key={u.id}
-                  selected={recruiterId === u.id}
-                  onClick={() => setRecruiterId(u.id)}
-                >
-                  {u.fullName}
-                </MenuItem>
-              ))}
-            </div>
           </FilterChip>
         </FilterBar>
       </div>

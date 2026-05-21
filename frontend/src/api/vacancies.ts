@@ -9,6 +9,7 @@ export interface VacanciesListParams {
   grade?: string;
   priority?: string;
   recruiterId?: UUID;
+  accountManagerId?: UUID;
   engagementType?: EngagementType;
   page?: number;
   pageSize?: number;

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { Pencil, Save, X } from 'lucide-react';
+import { Mail, Pencil, Save, Send, X } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { UserAvatar } from '@/components/common/UserAvatar';
 import { useAuthStore } from '@/stores/auth';
+import { telegramUrl } from '@/lib/utils';
 import { ROLE_LABEL } from '@/features/users/UserForm';
 import { ROLE_BADGE } from './constants';
 
@@ -18,12 +19,14 @@ export function ProfileHeaderCard() {
   const [editing, setEditing] = useState(false);
   const [fullName, setFullName] = useState(user?.fullName ?? '');
   const [email, setEmail] = useState(user?.email ?? '');
+  const [telegram, setTelegram] = useState(user?.telegram ?? '');
 
   if (!user) return null;
 
   const startEdit = () => {
     setFullName(user.fullName);
     setEmail(user.email);
+    setTelegram(user.telegram ?? '');
     setEditing(true);
   };
 
@@ -40,6 +43,7 @@ export function ProfileHeaderCard() {
       toast.error('Введите корректный email');
       return;
     }
+    const telegramTrimmed = telegram.trim();
     // Локально: на этапе 2 — PATCH /users/{me}. См. ТЗ §6.2.
     const newInitials = fullName
       .trim()
@@ -47,7 +51,13 @@ export function ProfileHeaderCard() {
       .slice(0, 2)
       .map((p) => p[0]?.toUpperCase() ?? '')
       .join('');
-    setUser({ ...user, fullName: fullName.trim(), email: email.trim(), initials: newInitials });
+    setUser({
+      ...user,
+      fullName: fullName.trim(),
+      email: email.trim(),
+      ...(telegramTrimmed ? { telegram: telegramTrimmed } : { telegram: undefined }),
+      initials: newInitials,
+    });
     setEditing(false);
     toast.success('Профиль обновлён');
   };
@@ -60,6 +70,18 @@ export function ProfileHeaderCard() {
           <div className="sm:hidden">
             <div className="text-base font-semibold">{user.fullName}</div>
             <div className="text-xs text-muted-foreground">{user.email}</div>
+            {user.telegram ? (
+              <a
+                href={telegramUrl(user.telegram)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-muted-foreground hover:text-foreground hover:underline"
+              >
+                {user.telegram}
+              </a>
+            ) : (
+              <div className="text-xs text-muted-foreground/70">Telegram не указан</div>
+            )}
           </div>
         </div>
 
@@ -79,6 +101,15 @@ export function ProfileHeaderCard() {
                   autoComplete="email"
                 />
               </div>
+              <div className="space-y-1 sm:col-span-2">
+                <Label className="text-[12px]">Telegram</Label>
+                <Input
+                  value={telegram}
+                  onChange={(e) => setTelegram(e.target.value)}
+                  placeholder="@username"
+                  autoComplete="off"
+                />
+              </div>
             </div>
           ) : (
             <div className="space-y-1">
@@ -96,7 +127,31 @@ export function ProfileHeaderCard() {
                   </Badge>
                 )}
               </div>
-              <div className="hidden text-[13px] text-muted-foreground sm:block">{user.email}</div>
+              <div className="hidden text-[13px] text-muted-foreground sm:block">
+                <span className="inline-flex items-center gap-1.5">
+                  <Mail className="h-3.5 w-3.5" />
+                  <a href={`mailto:${user.email}`} className="hover:text-foreground hover:underline">
+                    {user.email}
+                  </a>
+                </span>
+              </div>
+              <div className="hidden text-[13px] text-muted-foreground sm:block">
+                <span className="inline-flex items-center gap-1.5">
+                  <Send className="h-3.5 w-3.5" />
+                  {user.telegram ? (
+                    <a
+                      href={telegramUrl(user.telegram)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="hover:text-foreground hover:underline"
+                    >
+                      {user.telegram}
+                    </a>
+                  ) : (
+                    <span className="text-muted-foreground/70">Telegram не указан</span>
+                  )}
+                </span>
+              </div>
               <div className="text-[11.5px] text-muted-foreground/80">ID: {user.id}</div>
             </div>
           )}

@@ -23,10 +23,14 @@ import {
   commentsDb,
   contactsDb,
   notificationsDb,
+  permissionsMatrixDb,
+  resetPermissionsMatrix,
+  updatePermissionRow,
   usersDb,
   vacanciesDb,
   vacancyStatuses,
 } from './db';
+import type { Role } from '@/api/types';
 
 const url = (path: string) => `${API_BASE_URL}${path.startsWith('/') ? '' : '/'}${path}`;
 
@@ -123,6 +127,7 @@ export const handlers = [
   http.post(url('/users'), async ({ request }) => {
     const body = (await request.json()) as Partial<User>;
     const email = (body.email ?? '').trim().toLowerCase();
+    const telegram = (body.telegram ?? '').trim();
     if (!email) {
       return HttpResponse.json({ message: 'Не указан email' }, { status: 400 });
     }
@@ -141,6 +146,7 @@ export const handlers = [
     const created: User = {
       id: `u-${Date.now()}`,
       email,
+      ...(telegram ? { telegram } : {}),
       fullName,
       role: (body.role as User['role']) ?? 'recruiter',
       initials,
@@ -381,6 +387,7 @@ export const handlers = [
     const priority = u.searchParams.get('priority');
     const clientId = u.searchParams.get('clientId');
     const recruiterId = u.searchParams.get('recruiterId');
+    const accountManagerId = u.searchParams.get('accountManagerId');
     const engagementType = u.searchParams.get('engagementType');
     const items = vacanciesDb.filter((v) => {
       if (search && !v.title.toLowerCase().includes(search)) return false;
@@ -388,6 +395,7 @@ export const handlers = [
       if (priority && v.priority !== priority) return false;
       if (clientId && v.clientId !== clientId) return false;
       if (recruiterId && !v.recruiterIds.includes(recruiterId)) return false;
+      if (accountManagerId && v.accountManagerId !== accountManagerId) return false;
       if (engagementType && v.engagementType !== engagementType) return false;
       return true;
     });
@@ -656,7 +664,14 @@ export const handlers = [
       birthday: body.birthday,
       telegram: body.telegram,
       phone: body.phone,
+      email: body.email,
       kanbanOrder: nextKanbanOrder(candidatesDb, body.status ?? 'new'),
+      summary: body.summary,
+      skillCategories: body.skillCategories,
+      experience: body.experience,
+      education: body.education,
+      certifications: body.certifications,
+      languages: body.languages,
     };
     candidatesDb.unshift(created);
     pushActivity({
@@ -938,5 +953,22 @@ export const handlers = [
         ).length,
       }));
     return HttpResponse.json(out);
+  }),
+
+  // === Permissions matrix ===
+  http.get(url('/permissions-matrix'), () => {
+    return HttpResponse.json({ items: permissionsMatrixDb });
+  }),
+  http.put(url('/permissions-matrix/:id'), async ({ params, request }) => {
+    const body = (await request.json()) as { matrix: Record<Role, boolean> };
+    const updated = updatePermissionRow(String(params.id), body.matrix);
+    if (!updated) {
+      return new HttpResponse('Permission row not found', { status: 404 });
+    }
+    return HttpResponse.json(updated);
+  }),
+  http.post(url('/permissions-matrix/reset'), () => {
+    const items = resetPermissionsMatrix();
+    return HttpResponse.json({ items });
   }),
 ];

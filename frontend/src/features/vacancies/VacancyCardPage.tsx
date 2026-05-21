@@ -44,6 +44,7 @@ import { vacancyStatuses } from '@/mocks/db/vacancies';
 import { formatDateRu, formatMoneyRub } from '@/lib/utils';
 import type { Vacancy } from '@/api/types';
 import { useAuthStore } from '@/stores/auth';
+import { useCan } from '@/lib/permissions';
 import { CommentsSection } from '@/features/comments/CommentsSection';
 import { AttachCandidateDialog } from '@/features/matching/AttachCandidateDialog';
 import { useAttachCandidate, useDetachCandidate } from '@/features/matching/hooks';
@@ -232,9 +233,10 @@ export function VacancyCardPage() {
     );
   };
 
+  const canAssignRecruiter = useCan('vacancy:assign_recruiter');
   const canSelfAssignRecruiter = Boolean(
-    currentUser &&
-      (currentUser.role === 'admin' || currentUser.role === 'recruiter') &&
+    canAssignRecruiter &&
+      currentUser &&
       vacancy &&
       !vacancy.recruiterIds.includes(currentUser.id),
   );

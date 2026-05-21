@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { toast } from 'sonner';
 import {
+  Briefcase,
   Building2,
   Flame,
   GraduationCap,
@@ -61,11 +62,13 @@ export function VacanciesKanbanPage() {
   const priority = useFiltersStore((s) => s.priority);
   const clientId = useFiltersStore((s) => s.clientId);
   const recruiterId = useFiltersStore((s) => s.recruiterId);
+  const accountManagerId = useFiltersStore((s) => s.accountManagerId);
   const engagementType = useFiltersStore((s) => s.engagementType);
   const setGrade = useFiltersStore((s) => s.setGrade);
   const setPriority = useFiltersStore((s) => s.setPriority);
   const setClientId = useFiltersStore((s) => s.setClientId);
   const setRecruiterId = useFiltersStore((s) => s.setRecruiterId);
+  const setAccountManagerId = useFiltersStore((s) => s.setAccountManagerId);
   const setEngagementType = useFiltersStore((s) => s.setEngagementType);
   const resetBoardFilters = useFiltersStore((s) => s.resetBoardFilters);
 
@@ -75,6 +78,7 @@ export function VacanciesKanbanPage() {
     priority: priority ?? undefined,
     clientId: clientId ?? undefined,
     recruiterId: recruiterId ?? undefined,
+    accountManagerId: accountManagerId ?? undefined,
     engagementType: engagementType ?? undefined,
   });
   const { data: usersData } = useUsers();
@@ -94,16 +98,31 @@ export function VacanciesKanbanPage() {
       ),
     [usersData],
   );
+  const accountManagers = useMemo(
+    () =>
+      (usersData ?? []).filter(
+        (u) => u.role === 'account_manager' || u.role === 'admin',
+      ),
+    [usersData],
+  );
 
   const items = data?.items ?? [];
   const totalCount = items.length;
 
   const hasActiveBoardFilters =
-    !!grade || !!priority || !!clientId || !!recruiterId || !!engagementType;
+    !!grade ||
+    !!priority ||
+    !!clientId ||
+    !!recruiterId ||
+    !!accountManagerId ||
+    !!engagementType;
 
   const clientLabel = clientId ? clientMap.get(clientId)?.name ?? '—' : null;
   const recruiterLabel = recruiterId
     ? userMap.get(recruiterId)?.fullName ?? '—'
+    : null;
+  const accountManagerLabel = accountManagerId
+    ? userMap.get(accountManagerId)?.fullName ?? '—'
     : null;
   const engagementLabel = engagementType
     ? ENGAGEMENT_META[engagementType].label
@@ -122,6 +141,58 @@ export function VacanciesKanbanPage() {
             </span>
           }
         >
+          <FilterChip
+            active={!!accountManagerId}
+            icon={Briefcase}
+            label="Ответственный"
+            value={accountManagerLabel}
+            onClear={() => setAccountManagerId(null)}
+          >
+            <div className="max-h-64 overflow-y-auto">
+              <MenuItem
+                selected={!accountManagerId}
+                onClick={() => setAccountManagerId(null)}
+              >
+                Любой ответственный
+              </MenuItem>
+              {accountManagers.map((u) => (
+                <MenuItem
+                  key={u.id}
+                  selected={accountManagerId === u.id}
+                  onClick={() => setAccountManagerId(u.id)}
+                >
+                  {u.fullName}
+                </MenuItem>
+              ))}
+            </div>
+          </FilterChip>
+
+          <FilterChip
+            active={!!recruiterId}
+            icon={UserIcon}
+            label="Рекрутер"
+            value={recruiterLabel}
+            onClear={() => setRecruiterId(null)}
+          >
+            <div className="max-h-64 overflow-y-auto">
+              <MenuItem
+                selected={!recruiterId}
+                onClick={() => setRecruiterId(null)}
+              >
+                Все рекрутеры
+              </MenuItem>
+              {recruiters.map((u) => (
+                <MenuItem
+                  key={u.id}
+                  selected={recruiterId === u.id}
+                  onClick={() => setRecruiterId(u.id)}
+                >
+                  {u.fullName}
+                </MenuItem>
+              ))}
+            </div>
+          </FilterChip>
+
           <FilterChip
             active={!!grade}
             icon={GraduationCap}
@@ -214,32 +285,6 @@ export function VacanciesKanbanPage() {
                   onClick={() => setClientId(c.id)}
                 >
                   {c.name}
-                </MenuItem>
-              ))}
-            </div>
-          </FilterChip>
-
-          <FilterChip
-            active={!!recruiterId}
-            icon={UserIcon}
-            label="Рекрутер"
-            value={recruiterLabel}
-            onClear={() => setRecruiterId(null)}
-          >
-            <div className="max-h-64 overflow-y-auto">
-              <MenuItem
-                selected={!recruiterId}
-                onClick={() => setRecruiterId(null)}
-              >
-                Все рекрутеры
-              </MenuItem>
-              {recruiters.map((u) => (
-                <MenuItem
-                  key={u.id}
-                  selected={recruiterId === u.id}
-                  onClick={() => setRecruiterId(u.id)}
-                >
-                  {u.fullName}
                 </MenuItem>
               ))}
             </div>

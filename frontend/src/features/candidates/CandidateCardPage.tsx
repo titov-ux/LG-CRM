@@ -26,7 +26,15 @@ import { UserAvatar } from '@/components/common/UserAvatar';
 import { StackTags } from '@/components/common/StackTags';
 import { EngagementBadge } from '@/components/common/EngagementBadge';
 import { KanbanStatusSelect } from '@/components/kanban/KanbanStatusSelect';
-import type { Candidate, CandidateStatus } from '@/api/types';
+import type {
+  Candidate,
+  CandidateCertification,
+  CandidateEducation,
+  CandidateExperience,
+  CandidateLanguage,
+  CandidateStatus,
+  SkillCategory,
+} from '@/api/types';
 import { formatMoneyRub, telegramUrl } from '@/lib/utils';
 import { CandidateForm, type CandidateFormValues } from './CandidateForm';
 import {
@@ -44,12 +52,52 @@ import { candidateStatuses } from '@/mocks/db/candidates';
 import { CommentsSection } from '@/features/comments/CommentsSection';
 import { AttachVacancyDialog } from '@/features/matching/AttachVacancyDialog';
 import { useAttachCandidate, useDetachCandidate } from '@/features/matching/hooks';
+import {
+  downloadResumePdf,
+  generateResumeDocxBlob,
+  resumeFileName,
+} from './resume';
 
 function splitStack(value: string | undefined): string[] {
   return (value ?? '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+function splitLines(value: string | undefined): string[] {
+  return (value ?? '')
+    .split(/\r?\n/)
+    .map((s) => s.replace(/^[-•*]\s*/, '').trim())
+    .filter(Boolean);
+}
+
+const MONTH_NAMES_RU = [
+  'Январь',
+  'Февраль',
+  'Март',
+  'Апрель',
+  'Май',
+  'Июнь',
+  'Июль',
+  'Август',
+  'Сентябрь',
+  'Октябрь',
+  'Ноябрь',
+  'Декабрь',
+];
+
+function formatMonth(value: string | null | undefined): string {
+  if (!value) return 'наст. время';
+  const m = /^(\d{4})-(\d{2})$/.exec(value);
+  if (!m) return value;
+  const month = Number(m[2]);
+  if (month < 1 || month > 12) return value;
+  return `${MONTH_NAMES_RU[month - 1]} ${m[1]}`;
+}
+
+function formatPeriod(start: string, end: string | null | undefined): string {
+  return `${formatMonth(start)} — ${formatMonth(end ?? null)}`;
 }
 
 function toFormValues(candidate: Candidate): Partial<CandidateFormValues> {
@@ -68,7 +116,39 @@ function toFormValues(candidate: Candidate): Partial<CandidateFormValues> {
     birthday: candidate.birthday ?? '',
     telegram: candidate.telegram ?? '',
     phone: candidate.phone ?? '',
+    email: candidate.email ?? '',
     stack: candidate.stack.join(', '),
+    summary: candidate.summary ?? '',
+    skillCategories: (candidate.skillCategories ?? []).map((c) => ({
+      id: c.id,
+      name: c.name,
+      itemsText: c.items.join(', '),
+    })),
+    experience: (candidate.experience ?? []).map((e) => ({
+      id: e.id,
+      company: e.company,
+      position: e.position,
+      startMonth: e.startMonth,
+      endMonth: e.endMonth ?? '',
+      project: e.project ?? '',
+      achievementsText: e.achievements.join('\n'),
+      stackText: e.stack.join(', '),
+    })),
+    education: (candidate.education ?? []).map((e) => ({
+      id: e.id,
+      degree: e.degree,
+      institution: e.institution,
+      city: e.city ?? '',
+      graduationYear: e.graduationYear,
+      specialty: e.specialty ?? '',
+    })),
+    certifications: (candidate.certifications ?? []).map((c) => ({
+      id: c.id,
+      title: c.title,
+      issuer: c.issuer,
+      period: c.period ?? '',
+    })),
+    languages: candidate.languages ?? [],
   };
 }
 
@@ -90,7 +170,18 @@ function toDuplicatePayload(candidate: Candidate): Partial<Candidate> {
     status: 'new',
     telegram: candidate.telegram,
     phone: candidate.phone,
+    email: candidate.email,
     vacancyIds: [...candidate.vacancyIds],
+    summary: candidate.summary,
+    skillCategories: candidate.skillCategories?.map((c) => ({ ...c, items: [...c.items] })),
+    experience: candidate.experience?.map((e) => ({
+      ...e,
+      achievements: [...e.achievements],
+      stack: [...e.stack],
+    })),
+    education: candidate.education?.map((e) => ({ ...e })),
+    certifications: candidate.certifications?.map((c) => ({ ...c })),
+    languages: candidate.languages?.map((l) => ({ ...l })),
   };
 }
 
@@ -165,6 +256,46 @@ export function CandidateCardPage() {
     });
   };
 
+  // Генерация резюме. У кандидата должна быть заполнена хотя бы шапка —
+  // ФИО плюс что-то ещё; иначе шаблон получится пустым. Кнопка остаётся
+  // активной всегда (формальный минимум есть у любого кандидата), но
+  // на сбой генерации показываем явный тост.
+  const handleDownloadDocx = async () => {
+    if (!candidate) return;
+    try {
+      const blob = await generateResumeDocxBlob(candidate);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = resumeFileName(candidate, 'docx');
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      // Освобождаем URL чуть позже — некоторые браузеры успевают отозвать
+      // ссылку до того, как стартует загрузка.
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast.success('Резюме DOCX сформировано');
+    } catch (e) {
+      console.error(e);
+      toast.error('Не удалось сформировать DOCX');
+    }
+  };
+
+  const [pdfPending, setPdfPending] = useState(false);
+  const handleDownloadPdf = async () => {
+    if (!candidate) return;
+    setPdfPending(true);
+    try {
+      await downloadResumePdf(candidate);
+      toast.success('Резюме PDF сформировано');
+    } catch (e) {
+      console.error(e);
+      toast.error('Не удалось сформировать PDF');
+    } finally {
+      setPdfPending(false);
+    }
+  };
+
   const handleDetachVacancy = (vacancyId: string, vacancyTitle: string) => {
     if (!candidate) return;
     detachCandidate.mutate(
@@ -185,6 +316,36 @@ export function CandidateCardPage() {
 
   const handleEdit = (values: CandidateFormValues) => {
     if (!candidate) return;
+    const skillCategories: SkillCategory[] = values.skillCategories.map((c) => ({
+      id: c.id,
+      name: c.name,
+      items: splitStack(c.itemsText),
+    }));
+    const experience: CandidateExperience[] = values.experience.map((e) => ({
+      id: e.id,
+      company: e.company,
+      position: e.position,
+      startMonth: e.startMonth,
+      endMonth: e.endMonth ? e.endMonth : null,
+      project: e.project || undefined,
+      achievements: splitLines(e.achievementsText),
+      stack: splitStack(e.stackText),
+    }));
+    const education: CandidateEducation[] = values.education.map((e) => ({
+      id: e.id,
+      degree: e.degree,
+      institution: e.institution,
+      city: e.city || undefined,
+      graduationYear: Number(e.graduationYear),
+      specialty: e.specialty || undefined,
+    }));
+    const certifications: CandidateCertification[] = values.certifications.map((c) => ({
+      id: c.id,
+      title: c.title,
+      issuer: c.issuer,
+      period: c.period || undefined,
+    }));
+    const languages: CandidateLanguage[] = values.languages;
     updateCandidate.mutate(
       {
         id: candidate.id,
@@ -203,7 +364,14 @@ export function CandidateCardPage() {
           birthday: values.birthday || undefined,
           telegram: values.telegram || undefined,
           phone: values.phone || undefined,
+          email: values.email || undefined,
           stack: splitStack(values.stack),
+          summary: values.summary || undefined,
+          skillCategories,
+          experience,
+          education,
+          certifications,
+          languages,
         },
       },
       {
@@ -251,6 +419,28 @@ export function CandidateCardPage() {
               aria-label="Скопировать кандидата"
             >
               <Copy className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={!candidate}
+              onClick={handleDownloadDocx}
+              aria-label="Скачать резюме в DOCX"
+              title="Скачать резюме в DOCX"
+              className="h-8 px-2"
+            >
+              <span className="text-[12px]">DOCX</span>
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={!candidate || pdfPending}
+              onClick={handleDownloadPdf}
+              aria-label="Скачать резюме в PDF"
+              title="Скачать резюме в PDF"
+              className="h-8 px-2"
+            >
+              <span className="text-[12px]">{pdfPending ? '…' : 'PDF'}</span>
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -333,6 +523,15 @@ export function CandidateCardPage() {
                 )}
               />
               <Field label="Телефон" value={candidate.phone && <span className="flex items-center gap-1.5"><Phone className="h-3 w-3 text-muted-foreground" />{candidate.phone}</span>} />
+              <Field
+                label="Email"
+                value={candidate.email && (
+                  <a href={`mailto:${candidate.email}`} className="flex items-center gap-1.5 hover:underline">
+                    <Mail className="h-3 w-3 text-muted-foreground" />
+                    {candidate.email}
+                  </a>
+                )}
+              />
               <Field label="Ожидаемая ставка" value={<span className="font-semibold">{formatMoneyRub(candidate.rateMonth)} ₽/мес</span>} />
               <Field label="Тип оформления" value={candidate.employmentType} />
               <Field
@@ -354,6 +553,113 @@ export function CandidateCardPage() {
             </div>
 
             <Section title="Стек технологий"><StackTags stack={candidate.stack} variant="accent" /></Section>
+
+            {candidate.summary && (
+              <Section title="Сопроводительное письмо">
+                <p className="whitespace-pre-line text-[13px] leading-relaxed text-foreground/90">
+                  {candidate.summary}
+                </p>
+              </Section>
+            )}
+
+            {candidate.skillCategories && candidate.skillCategories.length > 0 && (
+              <Section title="Ключевые навыки">
+                <div className="space-y-3">
+                  {candidate.skillCategories.map((cat) => (
+                    <div key={cat.id}>
+                      <div className="mb-1 text-[11.5px] font-medium text-foreground/80">{cat.name}</div>
+                      <StackTags stack={cat.items} variant="accent" />
+                    </div>
+                  ))}
+                </div>
+              </Section>
+            )}
+
+            {candidate.experience && candidate.experience.length > 0 && (
+              <Section title="Профессиональный опыт">
+                <div className="space-y-3.5">
+                  {candidate.experience.map((exp) => (
+                    <div key={exp.id} className="rounded-md border bg-muted/20 px-3 py-2.5">
+                      <div className="text-[13.5px] font-semibold leading-tight">{exp.company}</div>
+                      <div className="text-[12.5px] text-foreground/80">{exp.position}</div>
+                      <div className="mt-0.5 text-[11.5px] text-muted-foreground">
+                        {formatPeriod(exp.startMonth, exp.endMonth)}
+                      </div>
+                      {exp.project && (
+                        <div className="mt-2 text-[12.5px] leading-relaxed text-foreground/90">
+                          <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Проект: </span>
+                          {exp.project}
+                        </div>
+                      )}
+                      {exp.achievements.length > 0 && (
+                        <ul className="mt-2 list-disc space-y-0.5 pl-5 text-[12.5px] leading-relaxed text-foreground/90 marker:text-muted-foreground">
+                          {exp.achievements.map((a, i) => (
+                            <li key={i}>{a}</li>
+                          ))}
+                        </ul>
+                      )}
+                      {exp.stack.length > 0 && (
+                        <div className="mt-2">
+                          <div className="mb-1 text-[10.5px] font-medium uppercase tracking-wide text-muted-foreground">Стек</div>
+                          <StackTags stack={exp.stack} variant="accent" />
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </Section>
+            )}
+
+            {candidate.education && candidate.education.length > 0 && (
+              <Section title="Образование">
+                <div className="space-y-2">
+                  {candidate.education.map((edu) => (
+                    <div key={edu.id} className="text-[13px] leading-snug">
+                      <div className="font-semibold">{edu.degree}</div>
+                      <div className="text-foreground/90">
+                        {edu.institution}
+                        {edu.city ? `, ${edu.city}` : ''}, {edu.graduationYear}
+                      </div>
+                      {edu.specialty && (
+                        <div className="text-[12px] text-muted-foreground">{edu.specialty}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </Section>
+            )}
+
+            {candidate.certifications && candidate.certifications.length > 0 && (
+              <Section title="Повышение квалификации">
+                <div className="space-y-2">
+                  {candidate.certifications.map((cert) => (
+                    <div key={cert.id} className="text-[13px] leading-snug">
+                      <div className="font-medium">{cert.title}</div>
+                      <div className="text-[12px] text-muted-foreground">
+                        {cert.issuer}
+                        {cert.period ? ` · ${cert.period}` : ''}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </Section>
+            )}
+
+            {candidate.languages && candidate.languages.length > 0 && (
+              <Section title="Знание языков">
+                <div className="flex flex-wrap gap-2">
+                  {candidate.languages.map((l) => (
+                    <span
+                      key={`${l.language}-${l.level}`}
+                      className="rounded-md border bg-muted/30 px-2 py-1 text-[12px]"
+                    >
+                      <span className="font-medium">{l.language}</span>
+                      <span className="text-muted-foreground"> · {l.level}</span>
+                    </span>
+                  ))}
+                </div>
+              </Section>
+            )}
 
             <Section
               title={`Прикреплённые вакансии · ${attachedVacancies.length}`}

@@ -3,7 +3,7 @@ import type { User } from '@/api/types';
 
 /** Минимум для открытия профиля; полные данные подтягиваются из списка пользователей. */
 export type ProfileUserRef = Pick<User, 'id' | 'fullName' | 'initials' | 'color'> &
-  Partial<Pick<User, 'email' | 'role' | 'isActive'>>;
+  Partial<Pick<User, 'email' | 'telegram' | 'role' | 'isActive'>>;
 
 interface ProfileState {
   open: boolean;

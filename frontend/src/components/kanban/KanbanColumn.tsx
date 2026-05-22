@@ -10,18 +10,26 @@ interface Props<TStatus extends string> {
   itemIds: string[];
   count: number;
   children: ReactNode;
+  isDragging?: boolean;
   onCreate?: () => void;
 }
 
-export function KanbanColumn<TStatus extends string>({ status, itemIds, count, children, onCreate }: Props<TStatus>) {
+export function KanbanColumn<TStatus extends string>({
+  status,
+  itemIds,
+  count,
+  children,
+  isDragging = false,
+  onCreate,
+}: Props<TStatus>) {
   const { setNodeRef, isOver } = useDroppable({ id: status.id });
 
   return (
     <div
       ref={setNodeRef}
       className={cn(
-        'w-[280px] shrink-0 rounded-lg p-1 transition-colors',
-        isOver && 'bg-muted outline outline-1 outline-dashed outline-slate-300',
+        '-mx-1.5 w-[calc(280px+12px)] shrink-0 rounded-lg p-1 px-1.5 transition-colors',
+        isOver && isDragging && 'bg-muted/60',
       )}
     >
       <div className="flex items-center justify-between px-2 pb-2.5 pt-1.5">

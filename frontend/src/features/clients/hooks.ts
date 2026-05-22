@@ -1,7 +1,7 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { clientsApi, type ClientsListParams } from '@/api/clients';
 import { usersApi } from '@/api/users';
-import type { UUID } from '@/api/types';
+import type { Client, CreateContactRequest, UUID } from '@/api/types';
 import { QUERY_DEFAULTS } from '@/lib/constants';
 
 export const clientKeys = {
@@ -49,3 +49,49 @@ export function useClientContacts(id: UUID | undefined) {
     ...QUERY_DEFAULTS,
   });
 }
+
+export function useCreateClient() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: Partial<Client>) => clientsApi.create(payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: clientKeys.all });
+    },
+  });
+}
+
+export function useUpdateClient() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, payload }: { id: UUID; payload: Partial<Client> }) =>
+      clientsApi.update(id, payload),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(clientKeys.byId(updated.id), updated);
+      queryClient.invalidateQueries({ queryKey: clientKeys.all });
+    },
+  });
+}
+
+export function useDeleteClient() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: UUID) => clientsApi.remove(id),
+    onSuccess: (_data, id) => {
+      queryClient.removeQueries({ queryKey: clientKeys.byId(id) });
+      queryClient.invalidateQueries({ queryKey: clientKeys.all });
+      queryClient.invalidateQueries({ queryKey: ['contacts'] });
+    },
+  });
+}
+
+export function useCreateContact(clientId: UUID) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: CreateContactRequest) => clientsApi.createContact(clientId, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: clientKeys.all });
+      queryClient.invalidateQueries({ queryKey: ['contacts'] });
+    },
+  });
+}
+

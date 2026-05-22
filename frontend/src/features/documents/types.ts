@@ -1,0 +1,58 @@
+export type DocumentSectionId =
+  | 'clients'
+  | 'regulations'
+  | 'company'
+  | 'employees'
+  | 'contractors'
+  | 'tender'
+  | 'general';
+
+export type DocumentKind = 'doc' | 'pdf' | 'xlsx' | 'pptx' | 'image' | 'folder';
+
+export interface DocumentVersion {
+  id: string;
+  label: string; // "v1", "Первая редакция"
+  createdAt: string;
+  author: string;
+  note?: string;
+}
+
+export interface DocumentComment {
+  id: string;
+  author: string;
+  createdAt: string;
+  text: string;
+}
+
+export interface DocumentItem {
+  id: string;
+  title: string;
+  emoji: string;
+  kind: DocumentKind;
+  section: DocumentSectionId;
+  updatedAt: string; // ISO
+  owner: string;
+  tags?: string[];
+  description?: string;
+  parentId?: string; // для вложения внутрь папки
+  versions?: DocumentVersion[];
+  comments?: DocumentComment[];
+}
+
+export interface DocumentTemplate {
+  id: string;
+  title: string;
+  emoji: string;
+  description: string;
+  kind: DocumentKind;
+  section: DocumentSectionId;
+  tags?: string[];
+  bodyDescription?: string; // что появится в описании созданного документа
+}
+
+export interface DocumentSection {
+  id: DocumentSectionId;
+  title: string;
+  emoji: string;
+  description: string;
+}

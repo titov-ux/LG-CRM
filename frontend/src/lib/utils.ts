@@ -18,6 +18,13 @@ export function formatMoneyRub(value: number): string {
   return new Intl.NumberFormat('ru-RU').format(value);
 }
 
+export function telegramUrl(telegram: string): string {
+  const t = telegram.trim();
+  if (/^https?:\/\//i.test(t)) return t;
+  const handle = t.replace(/^@/, '');
+  return `https://t.me/${handle}`;
+}
+
 export function formatDateRu(date: string | Date | null | undefined): string {
   if (!date) return '—';
   const d = typeof date === 'string' ? new Date(date) : date;

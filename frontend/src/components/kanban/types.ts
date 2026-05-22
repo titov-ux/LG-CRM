@@ -10,4 +10,11 @@ export interface KanbanStatusDescriptor<TStatus extends string> {
 export interface KanbanItem<TStatus extends string> {
   id: string;
   status: TStatus;
+  kanbanOrder: number;
+}
+
+export interface KanbanReorderUpdate<TStatus extends string> {
+  id: string;
+  status: TStatus;
+  kanbanOrder: number;
 }

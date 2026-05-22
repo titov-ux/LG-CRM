@@ -1,25 +1,34 @@
 import { Outlet, createFileRoute, useRouterState } from '@tanstack/react-router';
 import { AppShell } from '@/components/layout/AppShell';
 import { AuthGuard } from '@/features/auth/AuthGuard';
+import { usePermissionsMatrix } from '@/features/permissions/hooks';
 
 const TITLES: Record<string, string> = {
   '/dashboard': 'Главная',
   '/vacancies': 'Вакансии',
   '/candidates': 'Кандидаты',
+  '/database': 'Все кандидаты',
   '/clients': 'Клиенты',
+  '/contacts': 'Контакты',
+  '/documents': 'Документы',
   '/notifications': 'Уведомления',
+  '/chat': 'Чат',
   '/analytics': 'Аналитика',
   '/audit': 'Журнал действий',
+  '/roles': 'Роли и доступы',
   '/settings': 'Настройки',
 };
 
 function titleFor(pathname: string): string {
   const match = Object.keys(TITLES).find((p) => pathname.startsWith(p));
-  return match ? TITLES[match] : 'CRM';
+  return match ? TITLES[match] : 'SaaS';
 }
 
 function AuthedLayout() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  // Один раз монтируем «глобальный» запрос матрицы доступов — он же зеркалит
+  // последний снимок в sync-кэш для can()/useCan() во всём приложении.
+  usePermissionsMatrix();
   return (
     <AuthGuard>
       <AppShell title={titleFor(pathname)}>

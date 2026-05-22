@@ -4,11 +4,12 @@
 export type UUID = string;
 
 // === Users ===
-export type Role = 'admin' | 'account_manager' | 'recruiter';
+export type Role = 'admin' | 'account_manager' | 'recruiter' | 'viewer';
 
 export interface User {
   id: UUID;
   email: string;
+  telegram?: string;
   fullName: string;
   role: Role;
   initials: string;
@@ -16,16 +17,45 @@ export interface User {
   isActive: boolean;
 }
 
+export interface CreateUserRequest {
+  email: string;
+  telegram?: string;
+  fullName: string;
+  role: Role;
+  password?: string;
+  isActive?: boolean;
+}
+
 // === Clients ===
 export type ClientStatus = 'lead' | 'in_progress' | 'active' | 'paused' | 'archived';
+
+/**
+ * Тип клиента в воронке продаж:
+ *  - 'direct'        — прямой клиент: договор и работа напрямую с компанией-конечным заказчиком.
+ *  - 'intermediary'  — посредник: агентство/интегратор, через которого идёт работа с конечным заказчиком.
+ *
+ * Влияет на маржинальность, цепочку коммуникаций и юридическое оформление,
+ * поэтому хранится отдельно от статуса воронки.
+ */
+export type ClientKind = 'direct' | 'intermediary';
+
+export interface LegalEntity {
+  id: UUID;
+  name: string;
+  inn: string;
+}
 
 export interface Client {
   id: UUID;
   name: string;
-  inn: string;
+  legalEntities: LegalEntity[];
   industry: string;
   accountManagerId: UUID;
   status: ClientStatus;
+  /** Прямой клиент или посредник. */
+  clientKind: ClientKind;
+  /** Ссылка или @username общего Telegram-чата с клиентом */
+  telegramChat?: string;
   vacanciesCount: number;
   contactsCount: number;
 }
@@ -37,7 +67,35 @@ export interface Contact {
   role: string;
   email?: string;
   phone?: string;
+  telegram?: string;
+  /** ISO date YYYY-MM-DD */
+  birthday?: string;
 }
+
+export interface CreateContactRequest {
+  name: string;
+  role: string;
+  email?: string;
+  phone?: string;
+  telegram?: string;
+  /** ISO date YYYY-MM-DD */
+  birthday?: string;
+}
+
+export interface ContactListItem extends Contact {
+  clientName: string;
+}
+
+// === Engagement type ===
+/**
+ * Модель работы с кандидатом / форма сделки с клиентом.
+ * - 'outstaff'  — аутстафф: «свой» инженер, работающий у клиента на нашем юр.лице.
+ * - 'agency'    — кадровое агентство: подбор кандидата, которого нанимает клиент к себе.
+ *
+ * Это первичная характеристика и вакансии, и кандидата. Кандидата одного типа
+ * нельзя привязать к вакансии другого типа (валидация на бэке + UI-фильтр).
+ */
+export type EngagementType = 'outstaff' | 'agency';
 
 // === Vacancies ===
 export type Grade = 'Junior' | 'Middle' | 'Senior' | 'Lead';
@@ -46,62 +104,187 @@ export type Priority = 'low' | 'medium' | 'high' | 'urgent';
 
 export type VacancyStatus =
   | 'new'
-  | 'briefing'
   | 'in_work'
   | 'proposed'
   | 'interview'
-  | 'offer'
+  | 'waiting_os'
   | 'closed_success'
+  | 'closed'
   | 'paused';
 
 export interface Vacancy {
   id: UUID;
   title: string;
   clientId: UUID;
+  /** Тип сделки: аутстафф или кадровое агентство. */
+  engagementType: EngagementType;
+  /** Название проекта у клиента — у одного клиента их может быть несколько. */
+  project?: string;
   grade: Grade;
   stack: string[];
   format: WorkFormat;
+  /** Ставка клиента в ₽/час. Используется для аутстаффа; для агентских вакансий не применяется. */
   rateClient: number;
-  rateMax: number;
+  /** Верхняя граница оклада в ₽/мес. Используется только для агентских вакансий, опционально.
+   *  null/undefined трактуем одинаково — «не указан». */
+  salaryMax?: number | null;
   positions: number;
   status: VacancyStatus;
   priority: Priority;
+  /**
+   * Аккаунт-менеджер, отвечающий за вакансию.
+   * По умолчанию наследуется от клиента, но может быть переопределён вручную.
+   */
+  accountManagerId: UUID;
   recruiterIds: UUID[];
   daysInStatus: number;
   candidatesCount: number;
   deadline: string | null;
+  kanbanOrder: number;
+  /** Свободное описание вакансии: задачи, проект, особенности */
+  description?: string;
+  /** Требования к кандидату: обязательные и желательные */
+  requirements?: string;
 }
 
 // === Candidates ===
 export type CandidateStatus =
   | 'new'
-  | 'screening'
   | 'recruiter_iv'
   | 'ready'
   | 'presented'
-  | 'client_iv'
+  | 'waiting_os'
   | 'offer'
+  | 'rejected_client'
+  | 'rejected_candidate'
   | 'hired'
   | 'reserve';
+
+/** Тип оформления кандидата:
+ *  - ИП — индивидуальный предприниматель
+ *  - СМЗ — самозанятый (НПД)
+ *  - ТК РФ — трудовой договор по Трудовому кодексу РФ
+ */
+export type EmploymentType = 'ИП' | 'СМЗ' | 'ТК РФ';
+
+/**
+ * Категория навыков из резюме. Каждый блок («Языки программирования»,
+ * «Технологии», «Администрирование» и т.п.) — отдельная категория со
+ * своим списком элементов. Это гибче плоского `stack`, который остаётся
+ * как сводный список для канбана/поиска.
+ */
+export interface SkillCategory {
+  /** Идентификатор для useFieldArray и стабильных ключей в React. */
+  id: string;
+  /** Например: «Языки программирования», «Технологии», «DevOps и автоматизация». */
+  name: string;
+  /** Конкретные навыки/технологии этой категории. */
+  items: string[];
+}
+
+/**
+ * Опыт работы. Даты — в формате YYYY-MM (без числа), так как в резюме
+ * указываются месяц и год. endMonth=null означает «по настоящее время».
+ */
+export interface CandidateExperience {
+  id: string;
+  company: string;
+  position: string;
+  /** YYYY-MM */
+  startMonth: string;
+  /** YYYY-MM или null = «по настоящее время» */
+  endMonth: string | null;
+  /** Краткое описание проекта/контекста, в котором кандидат работал. */
+  project?: string;
+  /** Ключевые задачи и достижения — отдельные пункты для буллетов. */
+  achievements: string[];
+  /** Стек, использовавшийся в этом проекте/месте работы. */
+  stack: string[];
+}
+
+/** Образование (вуз, ссуз и т.п.). */
+export interface CandidateEducation {
+  id: string;
+  /** Например: «Магистр», «Бакалавр», «Специалист». */
+  degree: string;
+  /** Учебное заведение. */
+  institution: string;
+  /** Город учебного заведения, опционально. */
+  city?: string;
+  /** Год окончания. */
+  graduationYear: number;
+  /** Факультет / специальность. */
+  specialty?: string;
+}
+
+/** Курсы, сертификаты, повышения квалификации. */
+export interface CandidateCertification {
+  id: string;
+  /** Название программы или сертификата. */
+  title: string;
+  /** Кто проводил/выдал (организация). */
+  issuer: string;
+  /** Свободный период: «2017-2025», «2023», «Январь 2024» — как в резюме. */
+  period?: string;
+}
+
+/** Уровень владения языком по CEFR + «родной». */
+export type LanguageLevel = 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2' | 'родной';
+
+export interface CandidateLanguage {
+  /** Название языка («Русский», «Английский», ...). */
+  language: string;
+  level: LanguageLevel;
+}
 
 export interface Candidate {
   id: UUID;
   fullName: string;
   role: string;
+  /** Тип кандидата: аутстафф или агентский. Должен совпадать с типом вакансии при привязке. */
+  engagementType: EngagementType;
   grade: Grade;
   experienceYears: number;
   stack: string[];
-  rate: number;
+  /** Ожидаемая ставка кандидата, ₽/мес */
+  rateMonth: number;
+  employmentType: EmploymentType;
   format: WorkFormat;
   location: string;
-  source: string;
   recruiterId: UUID;
   status: CandidateStatus;
   daysInStatus: number;
   vacancyIds: UUID[];
-  hot: boolean;
-  email?: string;
+  telegram?: string;
   phone?: string;
+  email?: string;
+  /** ISO date YYYY-MM-DD */
+  birthday?: string;
+  kanbanOrder: number;
+  /** Сопроводительное письмо / краткая самопрезентация кандидата. */
+  summary?: string;
+  /** Категоризованные навыки (как блоки в резюме). */
+  skillCategories?: SkillCategory[];
+  /** Опыт работы (от свежего к старому). */
+  experience?: CandidateExperience[];
+  /** Образование. */
+  education?: CandidateEducation[];
+  /** Курсы / повышение квалификации. */
+  certifications?: CandidateCertification[];
+  /** Знание языков. */
+  languages?: CandidateLanguage[];
+  /**
+   * Кандидат убран с канбан-доски, но остаётся в общей «Базе кандидатов».
+   * Из базы такие кандидаты не пропадают — это служит «архивом» вне доски.
+   * Полное удаление из базы — отдельное действие, доступное только админу.
+   */
+  archived?: boolean;
+  /** ISO datetime — момент перевода в архив (убран с доски). */
+  archivedAt?: string | null;
+  /** Кто убрал кандидата с доски. */
+  archivedById?: UUID | null;
+  /** Причина архивирования (опционально, заполняется при удалении с доски). */
+  archiveReason?: string;
 }
 
 // === Matching (vacancy_candidates) ===
@@ -130,10 +313,41 @@ export interface Notification {
   userId: UUID;
   kind: 'mention' | 'status_change' | 'system';
   text: string;
-  entityType?: 'vacancy' | 'candidate' | 'client';
+  entityType?: 'vacancy' | 'candidate' | 'client' | 'contact';
   entityId?: UUID;
   read: boolean;
   createdAt: string;
+}
+
+// === Comments ===
+export type CommentEntityType = 'contact' | 'candidate' | 'vacancy' | 'client';
+
+export interface Comment {
+  id: UUID;
+  entityType: CommentEntityType;
+  entityId: UUID;
+  authorId: UUID;
+  /** id родительского комментария — для ответов в нити */
+  parentId: UUID | null;
+  text: string;
+  /** id упомянутых через @ пользователей */
+  mentions: UUID[];
+  createdAt: string;
+  /** Заполняется при редактировании комментария */
+  updatedAt: string | null;
+}
+
+export interface CreateCommentRequest {
+  entityType: CommentEntityType;
+  entityId: UUID;
+  text: string;
+  parentId?: UUID | null;
+  mentions?: UUID[];
+}
+
+export interface UpdateCommentRequest {
+  text: string;
+  mentions?: UUID[];
 }
 
 // === Audit / Activity ===

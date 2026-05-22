@@ -37,6 +37,123 @@ export function useCandidateActivity(id: UUID | undefined) {
   });
 }
 
+export function useCreateCandidate() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: Partial<Candidate>) => candidatesApi.create(payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: candidateKeys.all });
+    },
+  });
+}
+
+export function useUpdateCandidate() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, payload }: { id: UUID; payload: Partial<Candidate> }) =>
+      candidatesApi.update(id, payload),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(candidateKeys.byId(updated.id), updated);
+      queryClient.invalidateQueries({ queryKey: candidateKeys.all });
+    },
+  });
+}
+
+/**
+ * «Удаление» кандидата с канбан-доски. На самом деле — архивирование:
+ * в базе он остаётся, просто пропадает из канбана и из связей с вакансиями.
+ * Полное удаление см. в `useDeleteCandidatePermanent`.
+ */
+export function useDeleteCandidate() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: UUID) => candidatesApi.remove(id),
+    onSuccess: (_data, id) => {
+      // НЕ удаляем byId — кандидат остался в базе, просто архивирован.
+      queryClient.invalidateQueries({ queryKey: candidateKeys.byId(id) });
+      queryClient.invalidateQueries({ queryKey: candidateKeys.all });
+      queryClient.invalidateQueries({ queryKey: candidateKeys.activity(id) });
+    },
+  });
+}
+
+/** Архивирование кандидата с указанием причины. */
+export function useArchiveCandidate() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, reason }: { id: UUID; reason?: string }) =>
+      candidatesApi.archive(id, reason),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(candidateKeys.byId(updated.id), updated);
+      queryClient.invalidateQueries({ queryKey: candidateKeys.all });
+      queryClient.invalidateQueries({ queryKey: candidateKeys.activity(updated.id) });
+    },
+  });
+}
+
+/** Восстановление кандидата обратно на канбан. */
+export function useRestoreCandidate() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: UUID) => candidatesApi.restore(id),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(candidateKeys.byId(updated.id), updated);
+      queryClient.invalidateQueries({ queryKey: candidateKeys.all });
+      queryClient.invalidateQueries({ queryKey: candidateKeys.activity(updated.id) });
+    },
+  });
+}
+
+/**
+ * Полное удаление кандидата из базы. Не должно показываться в UI никому
+ * кроме админа (см. `useCan('candidate:delete_permanent')`).
+ */
+export function useDeleteCandidatePermanent() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: UUID) => candidatesApi.removePermanent(id),
+    onSuccess: (_data, id) => {
+      queryClient.removeQueries({ queryKey: candidateKeys.byId(id) });
+      queryClient.invalidateQueries({ queryKey: candidateKeys.all });
+    },
+  });
+}
+
+export function useReorderCandidatesKanban() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (updates: { id: UUID; status: CandidateStatus; kanbanOrder: number }[]) =>
+      candidatesApi.reorderKanban(updates),
+    onMutate: async (updates) => {
+      await queryClient.cancelQueries({ queryKey: candidateKeys.all });
+      const previous = queryClient.getQueriesData<{ items: Candidate[] }>({ queryKey: candidateKeys.all });
+      const updateMap = new Map(updates.map((u) => [u.id, u]));
+      previous.forEach(([key, data]) => {
+        if (!data?.items) return;
+        queryClient.setQueryData(key, {
+          ...data,
+          items: data.items.map((c) => {
+            const u = updateMap.get(c.id);
+            if (!u) return c;
+            const statusChanged = c.status !== u.status;
+            return {
+              ...c,
+              status: u.status,
+              kanbanOrder: u.kanbanOrder,
+              daysInStatus: statusChanged ? 0 : c.daysInStatus,
+            };
+          }),
+        });
+      });
+      return { previous };
+    },
+    onError: (_e, _v, ctx) => {
+      ctx?.previous.forEach(([k, d]) => queryClient.setQueryData(k, d));
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: candidateKeys.all }),
+  });
+}
+
 export function useChangeCandidateStatus() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -52,9 +169,22 @@ export function useChangeCandidateStatus() {
           items: data.items.map((c) => (c.id === id ? { ...c, status, daysInStatus: 0 } : c)),
         });
       });
-      return { previous };
+      const byIdKey = candidateKeys.byId(id);
+      const previousById = queryClient.getQueryData<Candidate>(byIdKey);
+      if (previousById) {
+        queryClient.setQueryData(byIdKey, { ...previousById, status, daysInStatus: 0 });
+      }
+      return { previous, previousById, byIdKey };
     },
-    onError: (_e, _v, ctx) => ctx?.previous.forEach(([k, d]) => queryClient.setQueryData(k, d)),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(candidateKeys.byId(updated.id), updated);
+    },
+    onError: (_e, _v, ctx) => {
+      ctx?.previous.forEach(([k, d]) => queryClient.setQueryData(k, d));
+      if (ctx?.previousById !== undefined) {
+        queryClient.setQueryData(ctx.byIdKey, ctx.previousById);
+      }
+    },
     onSettled: () => queryClient.invalidateQueries({ queryKey: candidateKeys.all }),
   });
 }

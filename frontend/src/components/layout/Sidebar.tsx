@@ -1,22 +1,32 @@
 import {
   Activity,
-  BarChart3,
+  Bell,
   Briefcase,
   Building2,
-  Inbox,
+  Calendar,
+  ContactRound,
+  Database,
+  FileText,
+  Home,
+  MessageSquare,
   Settings,
+  ShieldCheck,
   TrendingUp,
   Users,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Link, useRouterState } from '@tanstack/react-router';
 import { cn } from '@/lib/utils';
+import { useNotifications } from '@/features/notifications/hooks';
+import { AppInfoPopover } from './AppInfoPopover';
 
 interface NavItem {
   to: string;
   label: string;
   icon: LucideIcon;
   badge?: number;
+  tag?: string;
+  tagHint?: string;
 }
 
 interface NavGroup {
@@ -25,21 +35,37 @@ interface NavGroup {
 }
 
 const GROUPS: NavGroup[] = [
-  { items: [{ to: '/dashboard', label: 'Главная', icon: BarChart3 }] },
+  { items: [{ to: '/dashboard', label: 'Главная', icon: Home }] },
   {
     label: 'Работа',
     items: [
       { to: '/vacancies', label: 'Вакансии', icon: Briefcase },
       { to: '/candidates', label: 'Кандидаты', icon: Users },
       { to: '/clients', label: 'Клиенты', icon: Building2 },
+      { to: '/contacts', label: 'Контакты', icon: ContactRound },
+      { to: '/chat', label: 'Чат', icon: MessageSquare },
+      { to: '/calendar', label: 'Календарь', icon: Calendar },
+    ],
+  },
+  {
+    label: 'Хранилище',
+    items: [
+      { to: '/database', label: 'Все кандидаты', icon: Database },
+      { to: '/documents', label: 'Документы', icon: FileText },
     ],
   },
   {
     label: 'Прочее',
     items: [
-      { to: '/notifications', label: 'Уведомления', icon: Inbox, badge: 3 },
+      { to: '/notifications', label: 'Уведомления', icon: Bell },
       { to: '/analytics', label: 'Аналитика', icon: TrendingUp },
       { to: '/audit', label: 'Журнал действий', icon: Activity },
+    ],
+  },
+  {
+    label: 'Администрирование',
+    items: [
+      { to: '/roles', label: 'Роли и доступы', icon: ShieldCheck },
       { to: '/settings', label: 'Настройки', icon: Settings },
     ],
   },
@@ -47,18 +73,26 @@ const GROUPS: NavGroup[] = [
 
 export function Sidebar() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const { data: notifications } = useNotifications();
+  const unreadCount = notifications?.filter((n) => !n.read).length ?? 0;
 
   return (
     <aside className="flex w-[232px] shrink-0 flex-col border-r bg-muted/30">
-      <div className="flex items-center gap-2.5 px-3.5 py-4">
-        <div className="flex h-7 w-7 items-center justify-center rounded-md bg-foreground text-[11px] font-bold tracking-tight text-background">
-          ЛГ
-        </div>
-        <div className="flex flex-col leading-tight">
-          <span className="text-[13px] font-semibold tracking-tight">Интеграция</span>
-          <span className="text-[10.5px] text-muted-foreground">CRM · 2026</span>
-        </div>
-      </div>
+      <AppInfoPopover>
+        <button
+          type="button"
+          className="flex w-full items-center gap-2.5 rounded-md px-3.5 py-4 text-left transition-colors hover:bg-background/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          aria-label="Информация о сборке"
+        >
+          <div className="flex h-7 w-7 items-center justify-center rounded-md bg-foreground text-[11px] font-bold tracking-tight text-background">
+            ЛГ
+          </div>
+          <div className="flex flex-col leading-tight">
+            <span className="text-[13px] font-semibold tracking-tight">Интеграция</span>
+            <span className="text-[10.5px] text-muted-foreground">SaaS · 2026</span>
+          </div>
+        </button>
+      </AppInfoPopover>
 
       <nav className="flex-1 space-y-4 px-2 py-2">
         {GROUPS.map((group, gi) => (
@@ -72,6 +106,8 @@ export function Sidebar() {
               {group.items.map((item) => {
                 const Icon = item.icon;
                 const active = pathname.startsWith(item.to);
+                const badge =
+                  item.to === '/notifications' ? unreadCount : item.badge;
                 return (
                   <li key={item.to}>
                     <Link
@@ -85,9 +121,17 @@ export function Sidebar() {
                     >
                       <Icon className="h-4 w-4" strokeWidth={1.8} />
                       <span className="flex-1">{item.label}</span>
-                      {item.badge && (
+                      {item.tag && (
+                        <span
+                          title={item.tagHint}
+                          className="rounded border border-border/60 bg-muted/60 px-1.5 text-[10px] font-semibold uppercase leading-4 tracking-wide text-muted-foreground"
+                        >
+                          {item.tag}
+                        </span>
+                      )}
+                      {badge != null && badge > 0 && (
                         <span className="tnum rounded bg-red-500 px-1.5 text-[10px] font-semibold leading-4 text-white">
-                          {item.badge}
+                          {badge}
                         </span>
                       )}
                     </Link>

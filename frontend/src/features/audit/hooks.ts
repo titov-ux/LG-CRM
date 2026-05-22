@@ -1,10 +1,14 @@
 import { useQuery } from '@tanstack/react-query';
-import { auditApi } from '@/api/audit';
+import { auditApi, type AuditParams } from '@/api/audit';
 
 export const auditKeys = {
   all: ['audit'] as const,
+  list: (params: AuditParams) => [...auditKeys.all, params] as const,
 };
 
-export function useAudit() {
-  return useQuery({ queryKey: auditKeys.all, queryFn: () => auditApi.audit() });
+export function useAudit(params: AuditParams = {}) {
+  return useQuery({
+    queryKey: auditKeys.list(params),
+    queryFn: () => auditApi.audit(params),
+  });
 }

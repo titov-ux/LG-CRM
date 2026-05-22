@@ -1,0 +1,160 @@
+import type { DocumentTemplate } from './types';
+
+export const TEMPLATES: DocumentTemplate[] = [
+  // По сотрудникам
+  {
+    id: 't-employee-contract',
+    title: 'Трудовой договор',
+    emoji: '📝',
+    description: 'Стандартный трудовой договор с сотрудником.',
+    kind: 'doc',
+    section: 'employees',
+    tags: ['шаблон', 'договор'],
+    bodyDescription: 'Договор с разделами: предмет, права и обязанности, оплата, режим работы, ответственность.',
+  },
+  {
+    id: 't-employee-nda',
+    title: 'NDA для сотрудника',
+    emoji: '🔒',
+    description: 'Соглашение о неразглашении.',
+    kind: 'doc',
+    section: 'employees',
+    tags: ['шаблон', 'NDA'],
+  },
+  {
+    id: 't-employee-job-desc',
+    title: 'Должностная инструкция',
+    emoji: '📋',
+    description: 'Шаблон должностной инструкции.',
+    kind: 'doc',
+    section: 'employees',
+    tags: ['шаблон'],
+  },
+  {
+    id: 't-employee-offer',
+    title: 'Job-офер',
+    emoji: '✉️',
+    description: 'Предложение о работе кандидату.',
+    kind: 'doc',
+    section: 'employees',
+    tags: ['шаблон', 'оффер'],
+  },
+
+  // По клиентам
+  {
+    id: 't-client-contract',
+    title: 'Рамочный договор с заказчиком',
+    emoji: '📄',
+    description: 'Шаблон рамочного договора оказания услуг.',
+    kind: 'doc',
+    section: 'clients',
+    tags: ['шаблон', 'договор'],
+  },
+  {
+    id: 't-client-nda',
+    title: 'NDA с заказчиком',
+    emoji: '🔒',
+    description: 'Соглашение о конфиденциальности.',
+    kind: 'doc',
+    section: 'clients',
+    tags: ['шаблон', 'NDA'],
+  },
+  {
+    id: 't-client-spec',
+    title: 'Спецификация подбора',
+    emoji: '📑',
+    description: 'Детальная спецификация вакансии для заказчика.',
+    kind: 'doc',
+    section: 'clients',
+    tags: ['шаблон', 'спецификация'],
+  },
+
+  // По исполнителям
+  {
+    id: 't-contractor-contract',
+    title: 'Договор подряда',
+    emoji: '🤝',
+    description: 'Договор гражданско-правового характера.',
+    kind: 'doc',
+    section: 'contractors',
+    tags: ['шаблон', 'договор', 'ГПХ'],
+  },
+  {
+    id: 't-contractor-act',
+    title: 'Акт выполненных работ',
+    emoji: '🧾',
+    description: 'Шаблон акта приёмки работ.',
+    kind: 'doc',
+    section: 'contractors',
+    tags: ['шаблон', 'акт'],
+  },
+
+  // Тендер
+  {
+    id: 't-tender-application',
+    title: 'Заявка на тендер',
+    emoji: '📋',
+    description: 'Форма заявки на участие в тендере.',
+    kind: 'doc',
+    section: 'tender',
+    tags: ['шаблон', 'тендер'],
+  },
+  {
+    id: 't-tender-pricing',
+    title: 'Финансовый расчёт',
+    emoji: '💰',
+    description: 'Таблица с расчётом стоимости услуг.',
+    kind: 'xlsx',
+    section: 'tender',
+    tags: ['шаблон', 'расчёт'],
+  },
+  {
+    id: 't-tender-presentation',
+    title: 'Презентация компании',
+    emoji: '🎯',
+    description: 'Презентация LG Интеграция для клиентов.',
+    kind: 'pptx',
+    section: 'tender',
+    tags: ['шаблон', 'презентация'],
+  },
+
+  // Регламенты
+  {
+    id: 't-regulation-vacancy',
+    title: 'Регламент работы с вакансией',
+    emoji: '📘',
+    description: 'Этапы обработки вакансии — от заявки до закрытия.',
+    kind: 'doc',
+    section: 'regulations',
+    tags: ['шаблон', 'процесс'],
+  },
+  {
+    id: 't-regulation-checklist',
+    title: 'Чек-лист интервью',
+    emoji: '✅',
+    description: 'Чек-лист для проведения интервью.',
+    kind: 'doc',
+    section: 'regulations',
+    tags: ['шаблон', 'чек-лист'],
+  },
+
+  // Общие
+  {
+    id: 't-general-email',
+    title: 'E-mail клиенту',
+    emoji: '✉️',
+    description: 'Шаблон письма клиенту.',
+    kind: 'doc',
+    section: 'general',
+    tags: ['шаблон', 'email'],
+  },
+  {
+    id: 't-general-meeting-notes',
+    title: 'Протокол встречи',
+    emoji: '🗒️',
+    description: 'Шаблон протокола встречи / созвона.',
+    kind: 'doc',
+    section: 'general',
+    tags: ['шаблон', 'meeting'],
+  },
+];

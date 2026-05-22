@@ -29,6 +29,24 @@ export function useAttachCandidate() {
   });
 }
 
+/**
+ * Открепить кандидата от вакансии. Принимает связку vacancyId+candidateId
+ * (внутри собирает синтетический matchId формата `m-{vacancyId}-{candidateId}`,
+ * который выдаёт бэкенд при GET /vacancies/:id/candidates).
+ */
+export function useDetachCandidate() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ vacancyId, candidateId }: { vacancyId: UUID; candidateId: UUID }) =>
+      matchingApi.detach(`m-${vacancyId}-${candidateId}`),
+    onSuccess: (_data, { vacancyId }) => {
+      queryClient.invalidateQueries({ queryKey: matchKeys.byVacancy(vacancyId) });
+      queryClient.invalidateQueries({ queryKey: vacancyKeys.all });
+      queryClient.invalidateQueries({ queryKey: candidateKeys.all });
+    },
+  });
+}
+
 export function useChangeMatchStatus() {
   const queryClient = useQueryClient();
   return useMutation({

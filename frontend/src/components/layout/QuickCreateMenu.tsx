@@ -12,8 +12,10 @@ import {
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { VacancyForm, type VacancyFormValues } from '@/features/vacancies/VacancyForm';
 import { useCreateVacancy } from '@/features/vacancies/hooks';
+import { vacancyDraftStorage } from '@/features/vacancies/draftStorage';
 import { CandidateForm, type CandidateFormValues } from '@/features/candidates/CandidateForm';
 import { useCreateCandidate } from '@/features/candidates/hooks';
+import { candidateDraftStorage } from '@/features/candidates/draftStorage';
 
 // Сквозная кнопка «Создать» в шапке. Сюда сознательно вынесены только сущности,
 // которые могут создаваться из любой точки приложения: вакансия и кандидат.
@@ -30,12 +32,18 @@ function splitStack(value: string | undefined): string[] {
 
 export function QuickCreateMenu() {
   const [open, setOpen] = useState<Kind>(null);
+  const [candidateFormResetKey, setCandidateFormResetKey] = useState(0);
   const navigate = useNavigate();
 
   const createVacancy = useCreateVacancy();
   const createCandidate = useCreateCandidate();
 
   const close = () => setOpen(null);
+  const closeCandidateSheet = () => {
+    candidateDraftStorage.clear('create');
+    setCandidateFormResetKey((k) => k + 1);
+    close();
+  };
 
   const handleVacancy = (values: VacancyFormValues) => {
     const isAgency = values.engagementType === 'agency';
@@ -59,6 +67,7 @@ export function QuickCreateMenu() {
     };
     createVacancy.mutate(payload, {
       onSuccess: (v) => {
+        vacancyDraftStorage.clear('create');
         toast.success(`Вакансия «${v.title}» создана`);
         close();
         navigate({ to: '/vacancies' });
@@ -86,6 +95,7 @@ export function QuickCreateMenu() {
     };
     createCandidate.mutate(payload, {
       onSuccess: (c) => {
+        candidateDraftStorage.clear('create');
         toast.success(`Кандидат «${c.fullName}» создан`);
         close();
         navigate({ to: '/candidates/$id', params: { id: c.id } });
@@ -122,17 +132,28 @@ export function QuickCreateMenu() {
             <SheetTitle>Новая вакансия</SheetTitle>
             <SheetDescription>Кандидаты прикрепляются после создания.</SheetDescription>
           </SheetHeader>
-          <VacancyForm onSubmit={handleVacancy} isPending={createVacancy.isPending} submitLabel="Создать" />
+          <VacancyForm
+            onSubmit={handleVacancy}
+            isPending={createVacancy.isPending}
+            submitLabel="Создать"
+            draftKey="create"
+          />
         </SheetContent>
       </Sheet>
 
-      <Sheet open={open === 'candidate'} onOpenChange={(o) => !o && close()}>
+      <Sheet open={open === 'candidate'} onOpenChange={(o) => !o && closeCandidateSheet()}>
         <SheetContent className="overflow-y-auto sm:max-w-xl">
           <SheetHeader className="mb-4">
             <SheetTitle>Новый кандидат</SheetTitle>
             <SheetDescription>Можно прикрепить к вакансии позже из карточки.</SheetDescription>
           </SheetHeader>
-          <CandidateForm onSubmit={handleCandidate} isPending={createCandidate.isPending} submitLabel="Создать" />
+          <CandidateForm
+            key={candidateFormResetKey}
+            onSubmit={handleCandidate}
+            isPending={createCandidate.isPending}
+            submitLabel="Создать"
+            draftKey="create"
+          />
         </SheetContent>
       </Sheet>
     </>

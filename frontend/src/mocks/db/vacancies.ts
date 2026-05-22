@@ -18,6 +18,11 @@ export const vacancyStatuses: VacancyStatusDescriptor[] = [
   { id: 'paused', label: 'На паузе', color: '#cbd5e1' },
 ];
 
+// ВНИМАНИЕ: `candidatesCount` в этом seed всегда равно 0.
+// Реальное значение поля считается на стороне MSW при каждом чтении
+// вакансий из candidatesDb (см. withCandidatesCount в mocks/handlers.ts).
+// Не хардкодьте сюда «декоративные» цифры — фронт всё равно их перепишет,
+// и они только маскируют расхождение с фактическими привязками.
 export const vacanciesDb: Vacancy[] = assignKanbanOrders([
   {
     id: 'v1',
@@ -35,7 +40,7 @@ export const vacanciesDb: Vacancy[] = assignKanbanOrders([
     accountManagerId: 'u2',
     recruiterIds: ['u4', 'u5'],
     daysInStatus: 5,
-    candidatesCount: 4,
+    candidatesCount: 0,
     deadline: '2026-06-15',
     description:
       'Разработка высоконагруженного биллинга для финтех-продукта. Сервис обрабатывает ~3 000 RPS, интегрируется с внешними платёжными шлюзами и системой антифрода. Команда: 6 backend, 2 QA, тимлид. Гибридный формат: 2 дня в офисе (Москва, м. Белорусская).',
@@ -58,7 +63,7 @@ export const vacanciesDb: Vacancy[] = assignKanbanOrders([
     accountManagerId: 'u2',
     recruiterIds: ['u4'],
     daysInStatus: 11,
-    candidatesCount: 3,
+    candidatesCount: 0,
     deadline: '2026-05-30',
     description:
       'Развитие личного кабинета клиента: миграция с устаревшего AngularJS на современный стек React + TypeScript. Проект на финальной стадии, нужен сильный фронтенд, который доведёт переезд до релиза и возьмёт на себя архитектурные решения.',
@@ -81,7 +86,7 @@ export const vacanciesDb: Vacancy[] = assignKanbanOrders([
     accountManagerId: 'u2',
     recruiterIds: ['u5'],
     daysInStatus: 3,
-    candidatesCount: 2,
+    candidatesCount: 0,
     deadline: '2026-07-01',
     description:
       'Поддержка и развитие облачной инфраструктуры SaaS-платформы. ~40 микросервисов в EKS, IaC на Terraform, GitOps через ArgoCD. Нужно усилить команду платформы на 5 человек.',
@@ -125,7 +130,7 @@ export const vacanciesDb: Vacancy[] = assignKanbanOrders([
     accountManagerId: 'u3',
     recruiterIds: ['u4'],
     daysInStatus: 15,
-    candidatesCount: 5,
+    candidatesCount: 0,
     deadline: '2026-06-30',
     description:
       'Автоматизация регрессионного тестирования веб-приложения e-grocery. Текущее покрытие — 35%, цель на полгода — 70%. Работа в офисе СПб, м. Чкаловская.',
@@ -148,7 +153,7 @@ export const vacanciesDb: Vacancy[] = assignKanbanOrders([
     accountManagerId: 'u2',
     recruiterIds: ['u6'],
     daysInStatus: 4,
-    candidatesCount: 1,
+    candidatesCount: 0,
     deadline: '2026-05-25',
     description:
       'Разработка iOS-приложения для премиум-сегмента (банкинг). Команда: 3 iOS, 4 Android, общий продакшен. Релизы раз в 2 недели, app store rating 4.8.',
@@ -193,7 +198,7 @@ export const vacanciesDb: Vacancy[] = assignKanbanOrders([
     accountManagerId: 'u3',
     recruiterIds: ['u5', 'u6'],
     daysInStatus: 8,
-    candidatesCount: 3,
+    candidatesCount: 0,
     deadline: '2026-06-20',
     description:
       'Развитие рекомендательной системы для e-commerce: коллаборативная фильтрация + контентная модель. Нужно довести MVP до прод-нагрузки и наладить регулярное переобучение.',
@@ -215,7 +220,7 @@ export const vacanciesDb: Vacancy[] = assignKanbanOrders([
     accountManagerId: 'u2',
     recruiterIds: ['u5'],
     daysInStatus: 22,
-    candidatesCount: 1,
+    candidatesCount: 0,
     deadline: '2026-05-10',
     description:
       'Усиление SRE-команды: настройка observability, инциденты, оптимизация инфраструктуры. Дежурства 1 неделя в месяц с компенсацией.',
@@ -237,7 +242,7 @@ export const vacanciesDb: Vacancy[] = assignKanbanOrders([
     accountManagerId: 'u3',
     recruiterIds: ['u4'],
     daysInStatus: 6,
-    candidatesCount: 2,
+    candidatesCount: 0,
     deadline: null,
     description:
       'Поддержка продуктовой команды маркетплейса аналитикой: продуктовые метрики, когортный анализ, ad-hoc отчёты, гипотезы для A/B. Вакансия на паузе до утверждения бюджета Q3.',
@@ -245,3 +250,33 @@ export const vacanciesDb: Vacancy[] = assignKanbanOrders([
       'Обязательно:\n— Уверенный SQL (window functions, оптимизация)\n— Python для анализа (pandas, numpy)\n— Опыт визуализации (Tableau, Metabase или Superset)\n— Понимание продуктовых метрик (retention, LTV, funnel)\n\nЖелательно:\n— Опыт работы с системами продуктовой аналитики (Amplitude, Mixpanel)\n— Базовая статистика, A/B-тестирование',
   },
 ]);
+
+const VACANCIES_STORAGE_KEY = 'crm-lg:v1:db:vacancies';
+
+function canUseStorage(): boolean {
+  return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
+}
+
+function hydrateVacanciesFromStorage() {
+  if (!canUseStorage()) return;
+  try {
+    const raw = window.localStorage.getItem(VACANCIES_STORAGE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as Vacancy[];
+    if (!Array.isArray(parsed)) return;
+    vacanciesDb.splice(0, vacanciesDb.length, ...parsed);
+  } catch {
+    // ignore broken local data and keep bundled seed
+  }
+}
+
+export function persistVacanciesDb() {
+  if (!canUseStorage()) return;
+  try {
+    window.localStorage.setItem(VACANCIES_STORAGE_KEY, JSON.stringify(vacanciesDb));
+  } catch {
+    // ignore quota/storage errors to avoid breaking app flow
+  }
+}
+
+hydrateVacanciesFromStorage();

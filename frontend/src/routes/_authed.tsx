@@ -7,6 +7,7 @@ const TITLES: Record<string, string> = {
   '/dashboard': 'Главная',
   '/vacancies': 'Вакансии',
   '/candidates': 'Кандидаты',
+  '/database': 'Все кандидаты',
   '/clients': 'Клиенты',
   '/contacts': 'Контакты',
   '/documents': 'Документы',
@@ -20,7 +21,7 @@ const TITLES: Record<string, string> = {
 
 function titleFor(pathname: string): string {
   const match = Object.keys(TITLES).find((p) => pathname.startsWith(p));
-  return match ? TITLES[match] : 'CRM';
+  return match ? TITLES[match] : 'SaaS';
 }
 
 function AuthedLayout() {

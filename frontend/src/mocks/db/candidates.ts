@@ -293,3 +293,33 @@ export const candidatesDb: Candidate[] = assignKanbanOrders([
     ],
   },
 ]);
+
+const CANDIDATES_STORAGE_KEY = 'crm-lg:v1:db:candidates';
+
+function canUseStorage(): boolean {
+  return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
+}
+
+function hydrateCandidatesFromStorage() {
+  if (!canUseStorage()) return;
+  try {
+    const raw = window.localStorage.getItem(CANDIDATES_STORAGE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as Candidate[];
+    if (!Array.isArray(parsed)) return;
+    candidatesDb.splice(0, candidatesDb.length, ...parsed);
+  } catch {
+    // ignore broken local data and keep bundled seed
+  }
+}
+
+export function persistCandidatesDb() {
+  if (!canUseStorage()) return;
+  try {
+    window.localStorage.setItem(CANDIDATES_STORAGE_KEY, JSON.stringify(candidatesDb));
+  } catch {
+    // ignore quota/storage errors to avoid breaking app flow
+  }
+}
+
+hydrateCandidatesFromStorage();

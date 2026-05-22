@@ -29,6 +29,16 @@ export interface CreateUserRequest {
 // === Clients ===
 export type ClientStatus = 'lead' | 'in_progress' | 'active' | 'paused' | 'archived';
 
+/**
+ * Тип клиента в воронке продаж:
+ *  - 'direct'        — прямой клиент: договор и работа напрямую с компанией-конечным заказчиком.
+ *  - 'intermediary'  — посредник: агентство/интегратор, через которого идёт работа с конечным заказчиком.
+ *
+ * Влияет на маржинальность, цепочку коммуникаций и юридическое оформление,
+ * поэтому хранится отдельно от статуса воронки.
+ */
+export type ClientKind = 'direct' | 'intermediary';
+
 export interface LegalEntity {
   id: UUID;
   name: string;
@@ -42,6 +52,8 @@ export interface Client {
   industry: string;
   accountManagerId: UUID;
   status: ClientStatus;
+  /** Прямой клиент или посредник. */
+  clientKind: ClientKind;
   /** Ссылка или @username общего Telegram-чата с клиентом */
   telegramChat?: string;
   vacanciesCount: number;
@@ -261,6 +273,18 @@ export interface Candidate {
   certifications?: CandidateCertification[];
   /** Знание языков. */
   languages?: CandidateLanguage[];
+  /**
+   * Кандидат убран с канбан-доски, но остаётся в общей «Базе кандидатов».
+   * Из базы такие кандидаты не пропадают — это служит «архивом» вне доски.
+   * Полное удаление из базы — отдельное действие, доступное только админу.
+   */
+  archived?: boolean;
+  /** ISO datetime — момент перевода в архив (убран с доски). */
+  archivedAt?: string | null;
+  /** Кто убрал кандидата с доски. */
+  archivedById?: UUID | null;
+  /** Причина архивирования (опционально, заполняется при удалении с доски). */
+  archiveReason?: string;
 }
 
 // === Matching (vacancy_candidates) ===

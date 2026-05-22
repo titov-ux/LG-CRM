@@ -18,8 +18,9 @@ import { cn } from '@/lib/utils';
  * и пугает пользователей «зачёркнутыми» сегментами.
  */
 
-const DISPLAY_FORMAT = 'dd.MM.yyyy';
-const ISO_FORMAT = 'yyyy-MM-dd';
+const DAY_DISPLAY_FORMAT = 'dd.MM.yyyy';
+const ISO_DAY_FORMAT = 'yyyy-MM-dd';
+const ISO_MONTH_FORMAT = 'yyyy-MM';
 
 /**
  * Самопальный парсер: на удивление надёжнее, чем перебор форматов date-fns,
@@ -47,7 +48,7 @@ function buildDate(year: number, month: number, day: number): Date | null {
   return null;
 }
 
-function tryParse(text: string): Date | null {
+function tryParseDay(text: string): Date | null {
   const trimmed = text.trim();
   if (!trimmed) return null;
 
@@ -76,20 +77,6 @@ function tryParse(text: string): Date | null {
   return isValid(fallback) ? fallback : null;
 }
 
-function isoToDate(iso: string | undefined | null): Date | undefined {
-  if (!iso) return undefined;
-  // ISO YYYY-MM-DD парсим вручную, чтобы не зависеть от TZ-смещений Date.
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
-  if (!m) return undefined;
-  const d = buildDate(Number(m[1]), Number(m[2]), Number(m[3]));
-  return d ?? undefined;
-}
-
-function isoToDisplay(iso: string | undefined | null): string {
-  const d = isoToDate(iso);
-  return d ? format(d, DISPLAY_FORMAT) : '';
-}
-
 function formatDigitsAsDate(rawDigits: string): string {
   const digits = rawDigits.replace(/\D/g, '').slice(0, 8);
   if (digits.length <= 2) return digits;
@@ -107,12 +94,19 @@ function normalizeTyping(raw: string): string {
   return formatDigitsAsDate(raw);
 }
 
+function normalizeTypingMonth(raw: string): string {
+  const digits = raw.replace(/\D/g, '').slice(0, 6);
+  if (digits.length <= 4) return digits;
+  return `${digits.slice(0, 4)}-${digits.slice(4)}`;
+}
+
 function capitalizeFirst(s: string): string {
   if (!s) return s;
   return s[0].toUpperCase() + s.slice(1);
 }
 
 type PickerStep = 'day' | 'year' | 'month';
+type DateGranularity = 'day' | 'month';
 
 function clampByMaxDate(date: Date, maxDate?: Date): Date {
   if (!maxDate) return date;
@@ -120,7 +114,7 @@ function clampByMaxDate(date: Date, maxDate?: Date): Date {
 }
 
 export interface DateFieldProps {
-  /** ISO YYYY-MM-DD или пустая строка / undefined. */
+  /** ISO YYYY-MM-DD или YYYY-MM (в зависимости от granularity). */
   value: string | undefined | null;
   onChange: (isoOrEmpty: string) => void;
   /** Верхняя граница выбора (включительно), например today для даты рождения. */
@@ -132,6 +126,50 @@ export interface DateFieldProps {
   name?: string;
   id?: string;
   onBlur?: () => void;
+  granularity?: DateGranularity;
+}
+
+function valueToDate(value: string | undefined | null, granularity: DateGranularity): Date | undefined {
+  if (!value) return undefined;
+  if (granularity === 'month') {
+    const m = /^(\d{4})-(\d{2})$/.exec(value);
+    if (!m) return undefined;
+    const d = buildDate(Number(m[1]), Number(m[2]), 1);
+    return d ?? undefined;
+  }
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!m) return undefined;
+  const d = buildDate(Number(m[1]), Number(m[2]), Number(m[3]));
+  return d ?? undefined;
+}
+
+function valueToDisplay(value: string | undefined | null, granularity: DateGranularity): string {
+  const d = valueToDate(value, granularity);
+  if (!d) return '';
+  return granularity === 'month' ? format(d, ISO_MONTH_FORMAT) : format(d, DAY_DISPLAY_FORMAT);
+}
+
+function tryParseMonth(text: string): Date | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+
+  const ymd = /^(\d{4})[-./](\d{1,2})$/.exec(trimmed);
+  if (ymd) return buildDate(Number(ymd[1]), Number(ymd[2]), 1);
+
+  const mdy = /^(\d{1,2})[-./](\d{4})$/.exec(trimmed);
+  if (mdy) return buildDate(Number(mdy[2]), Number(mdy[1]), 1);
+
+  if (/^\d{6}$/.test(trimmed)) {
+    const year = Number(trimmed.slice(0, 4));
+    const month = Number(trimmed.slice(4, 6));
+    return buildDate(year, month, 1);
+  }
+
+  return null;
+}
+
+function tryParseByGranularity(text: string, granularity: DateGranularity): Date | null {
+  return granularity === 'month' ? tryParseMonth(text) : tryParseDay(text);
 }
 
 export function DateField({
@@ -144,10 +182,11 @@ export function DateField({
   name,
   id,
   onBlur,
+  granularity = 'day',
 }: DateFieldProps) {
   const [open, setOpen] = React.useState(false);
-  const [text, setText] = React.useState<string>(() => isoToDisplay(value));
-  const selectedDate = isoToDate(value);
+  const [text, setText] = React.useState<string>(() => valueToDisplay(value, granularity));
+  const selectedDate = valueToDate(value, granularity);
   const [pickerMonth, setPickerMonth] = React.useState<Date>(() =>
     clampByMaxDate(selectedDate ?? new Date(), maxDate),
   );
@@ -171,16 +210,20 @@ export function DateField({
 
   // Синхронизируем локальный текст при внешних изменениях value (например, reset формы).
   React.useEffect(() => {
-    setText(isoToDisplay(value));
-  }, [value]);
+    setText(valueToDisplay(value, granularity));
+  }, [value, granularity]);
 
   React.useEffect(() => {
     if (!open) return;
-    const base = clampByMaxDate(selectedDate ?? new Date(), maxDate);
+    // Если пользователь уже набрал валидную дату, но ещё не потерял фокус,
+    // синхронизируем пикер именно с текстом инпута, чтобы редактирование через
+    // календарь работало предсказуемо для уже заполненного поля.
+    const parsedFromText = tryParseByGranularity(text, granularity);
+    const base = clampByMaxDate(parsedFromText ?? selectedDate ?? new Date(), maxDate);
     setPickerMonth(base);
-    setPickerStep('day');
+    setPickerStep(granularity === 'month' ? 'month' : 'day');
     setYearPageStart(base.getFullYear() - 6);
-  }, [open, selectedDate, maxDate]);
+  }, [open, selectedDate, maxDate, granularity, text]);
 
   const commitText = (raw: string) => {
     const trimmed = raw.trim();
@@ -189,10 +232,13 @@ export function DateField({
       setText('');
       return;
     }
-    const parsed = tryParse(trimmed);
+    const parsed = granularity === 'month' ? tryParseMonth(trimmed) : tryParseDay(trimmed);
     if (parsed) {
-      onChange(format(parsed, ISO_FORMAT));
-      setText(format(parsed, DISPLAY_FORMAT));
+      const output = granularity === 'month'
+        ? format(parsed, ISO_MONTH_FORMAT)
+        : format(parsed, ISO_DAY_FORMAT);
+      onChange(output);
+      setText(granularity === 'month' ? output : format(parsed, DAY_DISPLAY_FORMAT));
     } else {
       // Текст оставляем как есть — пользователь увидит, что напечатал.
       // Значение формы при этом обнуляем, чтобы валидатор/сабмит знал, что даты нет.
@@ -211,7 +257,13 @@ export function DateField({
         placeholder={placeholder}
         value={text}
         disabled={disabled}
-        onChange={(e) => setText(normalizeTyping(e.target.value))}
+        onChange={(e) =>
+          setText(
+            granularity === 'month'
+              ? normalizeTypingMonth(e.target.value)
+              : normalizeTyping(e.target.value),
+          )
+        }
         onBlur={() => {
           commitText(text);
           onBlur?.();
@@ -235,7 +287,7 @@ export function DateField({
           </button>
         </PopoverTrigger>
         <PopoverContent className="w-auto p-0" align="end">
-          {pickerStep === 'day' && (
+          {granularity === 'day' && pickerStep === 'day' && (
             <>
               <div className="flex items-center justify-between px-3 pt-3">
                 <button
@@ -286,8 +338,8 @@ export function DateField({
                 }}
                 onSelect={(d) => {
                   if (d) {
-                    onChange(format(d, ISO_FORMAT));
-                    setText(format(d, DISPLAY_FORMAT));
+                    onChange(format(d, ISO_DAY_FORMAT));
+                    setText(format(d, DAY_DISPLAY_FORMAT));
                   } else {
                     onChange('');
                     setText('');
@@ -298,7 +350,73 @@ export function DateField({
             </>
           )}
 
-          {pickerStep === 'year' && (
+          {granularity === 'month' && (
+            <div className="w-[280px] p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <button
+                  type="button"
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-md border text-muted-foreground hover:bg-accent hover:text-foreground"
+                  onClick={() => setPickerMonth((prev) => setYear(prev, prev.getFullYear() - 1))}
+                  aria-label="Предыдущий год"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+                <div className="text-sm font-medium">{pickerMonth.getFullYear()}</div>
+                <button
+                  type="button"
+                  className={cn(
+                    'inline-flex h-7 w-7 items-center justify-center rounded-md border text-muted-foreground hover:bg-accent hover:text-foreground',
+                    maxYear != null &&
+                      pickerMonth.getFullYear() + 1 > maxYear &&
+                      'cursor-not-allowed opacity-40 hover:bg-transparent hover:text-muted-foreground',
+                  )}
+                  onClick={() => {
+                    if (maxYear != null && pickerMonth.getFullYear() + 1 > maxYear) return;
+                    setPickerMonth((prev) => setYear(prev, prev.getFullYear() + 1));
+                  }}
+                  aria-label="Следующий год"
+                  disabled={maxYear != null && pickerMonth.getFullYear() + 1 > maxYear}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="grid grid-cols-3 gap-1.5">
+                {monthOptions.map((label, monthIndex) => {
+                  const year = pickerMonth.getFullYear();
+                  const active =
+                    selectedDate != null &&
+                    selectedDate.getFullYear() === year &&
+                    selectedDate.getMonth() === monthIndex;
+                  const monthDisabled =
+                    maxYear != null &&
+                    (year > maxYear || (year === maxYear && maxMonthIndex != null && monthIndex > maxMonthIndex));
+                  return (
+                    <button
+                      key={label}
+                      type="button"
+                      className={cn(
+                        'h-8 rounded-md text-sm hover:bg-accent',
+                        active && 'bg-primary text-primary-foreground hover:bg-primary',
+                        monthDisabled && 'cursor-not-allowed opacity-40 hover:bg-transparent',
+                      )}
+                      onClick={() => {
+                        if (monthDisabled) return;
+                        const picked = new Date(year, monthIndex, 1);
+                        onChange(format(picked, ISO_MONTH_FORMAT));
+                        setText(format(picked, ISO_MONTH_FORMAT));
+                        setOpen(false);
+                      }}
+                      disabled={monthDisabled}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {granularity === 'day' && pickerStep === 'year' && (
             <div className="w-[280px] p-3">
               <div className="mb-2 flex items-center justify-between">
                 <button
@@ -358,7 +476,7 @@ export function DateField({
             </div>
           )}
 
-          {pickerStep === 'month' && (
+          {granularity === 'day' && pickerStep === 'month' && (
             <div className="w-[280px] p-3">
               <div className="mb-2 text-center text-sm font-medium">{pickerMonth.getFullYear()}</div>
               <div className="grid grid-cols-3 gap-1.5">

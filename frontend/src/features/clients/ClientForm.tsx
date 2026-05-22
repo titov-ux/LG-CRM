@@ -20,7 +20,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useUsers } from '@/features/users/hooks';
-import type { ClientStatus } from '@/api/types';
+import type { ClientKind, ClientStatus } from '@/api/types';
 
 const STATUSES: { id: ClientStatus; label: string }[] = [
   { id: 'lead', label: 'Лид' },
@@ -28,6 +28,11 @@ const STATUSES: { id: ClientStatus; label: string }[] = [
   { id: 'active', label: 'Активный' },
   { id: 'paused', label: 'Приостановлен' },
   { id: 'archived', label: 'Архив' },
+];
+
+const CLIENT_KINDS: { id: ClientKind; label: string }[] = [
+  { id: 'direct', label: 'Прямой' },
+  { id: 'intermediary', label: 'Посредник' },
 ];
 
 const legalEntitySchema = z.object({
@@ -41,6 +46,7 @@ const schema = z.object({
   industry: z.string().min(2),
   accountManagerId: z.string().min(1, 'Выберите менеджера'),
   status: z.enum(['lead', 'in_progress', 'active', 'paused', 'archived']),
+  clientKind: z.enum(['direct', 'intermediary']),
   telegramChat: z.string(),
 });
 
@@ -65,6 +71,7 @@ export function ClientForm({ defaultValues, onSubmit, isPending, submitLabel = '
       industry: '',
       accountManagerId: '',
       status: 'lead',
+      clientKind: 'direct',
       telegramChat: '',
       ...defaultValues,
     } as ClientFormValues,
@@ -166,6 +173,24 @@ export function ClientForm({ defaultValues, onSubmit, isPending, submitLabel = '
             <FormItem>
               <FormLabel>Отрасль</FormLabel>
               <FormControl><Input {...field} placeholder="IT, Финансы…" /></FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <FormField
+          control={form.control}
+          name="clientKind"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Тип клиента</FormLabel>
+              <Select value={field.value} onValueChange={field.onChange}>
+                <FormControl><SelectTrigger><SelectValue placeholder="Выберите тип" /></SelectTrigger></FormControl>
+                <SelectContent>
+                  {CLIENT_KINDS.map((k) => (
+                    <SelectItem key={k.id} value={k.id}>{k.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <FormMessage />
             </FormItem>
           )}

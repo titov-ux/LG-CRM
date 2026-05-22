@@ -24,6 +24,8 @@ import {
   contactsDb,
   notificationsDb,
   permissionsMatrixDb,
+  persistCandidatesDb,
+  persistVacanciesDb,
   resetPermissionsMatrix,
   updatePermissionRow,
   usersDb,
@@ -98,6 +100,26 @@ function candidateStatusLabel(id: CandidateStatus): string {
 }
 function vacancyStatusLabel(id: VacancyStatus): string {
   return vacancyStatuses.find((s) => s.id === id)?.label ?? id;
+}
+
+// candidatesCount у вакансии — производное значение от candidatesDb.
+// Считаем его на каждом чтении, чтобы поле не дрейфовало от реальности.
+// На боевом backend это будет либо JOIN/подзапрос, либо денормализованный счётчик,
+// поддерживаемый триггерами/выделенным сервисом; во фронт-моках достаточно вот этой функции.
+function computeCandidatesCount(vacancyId: string): number {
+  return candidatesDb.filter(
+    (c) => !c.archived && c.vacancyIds.includes(vacancyId),
+  ).length;
+}
+
+// Возвращает копию вакансии с актуальным candidatesCount.
+// Важно делать копию: мы не хотим переписывать поле в самом vacanciesDb —
+// сохранённое значение всё равно игнорируется, а лишний persist приведёт к
+// записи лишнего шума в localStorage.
+function withCandidatesCount<T extends { id: string }>(
+  vacancy: T,
+): T & { candidatesCount: number } {
+  return { ...vacancy, candidatesCount: computeCandidatesCount(vacancy.id) };
 }
 const CLIENT_STATUS_LABEL: Record<ClientStatus, string> = {
   lead: 'Лид',
@@ -177,6 +199,7 @@ export const handlers = [
     const status = u.searchParams.get('status');
     const accountManagerId = u.searchParams.get('accountManagerId');
     const industry = u.searchParams.get('industry');
+    const clientKind = u.searchParams.get('clientKind');
     const items = clientsDb.filter((c) => {
       if (
         search &&
@@ -190,6 +213,7 @@ export const handlers = [
       if (status && c.status !== status) return false;
       if (accountManagerId && c.accountManagerId !== accountManagerId) return false;
       if (industry && c.industry !== industry) return false;
+      if (clientKind && c.clientKind !== clientKind) return false;
       return true;
     });
     return HttpResponse.json(paginate(items, u.searchParams.get('page'), u.searchParams.get('pageSize')));
@@ -207,6 +231,7 @@ export const handlers = [
       industry: body.industry ?? '',
       accountManagerId: body.accountManagerId ?? 'u2',
       status: body.status ?? 'lead',
+      clientKind: body.clientKind ?? 'direct',
       vacanciesCount: 0,
       contactsCount: 0,
       ...(body.telegramChat?.trim() ? { telegramChat: body.telegramChat.trim() } : {}),
@@ -399,7 +424,13 @@ export const handlers = [
       if (engagementType && v.engagementType !== engagementType) return false;
       return true;
     });
-    return HttpResponse.json(paginate(sortByKanbanOrder(items), u.searchParams.get('page'), u.searchParams.get('pageSize')));
+    return HttpResponse.json(
+      paginate(
+        sortByKanbanOrder(items).map(withCandidatesCount),
+        u.searchParams.get('page'),
+        u.searchParams.get('pageSize'),
+      ),
+    );
   }),
   http.put(url('/vacancies/kanban-order'), async ({ request }) => {
     const body = (await request.json()) as { updates: { id: string; status: VacancyStatus; kanbanOrder: number }[] };
@@ -419,7 +450,8 @@ export const handlers = [
         });
       }
     }
-    return HttpResponse.json(updated);
+    persistVacanciesDb();
+    return HttpResponse.json(updated.map(withCandidatesCount));
   }),
   http.post(url('/vacancies'), async ({ request }) => {
     const body = (await request.json()) as Partial<Vacancy>;
@@ -442,6 +474,8 @@ export const handlers = [
       accountManagerId: body.accountManagerId ?? client?.accountManagerId ?? '',
       recruiterIds: body.recruiterIds ?? [],
       daysInStatus: 0,
+      // candidatesCount считается на чтении (см. withCandidatesCount). В сторе
+      // держим 0 как заглушку, чтобы удовлетворить тип Vacancy.
       candidatesCount: 0,
       deadline: body.deadline ?? null,
       kanbanOrder: nextKanbanOrder(vacanciesDb, body.status ?? 'new'),
@@ -449,6 +483,7 @@ export const handlers = [
       requirements: body.requirements,
     };
     vacanciesDb.unshift(created);
+    persistVacanciesDb();
     if (client) client.vacanciesCount += 1;
     pushActivity({
       entityType: 'vacancy',
@@ -457,7 +492,7 @@ export const handlers = [
       kind: 'create',
       text: 'Вакансия добавлена в систему',
     });
-    return HttpResponse.json(created, { status: 201 });
+    return HttpResponse.json(withCandidatesCount(created), { status: 201 });
   }),
   // ==========================================================================
   // [AI-MOCK] МОК-ОБРАБОТЧИК AI-РАСПОЗНАВАНИЯ БРИФА.
@@ -481,7 +516,7 @@ export const handlers = [
   }),
   http.get(url('/vacancies/:id'), ({ params }) => {
     const v = vacanciesDb.find((x) => x.id === params.id);
-    return v ? HttpResponse.json(v) : new HttpResponse(null, { status: 404 });
+    return v ? HttpResponse.json(withCandidatesCount(v)) : new HttpResponse(null, { status: 404 });
   }),
   http.patch(url('/vacancies/:id/status'), async ({ params, request }) => {
     const body = (await request.json()) as { status: VacancyStatus };
@@ -499,7 +534,8 @@ export const handlers = [
         text: `Статус изменён на «${vacancyStatusLabel(body.status)}»`,
       });
     }
-    return HttpResponse.json(v);
+    persistVacanciesDb();
+    return HttpResponse.json(withCandidatesCount(v));
   }),
   http.patch(url('/vacancies/:id'), async ({ params, request }) => {
     const patch = (await request.json()) as Partial<Vacancy>;
@@ -522,12 +558,14 @@ export const handlers = [
       }
     }
     Object.assign(v, patch);
-    return HttpResponse.json(v);
+    persistVacanciesDb();
+    return HttpResponse.json(withCandidatesCount(v));
   }),
   http.delete(url('/vacancies/:id'), ({ params }) => {
     const idx = vacanciesDb.findIndex((x) => x.id === params.id);
     if (idx === -1) return new HttpResponse(null, { status: 404 });
     const [removed] = vacanciesDb.splice(idx, 1);
+    persistVacanciesDb();
     const client = clientsDb.find((c) => c.id === removed.clientId);
     if (client && client.vacanciesCount > 0) client.vacanciesCount -= 1;
     return HttpResponse.json({ ok: true });
@@ -574,7 +612,8 @@ export const handlers = [
     }
     if (!candidate.vacancyIds.includes(vacancyId)) {
       candidate.vacancyIds.push(vacancyId);
-      vacancy.candidatesCount += 1;
+      // candidatesCount пересчитывается на чтении — ручной инкремент больше не нужен.
+      persistCandidatesDb();
     }
     return HttpResponse.json({
       id: `m-${vacancyId}-${candidateId}`,
@@ -597,7 +636,8 @@ export const handlers = [
     const idx = candidate.vacancyIds.indexOf(vacancyId);
     if (idx !== -1) {
       candidate.vacancyIds.splice(idx, 1);
-      if (vacancy.candidatesCount > 0) vacancy.candidatesCount -= 1;
+      // candidatesCount пересчитывается на чтении — ручной декремент больше не нужен.
+      persistCandidatesDb();
     }
     return HttpResponse.json({ ok: true });
   }),
@@ -611,7 +651,21 @@ export const handlers = [
     const stack = u.searchParams.get('stack');
     const engagementType = u.searchParams.get('engagementType');
     const employmentType = u.searchParams.get('employmentType');
+    const archivedRaw = u.searchParams.get('archived');
+    // archived: undefined → только активные (для канбан-доски),
+    //          'true'    → только архив,
+    //          'all'     → и те и другие (раздел «База кандидатов»).
     const items = candidatesDb.filter((c) => {
+      const isArchived = !!c.archived;
+      if (archivedRaw === null) {
+        if (isArchived) return false;
+      } else if (archivedRaw === 'all') {
+        // не фильтруем
+      } else if (archivedRaw === 'true' || archivedRaw === '1') {
+        if (!isArchived) return false;
+      } else if (archivedRaw === 'false' || archivedRaw === '0') {
+        if (isArchived) return false;
+      }
       if (search && !c.fullName.toLowerCase().includes(search) && !c.role.toLowerCase().includes(search)) return false;
       if (grade && c.grade !== grade) return false;
       if (recruiterId && c.recruiterId !== recruiterId) return false;
@@ -640,6 +694,7 @@ export const handlers = [
         });
       }
     }
+    persistCandidatesDb();
     return HttpResponse.json(updated);
   }),
   http.post(url('/candidates'), async ({ request }) => {
@@ -673,6 +728,7 @@ export const handlers = [
       languages: body.languages,
     };
     candidatesDb.unshift(created);
+    persistCandidatesDb();
     pushActivity({
       entityType: 'candidate',
       entityId: created.id,
@@ -702,6 +758,7 @@ export const handlers = [
         text: `Статус изменён на «${candidateStatusLabel(body.status)}»`,
       });
     }
+    persistCandidatesDb();
     return HttpResponse.json(c);
   }),
   http.patch(url('/candidates/:id'), async ({ params, request }) => {
@@ -725,13 +782,101 @@ export const handlers = [
       }
     }
     Object.assign(c, patch);
+    persistCandidatesDb();
     return HttpResponse.json(c);
   }),
-  http.delete(url('/candidates/:id'), ({ params }) => {
+  // DELETE без `permanent=true` теперь интерпретируется как «убрать с доски»
+  // (archived=true). Полное удаление из базы — только с `?permanent=true`,
+  // что на UI разрешено только админу (см. lib/permissions-data.ts).
+  http.delete(url('/candidates/:id'), ({ params, request }) => {
+    const u = new URL(request.url);
+    const permanent = u.searchParams.get('permanent') === 'true';
     const idx = candidatesDb.findIndex((x) => x.id === params.id);
     if (idx === -1) return new HttpResponse(null, { status: 404 });
-    candidatesDb.splice(idx, 1);
+    if (permanent) {
+      const [removed] = candidatesDb.splice(idx, 1);
+      persistCandidatesDb();
+      // candidatesCount у вакансий пересчитывается на чтении — отдельно
+      // декрементировать счётчики не нужно. Привязки удалены вместе с кандидатом.
+      pushActivity({
+        entityType: 'candidate',
+        entityId: removed.id,
+        actorId: actorIdFromRequest(request),
+        kind: 'note',
+        text: 'Кандидат удалён из базы (полное удаление)',
+      });
+      return HttpResponse.json({ ok: true });
+    }
+    // Архивирование вместо удаления.
+    const c = candidatesDb[idx];
+    if (!c.archived) {
+      c.archived = true;
+      c.archivedAt = new Date().toISOString();
+      c.archivedById = actorIdFromRequest(request);
+      // С доски ушёл — в матчинге не участвует. Чистим только привязки
+      // на стороне кандидата; счётчики вакансий пересчитываются на чтении.
+      c.vacancyIds = [];
+      persistCandidatesDb();
+      pushActivity({
+        entityType: 'candidate',
+        entityId: c.id,
+        actorId: actorIdFromRequest(request),
+        kind: 'note',
+        text: 'Убран с канбан-доски — остался в базе кандидатов',
+      });
+    }
     return HttpResponse.json({ ok: true });
+  }),
+  // Явная операция архивирования (с возможной причиной).
+  http.post(url('/candidates/:id/archive'), async ({ params, request }) => {
+    const c = candidatesDb.find((x) => x.id === params.id);
+    if (!c) return new HttpResponse(null, { status: 404 });
+    const body = (await request.json().catch(() => ({}))) as { reason?: string };
+    const reason = (body.reason ?? '').trim();
+    if (!c.archived) {
+      c.archived = true;
+      c.archivedAt = new Date().toISOString();
+      c.archivedById = actorIdFromRequest(request);
+      if (reason) c.archiveReason = reason;
+      // Счётчики вакансий пересчитываются на чтении (см. withCandidatesCount).
+      c.vacancyIds = [];
+      persistCandidatesDb();
+      pushActivity({
+        entityType: 'candidate',
+        entityId: c.id,
+        actorId: actorIdFromRequest(request),
+        kind: 'note',
+        text: reason
+          ? `Убран с канбан-доски (${reason})`
+          : 'Убран с канбан-доски — остался в базе кандидатов',
+      });
+    }
+    return HttpResponse.json(c);
+  }),
+  // Восстановить кандидата на доске (archived=false).
+  http.post(url('/candidates/:id/restore'), ({ params, request }) => {
+    const c = candidatesDb.find((x) => x.id === params.id);
+    if (!c) return new HttpResponse(null, { status: 404 });
+    if (c.archived) {
+      c.archived = false;
+      c.archivedAt = null;
+      c.archivedById = null;
+      delete c.archiveReason;
+      // Кандидат возвращается в столбец «Новый» в самый низ — это безопасный
+      // дефолт. Если в карточке нужен исходный статус, его можно поменять руками.
+      c.status = 'new';
+      c.daysInStatus = 0;
+      c.kanbanOrder = nextKanbanOrder(candidatesDb, 'new');
+      persistCandidatesDb();
+      pushActivity({
+        entityType: 'candidate',
+        entityId: c.id,
+        actorId: actorIdFromRequest(request),
+        kind: 'note',
+        text: 'Восстановлен на канбан-доске',
+      });
+    }
+    return HttpResponse.json(c);
   }),
   http.get(url('/candidates/:id/activity'), ({ params }) =>
     HttpResponse.json(

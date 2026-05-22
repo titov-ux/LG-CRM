@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from '@tanstack/react-router';
-import { ArrowRight, ChevronLeft, ClipboardCopy, Copy, Edit3, Mail, MessageCircle, MoreHorizontal, Phone, Plus, Share2, Trash2, UserPlus, X } from 'lucide-react';
+import { ArrowRight, ChevronLeft, ClipboardCopy, Copy, Edit3, FileDown, Mail, MessageCircle, MoreHorizontal, Phone, Plus, Share2, Trash2, UserPlus, X } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -50,6 +50,8 @@ import { AttachCandidateDialog } from '@/features/matching/AttachCandidateDialog
 import { useAttachCandidate, useDetachCandidate } from '@/features/matching/hooks';
 import { MatchCompensationRow } from '@/features/matching/MatchCompensationRow';
 import { DEFAULT_HOURS_PER_MONTH, vacancyMaxNetSalary } from '@/lib/compensation';
+import { vacancyDraftStorage } from './draftStorage';
+import { generateResumeDocxBlob, resumeFileName } from '@/features/candidates/resume';
 
 function splitStack(value: string | undefined): string[] {
   return (value ?? '')
@@ -129,6 +131,7 @@ export function VacancyCardPage() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
   const [activityExpanded, setActivityExpanded] = useState(false);
+  const [downloadingResumes, setDownloadingResumes] = useState(false);
   const hoursPerMonth = DEFAULT_HOURS_PER_MONTH;
 
   const close = () => navigate({ to: '/vacancies' });
@@ -215,6 +218,51 @@ export function VacancyCardPage() {
     });
   };
 
+  /**
+   * Скачивание DOCX-резюме всех прикреплённых к вакансии кандидатов.
+   * Генерация идёт последовательно, чтобы не положить браузер на длинном списке,
+   * и каждый файл скачивается отдельным action'ом. Между скачиваниями держим
+   * небольшой setTimeout — без него часть браузеров глотает все ссылки кроме
+   * первой (один пользовательский жест → одна загрузка).
+   */
+  const handleDownloadAllResumes = async () => {
+    if (!vacancy || attached.length === 0 || downloadingResumes) return;
+    setDownloadingResumes(true);
+    let ok = 0;
+    let failed = 0;
+    try {
+      for (const candidate of attached) {
+        try {
+          const blob = await generateResumeDocxBlob(candidate);
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = resumeFileName(candidate, 'docx');
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+          ok += 1;
+          // Пауза между скачиваниями — иначе Chrome может попросить разрешение
+          // или просто проигнорировать вторую и далее ссылки.
+          await new Promise((resolve) => setTimeout(resolve, 350));
+        } catch (e) {
+          console.error('Не удалось сгенерировать резюме для', candidate.fullName, e);
+          failed += 1;
+        }
+      }
+      if (failed === 0) {
+        toast.success(`Скачано резюме: ${ok}`);
+      } else if (ok === 0) {
+        toast.error('Не удалось сформировать резюме');
+      } else {
+        toast.warning(`Скачано: ${ok}. Ошибок: ${failed}`);
+      }
+    } finally {
+      setDownloadingResumes(false);
+    }
+  };
+
   const handleDetachCandidate = (candidateId: string, candidateName: string) => {
     if (!vacancy) return;
     detachCandidate.mutate(
@@ -281,6 +329,7 @@ export function VacancyCardPage() {
       { id: vacancy.id, payload },
       {
         onSuccess: (v) => {
+          vacancyDraftStorage.clear(`edit:${vacancy.id}`);
           toast.success(`Вакансия «${v.title}» обновлена`);
           setEditOpen(false);
         },
@@ -519,19 +568,36 @@ export function VacancyCardPage() {
               {attached.length === 0 ? (
                 <div className="py-2 text-xs text-muted-foreground">Кандидаты пока не прикреплены.</div>
               ) : (
-                <div className="space-y-1.5">
-                  {attached.map((c) => (
-                    <MatchCompensationRow
-                      key={c.id}
-                      vacancy={vacancy}
-                      candidate={c}
-                      hoursPerMonth={hoursPerMonth}
-                      onOpen={() => navigate({ to: '/candidates/$id', params: { id: c.id } })}
-                      onDetach={() => handleDetachCandidate(c.id, c.fullName)}
-                      detachDisabled={detachCandidate.isPending}
-                    />
-                  ))}
-                </div>
+                <>
+                  <div className="space-y-1.5">
+                    {attached.map((c) => (
+                      <MatchCompensationRow
+                        key={c.id}
+                        vacancy={vacancy}
+                        candidate={c}
+                        hoursPerMonth={hoursPerMonth}
+                        onOpen={() => navigate({ to: '/candidates/$id', params: { id: c.id } })}
+                        onDetach={() => handleDetachCandidate(c.id, c.fullName)}
+                        detachDisabled={detachCandidate.isPending}
+                      />
+                    ))}
+                  </div>
+                  <div className="pt-1">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8 gap-1.5 text-xs"
+                      onClick={handleDownloadAllResumes}
+                      disabled={downloadingResumes}
+                    >
+                      <FileDown className="h-3.5 w-3.5" />
+                      {downloadingResumes
+                        ? 'Скачиваем…'
+                        : `Скачать все резюме (${attached.length})`}
+                    </Button>
+                  </div>
+                </>
               )}
             </Section>
 
@@ -600,6 +666,7 @@ export function VacancyCardPage() {
             defaultValues={toFormValues(vacancy)}
             onSubmit={handleEdit}
             isPending={updateVacancy.isPending}
+            draftKey={`edit:${vacancy.id}`}
           />
         )}
       </SheetContent>

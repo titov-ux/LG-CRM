@@ -59,10 +59,59 @@ export function useUpdateCandidate() {
   });
 }
 
+/**
+ * «Удаление» кандидата с канбан-доски. На самом деле — архивирование:
+ * в базе он остаётся, просто пропадает из канбана и из связей с вакансиями.
+ * Полное удаление см. в `useDeleteCandidatePermanent`.
+ */
 export function useDeleteCandidate() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: UUID) => candidatesApi.remove(id),
+    onSuccess: (_data, id) => {
+      // НЕ удаляем byId — кандидат остался в базе, просто архивирован.
+      queryClient.invalidateQueries({ queryKey: candidateKeys.byId(id) });
+      queryClient.invalidateQueries({ queryKey: candidateKeys.all });
+      queryClient.invalidateQueries({ queryKey: candidateKeys.activity(id) });
+    },
+  });
+}
+
+/** Архивирование кандидата с указанием причины. */
+export function useArchiveCandidate() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, reason }: { id: UUID; reason?: string }) =>
+      candidatesApi.archive(id, reason),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(candidateKeys.byId(updated.id), updated);
+      queryClient.invalidateQueries({ queryKey: candidateKeys.all });
+      queryClient.invalidateQueries({ queryKey: candidateKeys.activity(updated.id) });
+    },
+  });
+}
+
+/** Восстановление кандидата обратно на канбан. */
+export function useRestoreCandidate() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: UUID) => candidatesApi.restore(id),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(candidateKeys.byId(updated.id), updated);
+      queryClient.invalidateQueries({ queryKey: candidateKeys.all });
+      queryClient.invalidateQueries({ queryKey: candidateKeys.activity(updated.id) });
+    },
+  });
+}
+
+/**
+ * Полное удаление кандидата из базы. Не должно показываться в UI никому
+ * кроме админа (см. `useCan('candidate:delete_permanent')`).
+ */
+export function useDeleteCandidatePermanent() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: UUID) => candidatesApi.removePermanent(id),
     onSuccess: (_data, id) => {
       queryClient.removeQueries({ queryKey: candidateKeys.byId(id) });
       queryClient.invalidateQueries({ queryKey: candidateKeys.all });

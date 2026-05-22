@@ -1,6 +1,6 @@
 // Конфигурационные константы фронта. Из ENV — только runtime-настройки.
 
-export const APP_TITLE = import.meta.env.VITE_APP_TITLE ?? 'ЛГ Интеграция · CRM';
+export const APP_TITLE = import.meta.env.VITE_APP_TITLE ?? 'ЛГ Интеграция · SaaS';
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api/v1';
 export const USE_MOCKS = import.meta.env.VITE_USE_MOCKS === 'true';
 

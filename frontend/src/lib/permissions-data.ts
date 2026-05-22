@@ -15,6 +15,10 @@ export type Action =
   | 'candidate:create'
   | 'candidate:edit'
   | 'candidate:change_status'
+  /** Убрать кандидата с канбан-доски (в базе кандидат остаётся). */
+  | 'candidate:archive'
+  /** Полностью удалить кандидата из базы. По умолчанию — только админ. */
+  | 'candidate:delete_permanent'
   | 'audit:view'
   | 'analytics:view'
   | 'user:manage';
@@ -106,6 +110,24 @@ export const DEFAULT_PERMISSIONS: MatrixPermission[] = [
     description: 'Отправлять подборку кандидатов клиенту.',
     actions: [],
     matrix: { admin: true, account_manager: true, recruiter: true, viewer: false },
+  },
+  {
+    id: 'candidates.archive',
+    group: 'Кандидаты',
+    permission: 'Убрать с канбан-доски',
+    description:
+      'Скрыть кандидата с канбан-доски. Кандидат остаётся в общей «Базе кандидатов».',
+    actions: ['candidate:archive'],
+    matrix: { admin: true, account_manager: true, recruiter: true, viewer: false },
+  },
+  {
+    id: 'candidates.delete_permanent',
+    group: 'Кандидаты',
+    permission: 'Удаление из базы',
+    description:
+      'Полное удаление кандидата из базы без возможности восстановления. Действует поверх «убрать с доски».',
+    actions: ['candidate:delete_permanent'],
+    matrix: { admin: true, account_manager: false, recruiter: false, viewer: false },
   },
   {
     id: 'analytics.view',

@@ -35,6 +35,11 @@ const STATUS_LABEL: Record<string, string> = {
   lead: 'Лид', in_progress: 'В работе', active: 'Активный', paused: 'Приостановлен', archived: 'Архив',
 };
 
+const CLIENT_KIND_LABEL: Record<string, string> = {
+  direct: 'Прямой',
+  intermediary: 'Посредник',
+};
+
 function toFormValues(client: Client): Partial<ClientFormValues> {
   return {
     name: client.name,
@@ -42,6 +47,7 @@ function toFormValues(client: Client): Partial<ClientFormValues> {
     industry: client.industry,
     accountManagerId: client.accountManagerId,
     status: client.status,
+    clientKind: client.clientKind,
     telegramChat: client.telegramChat ?? '',
   };
 }
@@ -57,6 +63,7 @@ function toDuplicatePayload(client: Client): Partial<Client> {
     industry: client.industry,
     accountManagerId: client.accountManagerId,
     status: 'lead',
+    clientKind: client.clientKind,
     ...(client.telegramChat ? { telegramChat: client.telegramChat } : {}),
   };
 }
@@ -128,6 +135,7 @@ export function ClientCardPage() {
           industry: values.industry,
           accountManagerId: values.accountManagerId,
           status: values.status,
+          clientKind: values.clientKind,
           ...(values.telegramChat.trim()
             ? { telegramChat: values.telegramChat.trim() }
             : { telegramChat: '' }),
@@ -237,6 +245,7 @@ export function ClientCardPage() {
                 }
               />
               <Field label="Отрасль" value={client.industry} />
+              <Field label="Тип клиента" value={CLIENT_KIND_LABEL[client.clientKind] ?? '—'} />
               <Field
                 label="Telegram-чат"
                 value={

@@ -6,6 +6,8 @@ export interface ClientsListParams {
   status?: string;
   accountManagerId?: UUID;
   industry?: string;
+  /** 'direct' | 'intermediary' — фильтр по типу клиента. */
+  clientKind?: string;
   page?: number;
   pageSize?: number;
 }

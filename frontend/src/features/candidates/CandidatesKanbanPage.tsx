@@ -59,6 +59,9 @@ export function CandidatesKanbanPage() {
     recruiterId: recruiterId ?? undefined,
     engagementType: engagementType ?? undefined,
     employmentType: employmentType ?? undefined,
+    // На канбан-доску архивированных кандидатов не показываем — они живут
+    // в разделе «База кандидатов».
+    archived: false,
   });
   const { data: usersData } = useUsers();
   const reorder = useReorderCandidatesKanban();

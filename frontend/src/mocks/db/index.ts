@@ -3,8 +3,8 @@
 
 export { usersDb } from './users';
 export { clientsDb, contactsDb } from './clients';
-export { vacanciesDb, vacancyStatuses } from './vacancies';
-export { candidatesDb, candidateStatuses } from './candidates';
+export { vacanciesDb, vacancyStatuses, persistVacanciesDb } from './vacancies';
+export { candidatesDb, candidateStatuses, persistCandidatesDb } from './candidates';
 export { notificationsDb, activityDb, auditDb } from './notifications';
 export { commentsDb } from './comments';
 export {

@@ -32,7 +32,7 @@ export function LoginPage() {
               ЛГ
             </div>
             <div>
-              <CardTitle>ЛГ Интеграция · CRM</CardTitle>
+              <CardTitle>ЛГ Интеграция · SaaS</CardTitle>
               <CardDescription>Вход в систему</CardDescription>
             </div>
           </div>

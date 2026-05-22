@@ -1,10 +1,13 @@
-import { useFieldArray, useForm, type Control } from 'react-hook-form';
+import { useEffect, useRef, useState } from 'react';
+import { useFieldArray, useForm, useWatch, type Control } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Plus, Trash2 } from 'lucide-react';
+import { Loader2, Plus, Sparkles, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { extractPdfText, parseResumeText } from './resumeImport';
 import {
   Form,
   FormControl,
@@ -30,6 +33,7 @@ import type {
   LanguageLevel,
   WorkFormat,
 } from '@/api/types';
+import { candidateDraftStorage } from './draftStorage';
 
 const GRADES: Grade[] = ['Junior', 'Middle', 'Senior', 'Lead'];
 const FORMATS: WorkFormat[] = ['Удалённо', 'Гибрид', 'Офис'];
@@ -119,9 +123,23 @@ interface Props {
   onSubmit: (values: CandidateFormValues) => void;
   isPending?: boolean;
   submitLabel?: string;
+  draftKey?: string;
+  /**
+   * Показывать ли кнопку «Распознать из файла» в шапке формы. По умолчанию
+   * true — нужна при быстром добавлении кандидата. В режиме редактирования
+   * существующего кандидата (когда поля уже заполнены) её отключают.
+   */
+  enableResumeImport?: boolean;
 }
 
-export function CandidateForm({ defaultValues, onSubmit, isPending, submitLabel = 'Сохранить' }: Props) {
+export function CandidateForm({
+  defaultValues,
+  onSubmit,
+  isPending,
+  submitLabel = 'Сохранить',
+  draftKey,
+  enableResumeImport = true,
+}: Props) {
   const { data: users } = useUsers();
   // В качестве «ответственных рекрутеров» можно назначать и админов — они тоже ведут кандидатов.
   const recruiters = (users ?? []).filter((u) => u.role === 'recruiter' || u.role === 'admin');
@@ -153,10 +171,120 @@ export function CandidateForm({ defaultValues, onSubmit, isPending, submitLabel 
       ...defaultValues,
     } as CandidateFormValues,
   });
+  const watchedValues = useWatch({ control: form.control });
+
+  useEffect(() => {
+    if (!draftKey) return;
+    const draft = candidateDraftStorage.load(draftKey);
+    if (!draft) return;
+    form.reset({ ...form.getValues(), ...draft });
+  }, [draftKey, form]);
+
+  useEffect(() => {
+    if (!draftKey) return;
+    const timeoutId = window.setTimeout(() => {
+      candidateDraftStorage.save(draftKey, form.getValues());
+    }, 250);
+    return () => window.clearTimeout(timeoutId);
+  }, [draftKey, watchedValues, form]);
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Импорт резюме из PDF («Распознать из файла»)
+  // ──────────────────────────────────────────────────────────────────────────
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [importing, setImporting] = useState(false);
+
+  const handleResumeFile = async (file: File) => {
+    setImporting(true);
+    try {
+      const rawText = await extractPdfText(file);
+      if (!rawText.trim()) {
+        toast.warning('В PDF не найден текстовый слой', {
+          description: 'Похоже, это скан. Попробуйте PDF с текстом или заполните карточку вручную.',
+        });
+        return;
+      }
+      const { values, filledFields } = parseResumeText(rawText);
+
+      if (filledFields.length === 0) {
+        toast.warning('Не удалось распознать данные из файла', {
+          description: 'Заполните карточку вручную или попробуйте другой PDF.',
+        });
+        return;
+      }
+
+      // Сливаем распознанные значения поверх текущих: то, что пользователь
+      // уже ввёл руками, не затираем (за исключением массивов — их перезаписываем,
+      // т.к. в исходной форме они пустые при «Создать»).
+      const current = form.getValues();
+      const merged: CandidateFormValues = {
+        ...current,
+        ...Object.fromEntries(
+          Object.entries(values).filter(([key, v]) => {
+            if (v === undefined || v === null || v === '') return false;
+            const cur = (current as Record<string, unknown>)[key];
+            // Скаляры: оставляем существующее, если пользователь уже что-то ввёл.
+            if (typeof v === 'string' || typeof v === 'number') {
+              return cur === '' || cur === 0 || cur === undefined || cur === null;
+            }
+            // Массивы: перезаписываем, если в текущей форме пусто.
+            if (Array.isArray(v)) {
+              return Array.isArray(cur) ? cur.length === 0 : true;
+            }
+            return true;
+          }),
+        ),
+      } as CandidateFormValues;
+
+      form.reset(merged, { keepDefaultValues: true });
+      toast.success(`Распознано: ${filledFields.join(', ')}`);
+    } catch (err) {
+      console.error('[resume-import] failed', err);
+      toast.error('Не удалось прочитать PDF', {
+        description: 'Проверьте, что файл не зашифрован и не битый.',
+      });
+    } finally {
+      setImporting(false);
+      // Сбрасываем input, чтобы можно было загрузить тот же файл повторно.
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
 
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+        {enableResumeImport && (
+          <>
+            <div className="-mt-2 flex justify-start">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={importing}
+                onClick={() => fileInputRef.current?.click()}
+                className="gap-1.5"
+              >
+                {importing ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-violet-500" />
+                ) : (
+                  <Sparkles className="h-3.5 w-3.5 text-violet-500" />
+                )}
+                {importing ? 'Распознаём…' : 'Распознать из файла'}
+              </Button>
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="application/pdf,.pdf"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) void handleResumeFile(file);
+              }}
+            />
+          </>
+        )}
+
         {/* === Базовая информация === */}
         <FormSection title="Основное">
           <FormField
@@ -397,7 +525,7 @@ export function CandidateForm({ defaultValues, onSubmit, isPending, submitLabel 
           />
         </FormSection>
 
-        {/* === Категории навыков (как в резюме) === */}
+        {/* === Ключевые навыки === */}
         <SkillCategoriesSection control={form.control} />
 
         {/* === Опыт работы === */}
@@ -431,37 +559,36 @@ function SkillCategoriesSection({ control }: { control: Control<CandidateFormVal
   return (
     <FormSection
       title="Ключевые навыки"
-      hint="Сгруппируйте навыки по категориям, как в резюме: «Языки программирования», «Технологии» и т.п."
+      hint="Укажите навыки через запятую."
       action={
         <Button
           type="button"
           variant="outline"
           size="sm"
           className="h-8 gap-1"
-          onClick={() => append({ id: uid('sc'), name: '', itemsText: '' })}
+          onClick={() => append({ id: uid('sc'), name: 'Ключевые навыки', itemsText: '' })}
         >
           <Plus className="h-3.5 w-3.5" />
-          Добавить категорию
+          Добавить навыки
         </Button>
       }
     >
       {fields.length === 0 && (
-        <EmptyHint text="Пока пусто. Добавьте категорию — например, «Языки программирования»." />
+        <EmptyHint text="Пока пусто. Добавьте ключевые навыки кандидата." />
       )}
       <div className="space-y-3">
         {fields.map((field, index) => (
-          <RowFrame key={field.id} onRemove={() => remove(index)}>
-            <FormField
-              control={control}
-              name={`skillCategories.${index}.name`}
-              render={({ field: f }) => (
-                <FormItem>
-                  <FormLabel>Категория</FormLabel>
-                  <FormControl><Input {...f} placeholder="Языки программирования" /></FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+          <div key={field.id} className="relative space-y-2 rounded-lg border bg-muted/20 p-3 pr-12">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="absolute right-2 top-2 h-7 w-7 text-muted-foreground hover:text-destructive"
+              onClick={() => remove(index)}
+              aria-label="Удалить"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
             <FormField
               control={control}
               name={`skillCategories.${index}.itemsText`}
@@ -469,13 +596,18 @@ function SkillCategoriesSection({ control }: { control: Control<CandidateFormVal
                 <FormItem>
                   <FormLabel>Навыки (через запятую)</FormLabel>
                   <FormControl>
-                    <Textarea {...f} rows={2} placeholder="C#, JavaScript, Groovy, PowerShell" />
+                    <Textarea
+                      {...f}
+                      rows={1}
+                      className="!min-h-[52px]"
+                      placeholder="C#, JavaScript, Groovy, PowerShell"
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
               )}
             />
-          </RowFrame>
+          </div>
         ))}
       </div>
     </FormSection>
@@ -545,8 +677,16 @@ function ExperienceSection({ control }: { control: Control<CandidateFormValues> 
                 name={`experience.${index}.startMonth`}
                 render={({ field: f }) => (
                   <FormItem>
-                    <FormLabel>Начало (ГГГГ-ММ)</FormLabel>
-                    <FormControl><Input {...f} placeholder="2025-07" /></FormControl>
+                    <FormLabel>Начало</FormLabel>
+                    <FormControl>
+                      <DateField
+                        value={f.value}
+                        onChange={f.onChange}
+                        onBlur={f.onBlur}
+                        granularity="month"
+                        placeholder="2025-07"
+                      />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -556,8 +696,16 @@ function ExperienceSection({ control }: { control: Control<CandidateFormValues> 
                 name={`experience.${index}.endMonth`}
                 render={({ field: f }) => (
                   <FormItem>
-                    <FormLabel>Окончание (ГГГГ-ММ или пусто = по н/в)</FormLabel>
-                    <FormControl><Input {...f} placeholder="2026-02" /></FormControl>
+                    <FormLabel>Окончание</FormLabel>
+                    <FormControl>
+                      <DateField
+                        value={f.value}
+                        onChange={f.onChange}
+                        onBlur={f.onBlur}
+                        granularity="month"
+                        placeholder="2026-02"
+                      />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -913,3 +1061,4 @@ function EmptyHint({ text }: { text: string }) {
     </div>
   );
 }
+

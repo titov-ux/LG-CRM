@@ -36,7 +36,7 @@ export function AppInfoPopover({ children }: AppInfoPopoverProps) {
       <PopoverContent align="start" sideOffset={8} className="w-72 p-0">
         <div className="flex items-start justify-between gap-3 border-b px-4 py-3">
           <div>
-            <div className="text-[13px] font-semibold tracking-tight">ЛГ Интеграция · CRM</div>
+            <div className="text-[13px] font-semibold tracking-tight">ЛГ Интеграция · SaaS</div>
             <div className="text-[11px] text-muted-foreground">Информация о сборке</div>
           </div>
           <span

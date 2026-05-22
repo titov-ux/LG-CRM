@@ -1,7 +1,23 @@
 import { useState } from 'react';
-import { useNavigate, useParams } from '@tanstack/react-router';
+import { useNavigate, useParams, useRouterState } from '@tanstack/react-router';
 import { toast } from 'sonner';
-import { ArrowRight, ChevronLeft, ChevronRight, Copy, Edit3, Mail, MessageCircle, MoreHorizontal, Phone, Plus, Share2, Trash2, X } from 'lucide-react';
+import {
+  ArchiveRestore,
+  ArrowRight,
+  ChevronLeft,
+  ChevronRight,
+  Copy,
+  Edit3,
+  FileDown,
+  Inbox,
+  Mail,
+  MessageCircle,
+  MoreHorizontal,
+  Phone,
+  Plus,
+  Share2,
+  X,
+} from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
@@ -11,7 +27,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
@@ -38,13 +53,16 @@ import type {
 import { formatMoneyRub, telegramUrl } from '@/lib/utils';
 import { CandidateForm, type CandidateFormValues } from './CandidateForm';
 import {
+  useArchiveCandidate,
   useCandidate,
   useCandidateActivity,
   useChangeCandidateStatus,
   useCreateCandidate,
-  useDeleteCandidate,
+  useRestoreCandidate,
   useUpdateCandidate,
 } from './hooks';
+import { useCan } from '@/lib/permissions';
+import { Textarea } from '@/components/ui/textarea';
 import { useUsers } from '@/features/users/hooks';
 import { useVacancies } from '@/features/vacancies/hooks';
 import { useClients } from '@/features/clients/hooks';
@@ -55,8 +73,11 @@ import { useAttachCandidate, useDetachCandidate } from '@/features/matching/hook
 import {
   downloadResumePdf,
   generateResumeDocxBlob,
+  generateResumeDocxBlobKhronyuk,
   resumeFileName,
+  resumeFileNameKhronyuk,
 } from './resume';
+import { candidateDraftStorage } from './draftStorage';
 
 function splitStack(value: string | undefined): string[] {
   return (value ?? '')
@@ -192,9 +213,26 @@ const ACTIVITY_ICON: Record<string, LucideIcon> = {
 };
 const ACTIVITY_PREVIEW_LIMIT = 5;
 
-export function CandidateCardPage() {
+export interface CandidateCardPageProps {
+  /**
+   * Откуда открыта карточка. Влияет на «возврат назад», на лимит истории
+   * и на наличие отдельной секции «История статусов».
+   *   - 'board'    — открыта с канбан-доски `/candidates`;
+   *   - 'database' — открыта из раздела `/database` («База кандидатов»).
+   */
+  source?: 'board' | 'database';
+}
+
+export function CandidateCardPage({ source: sourceProp }: CandidateCardPageProps = {}) {
   const navigate = useNavigate();
-  const { id } = useParams({ from: '/_authed/candidates/$id' });
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  // Если проп не задан, угадываем по URL. Это упрощает реюз компонента
+  // в обоих route-файлах (/candidates/$id и /database/$id).
+  const source: 'board' | 'database' =
+    sourceProp ?? (pathname.startsWith('/database') ? 'database' : 'board');
+  const fromDatabase = source === 'database';
+  const idParams = useParams({ strict: false }) as { id?: string };
+  const id = idParams.id ?? '';
   const [editOpen, setEditOpen] = useState(false);
   const { data: candidate, isLoading } = useCandidate(id);
   const { data: activity } = useCandidateActivity(id);
@@ -204,14 +242,18 @@ export function CandidateCardPage() {
   const changeStatus = useChangeCandidateStatus();
   const createCandidate = useCreateCandidate();
   const updateCandidate = useUpdateCandidate();
-  const deleteCandidate = useDeleteCandidate();
+  const archiveCandidate = useArchiveCandidate();
+  const restoreCandidate = useRestoreCandidate();
   const detachCandidate = useDetachCandidate();
   const attachCandidate = useAttachCandidate();
-  const [deleteOpen, setDeleteOpen] = useState(false);
+  const canArchive = useCan('candidate:archive');
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const [archiveReason, setArchiveReason] = useState('');
   const [attachOpen, setAttachOpen] = useState(false);
-  const [activityExpanded, setActivityExpanded] = useState(false);
+  const [activityExpanded, setActivityExpanded] = useState(fromDatabase);
 
-  const close = () => navigate({ to: '/candidates' });
+  // Закрытие карточки возвращает на тот же раздел, откуда её открыли.
+  const close = () => navigate({ to: fromDatabase ? '/database' : '/candidates' });
   const recruiter = usersData?.find((u) => u.id === candidate?.recruiterId);
   const attachedVacancies = (vacanciesData?.items ?? []).filter(
     (v) => candidate && candidate.vacancyIds.includes(v.id),
@@ -219,6 +261,12 @@ export function CandidateCardPage() {
   const activityItems = activity ?? [];
   const hiddenActivityCount = Math.max(activityItems.length - ACTIVITY_PREVIEW_LIMIT, 0);
   const visibleActivity = activityExpanded ? activityItems : activityItems.slice(0, ACTIVITY_PREVIEW_LIMIT);
+  /**
+   * Полная история смены статусов. В разделе «База кандидатов» это
+   * требование заказчика: нужно видеть все переходы со временем и автором,
+   * а не только последние 5.
+   */
+  const statusHistory = activityItems.filter((a) => a.kind === 'status');
 
   const handleShare = async () => {
     if (!candidate) return;
@@ -231,15 +279,36 @@ export function CandidateCardPage() {
     }
   };
 
-  const handleDelete = () => {
+  // «Убрать с доски» — кандидат остаётся в базе, но пропадает из канбана
+  // и отвязывается от вакансий. Это softdelete.
+  const handleArchive = () => {
     if (!candidate) return;
-    deleteCandidate.mutate(candidate.id, {
-      onSuccess: () => {
-        toast.success(`Кандидат «${candidate.fullName}» удалён`);
-        setDeleteOpen(false);
-        navigate({ to: '/candidates' });
+    const reason = archiveReason.trim();
+    archiveCandidate.mutate(
+      { id: candidate.id, reason: reason || undefined },
+      {
+        onSuccess: () => {
+          toast.success(`Кандидат «${candidate.fullName}» убран с доски`, {
+            description: 'В «Базе кандидатов» карточка по-прежнему доступна.',
+          });
+          setArchiveOpen(false);
+          setArchiveReason('');
+          // Если архивирование произошло на канбане — возвращаемся к доске,
+          // иначе остаёмся внутри карточки в базе.
+          if (!fromDatabase) navigate({ to: '/candidates' });
+        },
+        onError: () => toast.error('Не удалось убрать кандидата с доски'),
       },
-      onError: () => toast.error('Не удалось удалить кандидата'),
+    );
+  };
+
+  const handleRestore = () => {
+    if (!candidate) return;
+    restoreCandidate.mutate(candidate.id, {
+      onSuccess: () => {
+        toast.success(`Кандидат «${candidate.fullName}» возвращён на доску`);
+      },
+      onError: () => toast.error('Не удалось восстановить кандидата'),
     });
   };
 
@@ -276,6 +345,30 @@ export function CandidateCardPage() {
     } catch (e) {
       console.error(e);
       toast.error('Не удалось сформировать DOCX');
+    }
+  };
+
+  /**
+   * Альтернативный шаблон резюме «для МБ» (Хронюк/Цифровые привычки):
+   * красные заголовки, весь текст жирный, Calibri. Использует тот же
+   * механизм, что и обычный DOCX-экспорт, только другой генератор.
+   */
+  const handleDownloadDocxMB = async () => {
+    if (!candidate) return;
+    try {
+      const blob = await generateResumeDocxBlobKhronyuk(candidate);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = resumeFileNameKhronyuk(candidate);
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast.success('Резюме для МБ сформировано');
+    } catch (e) {
+      console.error(e);
+      toast.error('Не удалось сформировать DOCX для МБ');
     }
   };
 
@@ -373,6 +466,7 @@ export function CandidateCardPage() {
       },
       {
         onSuccess: (c) => {
+          candidateDraftStorage.clear(`edit:${candidate.id}`);
           toast.success(`Кандидат «${c.fullName}» обновлён`);
           setEditOpen(false);
         },
@@ -445,22 +539,43 @@ export function CandidateCardPage() {
                   <MoreHorizontal className="h-3.5 w-3.5" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-44">
+              <DropdownMenuContent align="end" className="w-56">
                 <DropdownMenuItem onSelect={handleShare}>
                   <Share2 className="mr-2 h-3.5 w-3.5" />
                   Поделиться
                 </DropdownMenuItem>
-                <DropdownMenuSeparator />
                 <DropdownMenuItem
                   onSelect={(e) => {
                     e.preventDefault();
-                    setDeleteOpen(true);
+                    handleDownloadDocxMB();
                   }}
-                  className="text-red-600 focus:bg-red-50 focus:text-red-700 dark:focus:bg-red-950/40"
                 >
-                  <Trash2 className="mr-2 h-3.5 w-3.5" />
-                  Удалить
+                  <FileDown className="mr-2 h-3.5 w-3.5" />
+                  Выгрузить для МБ
                 </DropdownMenuItem>
+                {candidate?.archived ? (
+                  <DropdownMenuItem
+                    onSelect={(e) => {
+                      e.preventDefault();
+                      handleRestore();
+                    }}
+                  >
+                    <ArchiveRestore className="mr-2 h-3.5 w-3.5" />
+                    Вернуть на доску
+                  </DropdownMenuItem>
+                ) : (
+                  canArchive && (
+                    <DropdownMenuItem
+                      onSelect={(e) => {
+                        e.preventDefault();
+                        setArchiveOpen(true);
+                      }}
+                    >
+                      <Inbox className="mr-2 h-3.5 w-3.5" />
+                      Убрать с доски
+                    </DropdownMenuItem>
+                  )
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -474,6 +589,38 @@ export function CandidateCardPage() {
           </div>
         ) : (
           <div className="space-y-6 px-6 py-6">
+            {candidate.archived && (
+              <div className="flex items-start gap-2.5 rounded-md border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[12.5px] text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+                <Inbox className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <div className="flex-1 leading-relaxed">
+                  <div className="font-semibold">Кандидат вне канбан-доски</div>
+                  <div className="text-[11.5px] opacity-90">
+                    Карточка остаётся в Базе кандидатов со всей историей.{' '}
+                    {candidate.archivedAt && (
+                      <>Убран{' '}
+                      <span className="tnum">
+                        {new Date(candidate.archivedAt).toLocaleDateString('ru-RU')}
+                      </span>
+                      {candidate.archiveReason ? ` · ${candidate.archiveReason}` : ''}
+                      .</>
+                    )}
+                  </div>
+                </div>
+                {canArchive && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-7 gap-1 border-amber-300/60 bg-background/80 px-2 text-[11.5px] text-amber-900 hover:bg-background dark:border-amber-800 dark:text-amber-100"
+                    onClick={handleRestore}
+                    disabled={restoreCandidate.isPending}
+                  >
+                    <ArchiveRestore className="h-3 w-3" />
+                    Вернуть
+                  </Button>
+                )}
+              </div>
+            )}
             <div className="space-y-2.5 pb-4">
               <div className="text-[11.5px] font-medium uppercase tracking-wide text-muted-foreground">
                 Кандидат · {candidate.grade}
@@ -720,6 +867,50 @@ export function CandidateCardPage() {
               )}
             </Section>
 
+            {fromDatabase && (
+              <Section title={`История смены статусов · ${statusHistory.length}`}>
+                {statusHistory.length === 0 ? (
+                  <div className="text-xs text-muted-foreground">
+                    Кандидат ещё не менял статус.
+                  </div>
+                ) : (
+                  <ol className="relative space-y-0">
+                    {statusHistory.map((entry, i) => {
+                      const actor = usersData?.find((u) => u.id === entry.actorId);
+                      // Парсим целевой статус из текста вида:
+                      // «Статус изменён на «X»» → подсветим X.
+                      const match = /«([^»]+)»/.exec(entry.text);
+                      const targetLabel = match?.[1] ?? entry.text;
+                      const statusMeta = candidateStatuses.find((s) => s.label === targetLabel);
+                      return (
+                        <li
+                          key={entry.id}
+                          className="relative flex gap-3 pb-3.5 last:pb-0"
+                        >
+                          {i < statusHistory.length - 1 && (
+                            <div className="absolute left-[5px] top-[14px] bottom-0 w-px bg-border" />
+                          )}
+                          <div
+                            className="z-10 mt-[6px] h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-background"
+                            style={{ background: statusMeta?.color ?? '#94a3b8' }}
+                          />
+                          <div className="flex-1">
+                            <div className="text-[13px] font-medium leading-tight">
+                              {targetLabel}
+                            </div>
+                            <div className="mt-0.5 text-[11.5px] text-muted-foreground">
+                              {actor?.fullName ?? '—'} ·{' '}
+                              {new Date(entry.createdAt).toLocaleString('ru-RU')}
+                            </div>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                )}
+              </Section>
+            )}
+
             <Section title="История взаимодействий">
               {activityItems.length === 0 && (
                 <div className="text-xs text-muted-foreground">Записей пока нет.</div>
@@ -779,31 +970,59 @@ export function CandidateCardPage() {
             defaultValues={toFormValues(candidate)}
             onSubmit={handleEdit}
             isPending={updateCandidate.isPending}
+            draftKey={`edit:${candidate.id}`}
+            enableResumeImport={false}
           />
         )}
       </SheetContent>
     </Sheet>
 
-    <Dialog open={deleteOpen} onOpenChange={(o) => !deleteCandidate.isPending && setDeleteOpen(o)}>
+    {/* Архивирование (убрать с доски) — softdelete. В базе кандидат остаётся. */}
+    <Dialog
+      open={archiveOpen}
+      onOpenChange={(o) => {
+        if (archiveCandidate.isPending) return;
+        setArchiveOpen(o);
+        if (!o) setArchiveReason('');
+      }}
+    >
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Удалить кандидата?</DialogTitle>
+          <DialogTitle>Убрать кандидата с доски?</DialogTitle>
           <DialogDescription>
             {candidate && (
               <>
-                Кандидат «<span className="font-medium text-foreground">{candidate.fullName}</span>» будет удалён без возможности
-                восстановления. Связи с вакансиями также пропадут.
+                Кандидат «<span className="font-medium text-foreground">{candidate.fullName}</span>» исчезнет
+                с канбан-доски и будет откреплён от вакансий. В разделе{' '}
+                <span className="font-medium text-foreground">«База кандидатов»</span> карточка останется
+                со всей историей и диалогами — кандидата можно будет вернуть на доску.
               </>
             )}
           </DialogDescription>
         </DialogHeader>
+        <div className="space-y-1.5">
+          <label className="text-[11.5px] font-medium uppercase tracking-wide text-muted-foreground">
+            Причина (необязательно)
+          </label>
+          <Textarea
+            value={archiveReason}
+            onChange={(e) => setArchiveReason(e.target.value)}
+            placeholder="Например: «не подошёл по бюджету», «передумал», «long-term reserve»"
+            rows={2}
+            className="text-[13px]"
+          />
+        </div>
         <DialogFooter className="gap-2 sm:gap-2">
-          <Button variant="outline" onClick={() => setDeleteOpen(false)} disabled={deleteCandidate.isPending}>
+          <Button
+            variant="outline"
+            onClick={() => setArchiveOpen(false)}
+            disabled={archiveCandidate.isPending}
+          >
             Отмена
           </Button>
-          <Button variant="destructive" onClick={handleDelete} disabled={deleteCandidate.isPending}>
-            <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-            {deleteCandidate.isPending ? 'Удаление…' : 'Удалить'}
+          <Button onClick={handleArchive} disabled={archiveCandidate.isPending}>
+            <Inbox className="mr-1.5 h-3.5 w-3.5" />
+            {archiveCandidate.isPending ? 'Убираем…' : 'Убрать с доски'}
           </Button>
         </DialogFooter>
       </DialogContent>

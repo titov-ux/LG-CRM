@@ -1,11 +1,13 @@
 import {
   Activity,
+  Bell,
   Briefcase,
   Building2,
+  Calendar,
   ContactRound,
+  Database,
   FileText,
   Home,
-  Inbox,
   MessageSquare,
   Settings,
   ShieldCheck,
@@ -42,16 +44,20 @@ const GROUPS: NavGroup[] = [
       { to: '/clients', label: 'Клиенты', icon: Building2 },
       { to: '/contacts', label: 'Контакты', icon: ContactRound },
       { to: '/chat', label: 'Чат', icon: MessageSquare },
+      { to: '/calendar', label: 'Календарь', icon: Calendar },
     ],
   },
   {
-    label: 'База знаний',
-    items: [{ to: '/documents', label: 'Документы', icon: FileText }],
+    label: 'Хранилище',
+    items: [
+      { to: '/database', label: 'Все кандидаты', icon: Database },
+      { to: '/documents', label: 'Документы', icon: FileText },
+    ],
   },
   {
     label: 'Прочее',
     items: [
-      { to: '/notifications', label: 'Уведомления', icon: Inbox },
+      { to: '/notifications', label: 'Уведомления', icon: Bell },
       { to: '/analytics', label: 'Аналитика', icon: TrendingUp },
       { to: '/audit', label: 'Журнал действий', icon: Activity },
     ],
@@ -83,7 +89,7 @@ export function Sidebar() {
           </div>
           <div className="flex flex-col leading-tight">
             <span className="text-[13px] font-semibold tracking-tight">Интеграция</span>
-            <span className="text-[10.5px] text-muted-foreground">CRM · 2026</span>
+            <span className="text-[10.5px] text-muted-foreground">SaaS · 2026</span>
           </div>
         </button>
       </AppInfoPopover>

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
-import { Briefcase, Building2, CircleDot, Plus, User as UserIcon } from 'lucide-react';
+import { Briefcase, Building2, CircleDot, Handshake, Plus, User as UserIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -22,7 +22,7 @@ import {
 import { UserAvatar } from '@/components/common/UserAvatar';
 import { Skeleton } from '@/components/ui/skeleton';
 import { FilterBar, FilterChip, MenuItem } from '@/components/common/FilterChip';
-import type { ClientStatus } from '@/api/types';
+import type { ClientKind, ClientStatus } from '@/api/types';
 import { ClientForm, type ClientFormValues } from './ClientForm';
 import { useClients, useCreateClient, useUsers } from './hooks';
 import { useFiltersStore } from '@/stores/filters';
@@ -50,6 +50,12 @@ const STATUS_OPTIONS: ClientStatus[] = [
   'archived',
 ];
 
+const CLIENT_KIND_LABEL: Record<ClientKind, string> = {
+  direct: 'Прямой',
+  intermediary: 'Посредник',
+};
+const CLIENT_KIND_OPTIONS: ClientKind[] = ['direct', 'intermediary'];
+
 function pluralize(n: number, forms: [string, string, string]): string {
   const abs = Math.abs(n) % 100;
   const last = abs % 10;
@@ -63,9 +69,10 @@ interface Filters {
   status: ClientStatus | null;
   industry: string | null;
   accountManagerId: string | null;
+  clientKind: ClientKind | null;
 }
 
-const EMPTY: Filters = { status: null, industry: null, accountManagerId: null };
+const EMPTY: Filters = { status: null, industry: null, accountManagerId: null, clientKind: null };
 
 export function ClientsListPage() {
   const search = useFiltersStore((s) => s.search);
@@ -88,6 +95,7 @@ export function ClientsListPage() {
         industry: values.industry,
         accountManagerId: values.accountManagerId,
         status: values.status,
+        clientKind: values.clientKind,
         ...(values.telegramChat.trim() ? { telegramChat: values.telegramChat.trim() } : {}),
       },
       {
@@ -107,6 +115,7 @@ export function ClientsListPage() {
       status: filters.status ?? undefined,
       industry: filters.industry ?? undefined,
       accountManagerId: filters.accountManagerId ?? undefined,
+      clientKind: filters.clientKind ?? undefined,
     }),
     [search, filters],
   );
@@ -125,7 +134,7 @@ export function ClientsListPage() {
 
   const totalCount = data?.items.length ?? 0;
   const hasActiveFilters =
-    !!filters.status || !!filters.industry || !!filters.accountManagerId;
+    !!filters.status || !!filters.industry || !!filters.accountManagerId || !!filters.clientKind;
 
   const managerLabel = filters.accountManagerId
     ? usersData?.find((u) => u.id === filters.accountManagerId)?.fullName ?? '—'
@@ -236,6 +245,30 @@ export function ClientsListPage() {
               ))}
           </div>
         </FilterChip>
+
+        <FilterChip
+          active={!!filters.clientKind}
+          icon={Handshake}
+          label="Тип"
+          value={filters.clientKind ? CLIENT_KIND_LABEL[filters.clientKind] : null}
+          onClear={() => set('clientKind', null)}
+        >
+          <MenuItem
+            selected={!filters.clientKind}
+            onClick={() => set('clientKind', null)}
+          >
+            Все типы
+          </MenuItem>
+          {CLIENT_KIND_OPTIONS.map((k) => (
+            <MenuItem
+              key={k}
+              selected={filters.clientKind === k}
+              onClick={() => set('clientKind', k)}
+            >
+              {CLIENT_KIND_LABEL[k]}
+            </MenuItem>
+          ))}
+        </FilterChip>
       </FilterBar>
 
       <Card className="overflow-hidden">
@@ -245,6 +278,7 @@ export function ClientsListPage() {
               <TableHead>Название</TableHead>
               <TableHead>Юр. лица</TableHead>
               <TableHead>Отрасль</TableHead>
+              <TableHead>Тип</TableHead>
               <TableHead>Статус</TableHead>
               <TableHead>Менеджер</TableHead>
               <TableHead className="text-right">Вакансии</TableHead>
@@ -255,7 +289,7 @@ export function ClientsListPage() {
             {isLoading &&
               Array.from({ length: 4 }).map((_, i) => (
                 <TableRow key={i}>
-                  <TableCell colSpan={7}>
+                  <TableCell colSpan={8}>
                     <Skeleton className="h-5" />
                   </TableCell>
                 </TableRow>
@@ -263,7 +297,7 @@ export function ClientsListPage() {
             {!isLoading && (data?.items ?? []).length === 0 && (
               <TableRow>
                 <TableCell
-                  colSpan={7}
+                  colSpan={8}
                   className="py-10 text-center text-sm text-muted-foreground"
                 >
                   <span className="inline-flex items-center gap-2">
@@ -288,6 +322,17 @@ export function ClientsListPage() {
                       : `${c.legalEntities.length} юр. лиц`}
                   </TableCell>
                   <TableCell>{c.industry}</TableCell>
+                  <TableCell>
+                    <span
+                      className={
+                        c.clientKind === 'intermediary'
+                          ? 'inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+                          : 'inline-flex items-center rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-medium text-sky-700 dark:bg-sky-900/30 dark:text-sky-300'
+                      }
+                    >
+                      {CLIENT_KIND_LABEL[c.clientKind]}
+                    </span>
+                  </TableCell>
                   <TableCell>
                     <span className="flex items-center gap-1.5">
                       <span

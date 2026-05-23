@@ -360,6 +360,7 @@ async def reorder_kanban(
     for upd in updates:
         v = by_id[upd.id]
         if v.status != upd.status:
+            before_status = v.status.value
             if not transitions.is_allowed(v.status, upd.status):
                 raise ApiError(
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -374,6 +375,35 @@ async def reorder_kanban(
                 )
             v.status = upd.status
             v.status_changed_at = now
+            await audit_service.record_audit(
+                db,
+                entity_type="vacancy",
+                entity_id=v.id,
+                actor_id=user.id,
+                field="status",
+                before=before_status,
+                after=upd.status.value,
+            )
+            await audit_service.record_activity(
+                db,
+                entity_type=ActivityEntityType.vacancy,
+                entity_id=v.id,
+                actor_id=user.id,
+                kind=ActivityKind.status,
+                text=f"Статус изменён: {before_status} → {upd.status.value}",
+            )
+            recipients = {r.user_id for r in v.recruiters}
+            recipients.add(v.account_manager_id)
+            recipients.discard(user.id)
+            if recipients:
+                await notify_service.notify_many(
+                    db,
+                    recipient_ids=recipients,
+                    kind=NotificationKind.status_change,
+                    text=f"Вакансия «{v.title}»: статус {before_status} → {upd.status.value}",
+                    entity_type=NotificationEntityType.vacancy,
+                    entity_id=v.id,
+                )
         v.kanban_order = upd.kanban_order
 
     await db.commit()

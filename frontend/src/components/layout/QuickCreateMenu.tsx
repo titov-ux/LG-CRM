@@ -32,6 +32,7 @@ function splitStack(value: string | undefined): string[] {
 
 export function QuickCreateMenu() {
   const [open, setOpen] = useState<Kind>(null);
+  const [vacancyFormResetKey, setVacancyFormResetKey] = useState(0);
   const [candidateFormResetKey, setCandidateFormResetKey] = useState(0);
   const navigate = useNavigate();
 
@@ -39,6 +40,11 @@ export function QuickCreateMenu() {
   const createCandidate = useCreateCandidate();
 
   const close = () => setOpen(null);
+  const closeVacancySheet = () => {
+    vacancyDraftStorage.clear('create');
+    setVacancyFormResetKey((k) => k + 1);
+    close();
+  };
   const closeCandidateSheet = () => {
     candidateDraftStorage.clear('create');
     setCandidateFormResetKey((k) => k + 1);
@@ -126,13 +132,14 @@ export function QuickCreateMenu() {
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <Sheet open={open === 'vacancy'} onOpenChange={(o) => !o && close()}>
+      <Sheet open={open === 'vacancy'} onOpenChange={(o) => !o && closeVacancySheet()}>
         <SheetContent className="overflow-y-auto sm:max-w-xl">
           <SheetHeader className="mb-4">
             <SheetTitle>Новая вакансия</SheetTitle>
             <SheetDescription>Кандидаты прикрепляются после создания.</SheetDescription>
           </SheetHeader>
           <VacancyForm
+            key={vacancyFormResetKey}
             onSubmit={handleVacancy}
             isPending={createVacancy.isPending}
             submitLabel="Создать"

@@ -54,6 +54,18 @@ async function getApiErrorMessage(error: unknown): Promise<string | null> {
   }
 }
 
+function fallbackErrorText(error: unknown): string {
+  if (error instanceof HTTPError) {
+    const status = error.response.status;
+    if (status === 0) return 'Ошибка сети при запросе к API';
+    return `Ошибка API (${status}) при создании кандидата`;
+  }
+  if (error instanceof Error && error.message.trim()) {
+    return `Ошибка: ${error.message.trim()}`;
+  }
+  return 'Не удалось создать кандидата';
+}
+
 export function QuickCreateMenu() {
   const [open, setOpen] = useState<Kind>(null);
   const [vacancyFormResetKey, setVacancyFormResetKey] = useState(0);
@@ -162,7 +174,7 @@ export function QuickCreateMenu() {
             return;
           }
         }
-        toast.error((await getApiErrorMessage(error)) ?? 'Не удалось создать кандидата');
+        toast.error((await getApiErrorMessage(error)) ?? fallbackErrorText(error));
       },
     });
   };

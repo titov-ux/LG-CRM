@@ -19,6 +19,18 @@ set -euo pipefail
 cd "$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(pwd)"
 COMPOSE="docker compose -f infra/docker-compose.prod.yml --env-file .env.prod"
+HEALTHCHECK_URL="${HEALTHCHECK_URL:-https://localhost/healthz}"
+OPENAPI_URL="${OPENAPI_URL:-https://localhost/api/v1/openapi.json}"
+
+CURL_HEALTH_OPTS=(-fsS)
+if [[ "$HEALTHCHECK_URL" == https://* ]]; then
+    CURL_HEALTH_OPTS+=(-k)
+fi
+
+CURL_OPENAPI_OPTS=(-fsS)
+if [[ "$OPENAPI_URL" == https://* ]]; then
+    CURL_OPENAPI_OPTS+=(-k)
+fi
 
 step() { printf "\n\033[1;36m[bootstrap]\033[0m %s\n" "$*"; }
 die()  { printf "\n\033[1;31m[bootstrap] FAIL:\033[0m %s\n" "$*"; exit 1; }
@@ -67,10 +79,10 @@ $COMPOSE up -d --build postgres redis backend nginx
 
 step "жду готовности backend (до 60 сек)"
 for _ in $(seq 1 30); do
-    if curl -fsS http://localhost:8000/healthz >/dev/null 2>&1; then break; fi
+    if curl "${CURL_HEALTH_OPTS[@]}" "$HEALTHCHECK_URL" >/dev/null 2>&1; then break; fi
     sleep 2
 done
-curl -fsS http://localhost:8000/healthz >/dev/null || die "backend не отвечает"
+curl "${CURL_HEALTH_OPTS[@]}" "$HEALTHCHECK_URL" >/dev/null || die "backend не отвечает ($HEALTHCHECK_URL)"
 
 # 5. Миграции
 step "alembic upgrade head"
@@ -90,9 +102,9 @@ fi
 
 # 8. Smoke
 step "smoke checks"
-curl -fsS http://localhost:8000/healthz
+curl "${CURL_HEALTH_OPTS[@]}" "$HEALTHCHECK_URL"
 echo
-curl -fsS http://localhost:8000/api/v1/openapi.json | jq -r '.info.title'
+curl "${CURL_OPENAPI_OPTS[@]}" "$OPENAPI_URL" | jq -r '.info.title'
 
 step "готово ✅ — стек поднят"
 echo "Дальше:"

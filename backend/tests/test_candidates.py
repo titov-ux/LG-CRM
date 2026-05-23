@@ -139,3 +139,24 @@ def test_change_status_writes_audit_and_activity(
     assert r.status_code == 200
     rows = r.json()
     assert any(a["field"] == "status" and a["after"] == "ready" for a in rows)
+
+
+def test_create_candidate_returns_201_if_activity_write_fails(
+    client: TestClient, admin_user, recruiter_user, monkeypatch
+) -> None:
+    from app.modules.candidates import service as candidates_service
+
+    async def _boom(*_args, **_kwargs):
+        raise RuntimeError("activity db failure")
+
+    monkeypatch.setattr(candidates_service.audit_service, "record_activity", _boom)
+
+    h = auth_headers(client, admin_user.email)
+    r = client.post("/api/v1/candidates", headers=h, json=_cand_payload(recruiter_user.id))
+    assert r.status_code == 201, r.text
+    cid = r.json()["id"]
+
+    # Карточка сохранена, даже если запись активности не удалась.
+    r = client.get(f"/api/v1/candidates/{cid}", headers=h)
+    assert r.status_code == 200
+    assert r.json()["fullName"] == "Иван Иванов"

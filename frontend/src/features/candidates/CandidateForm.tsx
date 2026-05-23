@@ -33,6 +33,7 @@ import type {
   LanguageLevel,
   WorkFormat,
 } from '@/api/types';
+import { useAuthStore } from '@/stores/auth';
 import { candidateDraftStorage } from './draftStorage';
 
 const GRADES: Grade[] = ['Junior', 'Middle', 'Senior', 'Lead'];
@@ -141,6 +142,7 @@ export function CandidateForm({
   enableResumeImport = true,
 }: Props) {
   const { data: users } = useUsers();
+  const currentUser = useAuthStore((s) => s.user);
   // В качестве «ответственных рекрутеров» можно назначать и админов — они тоже ведут кандидатов.
   const recruiters = (users ?? []).filter((u) => u.role === 'recruiter' || u.role === 'admin');
 
@@ -201,6 +203,18 @@ export function CandidateForm({
       form.setValue('recruiterId', '', { shouldDirty: true, shouldValidate: true });
     }
   }, [draftKey, watchedRecruiterId, recruiters, form]);
+
+  useEffect(() => {
+    // Для формы создания по умолчанию ставим «Ответственного рекрутера» равным
+    // текущему пользователю, если он recruiter/admin и присутствует в справочнике.
+    if (defaultValues?.recruiterId) return;
+    if (watchedRecruiterId) return;
+    if (!currentUser) return;
+    if (currentUser.role !== 'recruiter' && currentUser.role !== 'admin') return;
+    const exists = recruiters.some((r) => r.id === currentUser.id);
+    if (!exists) return;
+    form.setValue('recruiterId', currentUser.id, { shouldDirty: false, shouldValidate: true });
+  }, [defaultValues?.recruiterId, watchedRecruiterId, currentUser, recruiters, form]);
 
   // ──────────────────────────────────────────────────────────────────────────
   // Импорт резюме из PDF («Распознать из файла»)

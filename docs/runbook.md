@@ -182,7 +182,7 @@ bash scripts/deploy-vm.sh --branch main
 2. Собирает фронт (`pnpm install --frozen-lockfile && pnpm build`).
 3. Пересобирает и поднимает сервисы (`docker compose ... up -d --build`).
 4. Прогоняет миграции (`alembic upgrade head`).
-5. Делает health-check `http://localhost:8000/healthz`.
+5. Делает health-check `https://localhost/healthz` (`-k`, чтобы не упасть на self-signed/чужом CN).
 
 Полезные опции:
 

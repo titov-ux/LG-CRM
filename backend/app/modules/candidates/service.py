@@ -267,6 +267,7 @@ async def create_candidate(
         ) from e
     await db.commit()
     await db.refresh(cand)
+    created_candidate_id = cand.id
     try:
         # История активности не должна ронять создание кандидата:
         # если activity-подсистема временно недоступна, карточка всё равно сохраняется.
@@ -282,6 +283,13 @@ async def create_candidate(
     except Exception:
         await db.rollback()
         logger.exception("Failed to write candidate create activity", extra={"candidate_id": str(cand.id)})
+        # После rollback SQLAlchemy может инвалидировать состояние объекта cand.
+        # Перечитываем карточку из БД, чтобы не допустить 500 на сериализации ответа.
+        reloaded = (
+            await db.execute(_base_query().where(Candidate.id == created_candidate_id))
+        ).scalar_one_or_none()
+        if reloaded is not None:
+            cand = reloaded
     return cand, []
 
 

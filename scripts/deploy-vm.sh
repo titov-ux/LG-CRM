@@ -13,6 +13,9 @@
 #   bash scripts/deploy-vm.sh --skip-frontend
 #   bash scripts/deploy-vm.sh --skip-migrate
 #
+# Optional env:
+#   HEALTHCHECK_URL=https://localhost/healthz
+#
 
 set -euo pipefail
 
@@ -23,6 +26,7 @@ LOCK_FILE="/tmp/crm-lg-deploy.lock"
 BRANCH="main"
 SKIP_FRONTEND=0
 SKIP_MIGRATE=0
+HEALTHCHECK_URL="${HEALTHCHECK_URL:-https://localhost/healthz}"
 
 step() { printf "\n\033[1;36m[deploy]\033[0m %s\n" "$*"; }
 warn() { printf "\n\033[1;33m[deploy]\033[0m %s\n" "$*"; }
@@ -105,13 +109,17 @@ else
 fi
 
 step "health check"
+CURL_HEALTH_OPTS=(-fsS)
+if [[ "$HEALTHCHECK_URL" == https://* ]]; then
+  CURL_HEALTH_OPTS+=(-k)
+fi
 for _ in $(seq 1 30); do
-  if curl -fsS http://localhost:8000/healthz >/dev/null 2>&1; then
+  if curl "${CURL_HEALTH_OPTS[@]}" "$HEALTHCHECK_URL" >/dev/null 2>&1; then
     break
   fi
   sleep 2
 done
-curl -fsS http://localhost:8000/healthz >/dev/null || die "backend health check failed"
+curl "${CURL_HEALTH_OPTS[@]}" "$HEALTHCHECK_URL" >/dev/null || die "backend health check failed ($HEALTHCHECK_URL)"
 
 step "deploy completed successfully"
 echo "Branch: $BRANCH"

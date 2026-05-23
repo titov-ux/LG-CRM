@@ -61,7 +61,11 @@ def _base_query() -> Select:
 def _days_in_status(cand: Candidate) -> int:
     if not cand.status_changed_at:
         return 0
-    delta = datetime.now(timezone.utc) - cand.status_changed_at
+    status_changed_at = cand.status_changed_at
+    # Защита от старых/грязных записей с naive-datetime.
+    if status_changed_at.tzinfo is None:
+        status_changed_at = status_changed_at.replace(tzinfo=timezone.utc)
+    delta = datetime.now(timezone.utc) - status_changed_at
     return max(int(delta.total_seconds() // 86400), 0)
 
 
@@ -296,10 +300,10 @@ async def create_candidate(
     db.add(cand)
     try:
         await db.flush()
+        await db.commit()
     except (IntegrityError, DataError) as e:
         await db.rollback()
         _raise_candidate_write_error(e)
-    await db.commit()
     await db.refresh(cand)
     created_candidate_id = cand.id
     try:

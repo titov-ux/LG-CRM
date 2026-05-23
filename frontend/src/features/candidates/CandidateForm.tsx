@@ -172,6 +172,7 @@ export function CandidateForm({
     } as CandidateFormValues,
   });
   const watchedValues = useWatch({ control: form.control });
+  const watchedRecruiterId = useWatch({ control: form.control, name: 'recruiterId' });
 
   useEffect(() => {
     if (!draftKey) return;
@@ -187,6 +188,19 @@ export function CandidateForm({
     }, 250);
     return () => window.clearTimeout(timeoutId);
   }, [draftKey, watchedValues, form]);
+
+  useEffect(() => {
+    // В черновике может сохраниться recruiterId из другого окружения (например,
+    // mock-идентификатор). Для create-формы сбрасываем такое значение, чтобы
+    // пользователь выбрал валидного рекрутера из текущего списка.
+    if (!draftKey) return;
+    if (!watchedRecruiterId) return;
+    if (recruiters.length === 0) return;
+    const exists = recruiters.some((r) => r.id === watchedRecruiterId);
+    if (!exists) {
+      form.setValue('recruiterId', '', { shouldDirty: true, shouldValidate: true });
+    }
+  }, [draftKey, watchedRecruiterId, recruiters, form]);
 
   // ──────────────────────────────────────────────────────────────────────────
   // Импорт резюме из PDF («Распознать из файла»)

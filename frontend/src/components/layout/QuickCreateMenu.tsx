@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
+import { HTTPError } from 'ky';
 import { Briefcase, ChevronDown, Plus, UserPlus } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -16,18 +17,41 @@ import { vacancyDraftStorage } from '@/features/vacancies/draftStorage';
 import { CandidateForm, type CandidateFormValues } from '@/features/candidates/CandidateForm';
 import { useCreateCandidate } from '@/features/candidates/hooks';
 import { candidateDraftStorage } from '@/features/candidates/draftStorage';
+import { useCan } from '@/lib/permissions';
 
 // Сквозная кнопка «Создать» в шапке. Сюда сознательно вынесены только сущности,
 // которые могут создаваться из любой точки приложения: вакансия и кандидат.
 // Клиент создаётся только со страницы /clients (там есть собственная кнопка),
 // потому что без контекста выбранного клиента отдельной точки входа не нужно.
 type Kind = 'vacancy' | 'candidate' | null;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function splitStack(value: string | undefined): string[] {
   return (value ?? '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+async function getApiErrorMessage(error: unknown): Promise<string | null> {
+  if (!(error instanceof HTTPError)) return null;
+  try {
+    const body = (await error.response.clone().json()) as
+      | { detail?: string | { message?: string } | Array<{ msg?: string }> }
+      | undefined;
+    const detail = body?.detail;
+    if (typeof detail === 'string' && detail.trim()) return detail.trim();
+    if (detail && typeof detail === 'object' && !Array.isArray(detail) && detail.message?.trim()) {
+      return detail.message.trim();
+    }
+    if (Array.isArray(detail)) {
+      const first = detail.find((i) => typeof i?.msg === 'string' && i.msg.trim());
+      if (first?.msg) return first.msg.trim();
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 export function QuickCreateMenu() {
@@ -38,6 +62,15 @@ export function QuickCreateMenu() {
 
   const createVacancy = useCreateVacancy();
   const createCandidate = useCreateCandidate();
+  const disabledDomains = ((import.meta.env.VITE_DISABLED_HANDLERS as string | undefined) ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const candidatesViaRealApi = disabledDomains.includes('candidates');
+  const canCreateVacancy = useCan('vacancy:create');
+  const canCreateCandidate = useCan('candidate:create');
+
+  if (!canCreateVacancy && !canCreateCandidate) return null;
 
   const close = () => setOpen(null);
   const closeVacancySheet = () => {
@@ -83,6 +116,10 @@ export function QuickCreateMenu() {
   };
 
   const handleCandidate = (values: CandidateFormValues) => {
+    if (candidatesViaRealApi && !UUID_RE.test(values.recruiterId)) {
+      toast.error('Выберите рекрутера из реального API (ожидается UUID)');
+      return;
+    }
     const payload = {
       fullName: values.fullName,
       role: values.role,
@@ -106,7 +143,27 @@ export function QuickCreateMenu() {
         close();
         navigate({ to: '/candidates/$id', params: { id: c.id } });
       },
-      onError: () => toast.error('Не удалось создать кандидата'),
+      onError: async (error) => {
+        if (error instanceof HTTPError) {
+          if (error.response.status === 403) {
+            toast.error('Недостаточно прав для создания кандидата');
+            return;
+          }
+          if (error.response.status === 409) {
+            toast.error(
+              (await getApiErrorMessage(error)) ?? 'Кандидат с таким email или телефоном уже существует',
+            );
+            return;
+          }
+          if (error.response.status === 422) {
+            toast.error(
+              (await getApiErrorMessage(error)) ?? 'Проверьте корректность заполненных полей кандидата',
+            );
+            return;
+          }
+        }
+        toast.error((await getApiErrorMessage(error)) ?? 'Не удалось создать кандидата');
+      },
     });
   };
 
@@ -121,18 +178,22 @@ export function QuickCreateMenu() {
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-56">
-          <DropdownMenuItem onSelect={() => setOpen('vacancy')}>
-            <Briefcase className="mr-2 h-4 w-4" />
-            Вакансию
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => setOpen('candidate')}>
-            <UserPlus className="mr-2 h-4 w-4" />
-            Кандидата
-          </DropdownMenuItem>
+          {canCreateVacancy && (
+            <DropdownMenuItem onSelect={() => setOpen('vacancy')}>
+              <Briefcase className="mr-2 h-4 w-4" />
+              Вакансию
+            </DropdownMenuItem>
+          )}
+          {canCreateCandidate && (
+            <DropdownMenuItem onSelect={() => setOpen('candidate')}>
+              <UserPlus className="mr-2 h-4 w-4" />
+              Кандидата
+            </DropdownMenuItem>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <Sheet open={open === 'vacancy'} onOpenChange={(o) => !o && closeVacancySheet()}>
+      <Sheet open={canCreateVacancy && open === 'vacancy'} onOpenChange={(o) => !o && closeVacancySheet()}>
         <SheetContent className="overflow-y-auto sm:max-w-xl">
           <SheetHeader className="mb-4">
             <SheetTitle>Новая вакансия</SheetTitle>
@@ -148,7 +209,7 @@ export function QuickCreateMenu() {
         </SheetContent>
       </Sheet>
 
-      <Sheet open={open === 'candidate'} onOpenChange={(o) => !o && closeCandidateSheet()}>
+      <Sheet open={canCreateCandidate && open === 'candidate'} onOpenChange={(o) => !o && closeCandidateSheet()}>
         <SheetContent className="overflow-y-auto sm:max-w-xl">
           <SheetHeader className="mb-4">
             <SheetTitle>Новый кандидат</SheetTitle>

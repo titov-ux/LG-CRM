@@ -186,6 +186,8 @@ export function DateField({
 }: DateFieldProps) {
   const [open, setOpen] = React.useState(false);
   const [text, setText] = React.useState<string>(() => valueToDisplay(value, granularity));
+  const skipNextBlurCommitRef = React.useRef(false);
+  const interactingWithPickerRef = React.useRef(false);
   const selectedDate = valueToDate(value, granularity);
   const [pickerMonth, setPickerMonth] = React.useState<Date>(() =>
     clampByMaxDate(selectedDate ?? new Date(), maxDate),
@@ -246,6 +248,15 @@ export function DateField({
     }
   };
 
+  const markPickerInteraction = () => {
+    interactingWithPickerRef.current = true;
+    // Сбрасываем флаг на следующий тик после завершения pointer-событий:
+    // так onBlur, возникший из-за клика в поповер, не перезатрёт выбор.
+    window.setTimeout(() => {
+      interactingWithPickerRef.current = false;
+    }, 0);
+  };
+
   return (
     <div className={cn('relative', className)}>
       <Input
@@ -265,6 +276,15 @@ export function DateField({
           )
         }
         onBlur={() => {
+          if (interactingWithPickerRef.current) {
+            onBlur?.();
+            return;
+          }
+          if (skipNextBlurCommitRef.current) {
+            skipNextBlurCommitRef.current = false;
+            onBlur?.();
+            return;
+          }
           // Пока открыт popover, blur часто приходит из-за клика по календарю.
           // В этом случае не коммитим текст, иначе можно затереть выбранную дату.
           if (!open) {
@@ -280,6 +300,7 @@ export function DateField({
             type="button"
             disabled={disabled}
             aria-label="Открыть календарь"
+            onPointerDownCapture={markPickerInteraction}
             className={cn(
               'absolute inset-y-0 right-0 inline-flex items-center justify-center px-2',
               'text-muted-foreground hover:text-foreground',
@@ -290,7 +311,7 @@ export function DateField({
             <CalendarIcon className="h-4 w-4" />
           </button>
         </PopoverTrigger>
-        <PopoverContent className="w-auto p-0" align="end">
+        <PopoverContent className="w-auto p-0" align="end" onPointerDownCapture={markPickerInteraction}>
           {granularity === 'day' && pickerStep === 'day' && (
             <>
               <div className="flex items-center justify-between px-3 pt-3">
@@ -341,6 +362,7 @@ export function DateField({
                   nav: 'hidden',
                 }}
                 onSelect={(d) => {
+                  skipNextBlurCommitRef.current = true;
                   if (d) {
                     onChange(format(d, ISO_DAY_FORMAT));
                     setText(format(d, DAY_DISPLAY_FORMAT));
@@ -405,6 +427,7 @@ export function DateField({
                       )}
                       onClick={() => {
                         if (monthDisabled) return;
+                        skipNextBlurCommitRef.current = true;
                         const picked = new Date(year, monthIndex, 1);
                         onChange(format(picked, ISO_MONTH_FORMAT));
                         setText(format(picked, ISO_MONTH_FORMAT));

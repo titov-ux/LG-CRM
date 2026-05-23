@@ -1,0 +1,56 @@
+name: frontend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - 'docs/openapi.yaml'
+      - '.github/workflows/frontend.yml'
+  pull_request:
+    paths:
+      - 'frontend/**'
+      - 'docs/openapi.yaml'
+      - '.github/workflows/frontend.yml'
+
+defaults:
+  run:
+    working-directory: frontend
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Regenerate API types from openapi.yaml
+        run: pnpm codegen
+
+      - name: Detect type drift (openapi.yaml ↔ types.gen.ts)
+        run: |
+          if ! git diff --exit-code src/api/types.gen.ts; then
+            echo "::error::types.gen.ts отличается от того, что генерируется из docs/openapi.yaml — нужно прогнать `pnpm codegen` и закоммитить."
+            exit 1
+          fi
+
+      - name: ESLint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Tests
+        run: pnpm test --run

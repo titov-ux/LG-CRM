@@ -1,0 +1,16 @@
+# DNS-конфиг CRM-LG. Скопировать в terraform.tfvars и заполнить.
+# (terraform.tfvars под .gitignore — не коммитим)
+
+cloud_id  = "b1g6qe43fg33imfik8bs"
+folder_id = "b1gl1opj9lktq3k2vp0v"
+zone      = "ru-central1-a"
+
+# Корневой домен с точкой в конце (FQDN).
+domain = "lachevsky.ru."
+
+# IP staging-VM. Берётся из `tofu output public_ip` основного workspace 'staging'.
+staging_ip = "46.21.247.114"
+
+# IP prod-VM. Пока пусто — prod-recordset'ы создаваться не будут.
+# Когда поднимем prod-контур, обновим это значение и сделаем повторный apply.
+prod_ip = ""

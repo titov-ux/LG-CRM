@@ -1,0 +1,1145 @@
+{
+  "users": [
+    {
+      "id": "u1",
+      "email": "titov@lg-integration.ru",
+      "telegram": "@alexey_titov",
+      "fullName": "Алексей Титов",
+      "initials": "АТ",
+      "role": "admin",
+      "color": "#0f172a",
+      "isActive": true
+    },
+    {
+      "id": "u2",
+      "email": "sokolova@lg-integration.ru",
+      "telegram": "@maria_sokolova_lg",
+      "fullName": "Мария Соколова",
+      "initials": "МС",
+      "role": "account_manager",
+      "color": "#7c3aed",
+      "isActive": true
+    },
+    {
+      "id": "u3",
+      "email": "orlov@lg-integration.ru",
+      "telegram": "@dmitriy_orlov_lg",
+      "fullName": "Дмитрий Орлов",
+      "initials": "ДО",
+      "role": "account_manager",
+      "color": "#0891b2",
+      "isActive": true
+    },
+    {
+      "id": "u4",
+      "email": "kuznetsova@lg-integration.ru",
+      "telegram": "@anna_kuznetsova_hr",
+      "fullName": "Анна Кузнецова",
+      "initials": "АК",
+      "role": "recruiter",
+      "color": "#db2777",
+      "isActive": true
+    },
+    {
+      "id": "u5",
+      "email": "vasiliev@lg-integration.ru",
+      "telegram": "@igor_vasiliev_hr",
+      "fullName": "Игорь Васильев",
+      "initials": "ИВ",
+      "role": "recruiter",
+      "color": "#ea580c",
+      "isActive": true
+    },
+    {
+      "id": "u6",
+      "email": "morozova@lg-integration.ru",
+      "telegram": "@elena_morozova_hr",
+      "fullName": "Елена Морозова",
+      "initials": "ЕМ",
+      "role": "recruiter",
+      "color": "#16a34a",
+      "isActive": true
+    }
+  ],
+  "clients": [
+    {
+      "id": "c1",
+      "name": "X5 Retail Group",
+      "legalEntities": [
+        {
+          "id": "le-c1-1",
+          "name": "ПАО «Корпорация ИКС 5»",
+          "inn": "7728029110"
+        }
+      ],
+      "industry": "Ритейл",
+      "accountManagerId": "u2",
+      "status": "active",
+      "clientKind": "direct",
+      "telegramChat": "https://t.me/+X5RetailHR",
+      "vacanciesCount": 8,
+      "contactsCount": 3
+    },
+    {
+      "id": "c2",
+      "name": "Т1 Консалтинг",
+      "legalEntities": [
+        {
+          "id": "le-c2-1",
+          "name": "ООО «Т1 Консалтинг»",
+          "inn": "7730215257"
+        }
+      ],
+      "industry": "IT-консалтинг",
+      "accountManagerId": "u2",
+      "status": "active",
+      "clientKind": "intermediary",
+      "telegramChat": "@t1_consulting_chat",
+      "vacanciesCount": 12,
+      "contactsCount": 5
+    },
+    {
+      "id": "c3",
+      "name": "Газпром Нефть",
+      "legalEntities": [
+        {
+          "id": "le-c3-1",
+          "name": "ПАО «Газпром нефть»",
+          "inn": "5504036333"
+        }
+      ],
+      "industry": "Нефтегаз",
+      "accountManagerId": "u3",
+      "status": "active",
+      "clientKind": "direct",
+      "vacanciesCount": 6,
+      "contactsCount": 4
+    },
+    {
+      "id": "c4",
+      "name": "Московская Биржа",
+      "legalEntities": [
+        {
+          "id": "le-c4-1",
+          "name": "ПАО «Московская Биржа»",
+          "inn": "7702077840"
+        }
+      ],
+      "industry": "Финансы",
+      "accountManagerId": "u3",
+      "status": "in_progress",
+      "clientKind": "direct",
+      "vacanciesCount": 4,
+      "contactsCount": 2
+    },
+    {
+      "id": "c5",
+      "name": "Umbrella IT",
+      "legalEntities": [
+        {
+          "id": "le-c5-1",
+          "name": "ООО «Амбрелла АйТи»",
+          "inn": "7707083893"
+        }
+      ],
+      "industry": "IT",
+      "accountManagerId": "u2",
+      "status": "lead",
+      "clientKind": "intermediary",
+      "vacanciesCount": 2,
+      "contactsCount": 1
+    },
+    {
+      "id": "c6",
+      "name": "Альфа-Банк",
+      "legalEntities": [
+        {
+          "id": "le-c6-1",
+          "name": "АО «Альфа-Банк»",
+          "inn": "7728168971"
+        },
+        {
+          "id": "le-c6-2",
+          "name": "ООО «Альфа-Капитал»",
+          "inn": "7710048970"
+        }
+      ],
+      "industry": "Финансы",
+      "accountManagerId": "u3",
+      "status": "paused",
+      "clientKind": "direct",
+      "vacanciesCount": 0,
+      "contactsCount": 2
+    }
+  ],
+  "contacts": [
+    {
+      "id": "ct1",
+      "clientId": "c1",
+      "name": "Александр Петров",
+      "role": "CTO",
+      "email": "a.petrov@x5.ru",
+      "phone": "+7 (495) 555-01-01",
+      "telegram": "@apetrov",
+      "birthday": "1985-03-15"
+    },
+    {
+      "id": "ct2",
+      "clientId": "c1",
+      "name": "Ирина Смирнова",
+      "role": "HRD",
+      "email": "i.smirnova@x5.ru",
+      "phone": "+7 (495) 555-01-02",
+      "telegram": "@ismirnova",
+      "birthday": "1990-07-22"
+    },
+    {
+      "id": "ct3",
+      "clientId": "c1",
+      "name": "Михаил Иванов",
+      "role": "Project Manager",
+      "email": "m.ivanov@x5.ru",
+      "phone": "+7 (495) 555-01-03"
+    },
+    {
+      "id": "ct4",
+      "clientId": "c2",
+      "name": "Олег Захаров",
+      "role": "Delivery Director"
+    },
+    {
+      "id": "ct5",
+      "clientId": "c3",
+      "name": "Светлана Белова",
+      "role": "HR Lead"
+    }
+  ],
+  "vacancies": [
+    {
+      "id": "v1",
+      "title": "Senior Backend (Java)",
+      "clientId": "c1",
+      "engagementType": "outstaff",
+      "project": "Биллинг",
+      "grade": "Senior",
+      "stack": [
+        "Java",
+        "Spring",
+        "Kafka",
+        "PostgreSQL"
+      ],
+      "format": "Гибрид",
+      "rateClient": 4500,
+      "positions": 2,
+      "status": "in_work",
+      "priority": "high",
+      "accountManagerId": "u2",
+      "recruiterIds": [
+        "u4",
+        "u5"
+      ],
+      "daysInStatus": 5,
+      "candidatesCount": 0,
+      "deadline": "2026-06-15",
+      "description": "Разработка высоконагруженного биллинга для финтех-продукта. Сервис обрабатывает ~3 000 RPS, интегрируется с внешними платёжными шлюзами и системой антифрода. Команда: 6 backend, 2 QA, тимлид. Гибридный формат: 2 дня в офисе (Москва, м. Белорусская).",
+      "requirements": "Обязательно:\n— Опыт коммерческой разработки на Java от 5 лет\n— Spring Boot, Spring Cloud\n— Kafka, PostgreSQL (партиционирование, индексы)\n— Опыт построения распределённых систем\n\nЖелательно:\n— Опыт в финтехе или e-commerce\n— Знание Kubernetes, Helm\n— Английский на уровне чтения документации",
+      "kanbanOrder": 0
+    },
+    {
+      "id": "v2",
+      "title": "Senior Frontend (React)",
+      "clientId": "c1",
+      "engagementType": "outstaff",
+      "project": "Личный кабинет клиента",
+      "grade": "Senior",
+      "stack": [
+        "React",
+        "TypeScript",
+        "Redux"
+      ],
+      "format": "Удалённо",
+      "rateClient": 4200,
+      "positions": 1,
+      "status": "interview",
+      "priority": "urgent",
+      "accountManagerId": "u2",
+      "recruiterIds": [
+        "u4"
+      ],
+      "daysInStatus": 11,
+      "candidatesCount": 0,
+      "deadline": "2026-05-30",
+      "description": "Развитие личного кабинета клиента: миграция с устаревшего AngularJS на современный стек React + TypeScript. Проект на финальной стадии, нужен сильный фронтенд, который доведёт переезд до релиза и возьмёт на себя архитектурные решения.",
+      "requirements": "Обязательно:\n— React 18+, TypeScript (strict)\n— Опыт миграций крупных кодовых баз\n— Redux Toolkit / RTK Query\n— Покрытие тестами (Jest, RTL)\n\nЖелательно:\n— Опыт работы с Module Federation\n— Знакомство с Storybook\n— Понимание Web Vitals и оптимизации производительности",
+      "kanbanOrder": 0
+    },
+    {
+      "id": "v3",
+      "title": "DevOps Engineer",
+      "clientId": "c2",
+      "engagementType": "agency",
+      "project": "Облачная платформа",
+      "grade": "Middle",
+      "stack": [
+        "Kubernetes",
+        "Terraform",
+        "AWS"
+      ],
+      "format": "Удалённо",
+      "rateClient": 3800,
+      "positions": 1,
+      "status": "proposed",
+      "priority": "medium",
+      "accountManagerId": "u2",
+      "recruiterIds": [
+        "u5"
+      ],
+      "daysInStatus": 3,
+      "candidatesCount": 0,
+      "deadline": "2026-07-01",
+      "description": "Поддержка и развитие облачной инфраструктуры SaaS-платформы. ~40 микросервисов в EKS, IaC на Terraform, GitOps через ArgoCD. Нужно усилить команду платформы на 5 человек.",
+      "requirements": "Обязательно:\n— Kubernetes (управление кластерами, helm-чарты)\n— Terraform (модули, state management)\n— AWS (EKS, RDS, S3, IAM)\n— CI/CD: GitLab CI или GitHub Actions\n\nЖелательно:\n— ArgoCD / FluxCD\n— Prometheus + Grafana, ELK\n— Опыт построения SLO/SLA",
+      "kanbanOrder": 0
+    },
+    {
+      "id": "v4",
+      "title": "Lead Data Engineer",
+      "clientId": "c2",
+      "engagementType": "agency",
+      "grade": "Lead",
+      "stack": [
+        "Python",
+        "Spark",
+        "Airflow"
+      ],
+      "format": "Гибрид",
+      "rateClient": 5500,
+      "positions": 1,
+      "status": "new",
+      "priority": "medium",
+      "accountManagerId": "u2",
+      "recruiterIds": [
+        "u6"
+      ],
+      "daysInStatus": 2,
+      "candidatesCount": 0,
+      "deadline": "2026-08-01",
+      "description": "Создание дата-платформы с нуля: DWH на Snowflake, ETL на Airflow, потоковая обработка через Kafka + Spark Streaming. Лид соберёт команду из 4–6 инженеров и будет отвечать за архитектуру и roadmap на 12 месяцев.",
+      "requirements": "Обязательно:\n— Опыт построения DWH/Data Lake с нуля\n— Python, Spark (batch и streaming)\n— Airflow или аналоги (Dagster, Prefect)\n— Лидерский опыт от 2 лет (5+ человек)\n\nЖелательно:\n— Snowflake, dbt\n— Опыт построения data quality / data contracts\n— Английский Upper-Intermediate (есть международная команда)",
+      "kanbanOrder": 0
+    },
+    {
+      "id": "v5",
+      "title": "QA Automation",
+      "clientId": "c3",
+      "engagementType": "outstaff",
+      "grade": "Middle",
+      "stack": [
+        "Python",
+        "Selenium",
+        "Pytest"
+      ],
+      "format": "Офис",
+      "rateClient": 3200,
+      "positions": 2,
+      "status": "in_work",
+      "priority": "low",
+      "accountManagerId": "u3",
+      "recruiterIds": [
+        "u4"
+      ],
+      "daysInStatus": 15,
+      "candidatesCount": 0,
+      "deadline": "2026-06-30",
+      "description": "Автоматизация регрессионного тестирования веб-приложения e-grocery. Текущее покрытие — 35%, цель на полгода — 70%. Работа в офисе СПб, м. Чкаловская.",
+      "requirements": "Обязательно:\n— Python (Pytest), Selenium / Playwright\n— Опыт построения автотестов с нуля\n— Понимание REST API и инструменты (Postman, requests)\n— Git, CI/CD\n\nЖелательно:\n— Опыт нагрузочного тестирования (Locust, k6)\n— Allure, отчётность",
+      "kanbanOrder": 1
+    },
+    {
+      "id": "v6",
+      "title": "Senior iOS Developer",
+      "clientId": "c1",
+      "engagementType": "outstaff",
+      "project": "Mobile Banking",
+      "grade": "Senior",
+      "stack": [
+        "Swift",
+        "SwiftUI",
+        "Combine"
+      ],
+      "format": "Гибрид",
+      "rateClient": 4800,
+      "positions": 1,
+      "status": "interview",
+      "priority": "high",
+      "accountManagerId": "u2",
+      "recruiterIds": [
+        "u6"
+      ],
+      "daysInStatus": 4,
+      "candidatesCount": 0,
+      "deadline": "2026-05-25",
+      "description": "Разработка iOS-приложения для премиум-сегмента (банкинг). Команда: 3 iOS, 4 Android, общий продакшен. Релизы раз в 2 недели, app store rating 4.8.",
+      "requirements": "Обязательно:\n— Swift, SwiftUI, Combine\n— Опыт публикации приложений в App Store\n— Понимание архитектур MVVM / TCA\n— Знание тонкостей безопасности iOS\n\nЖелательно:\n— Опыт работы с биометрией и Secure Enclave\n— Знание Objective-C для поддержки legacy-модулей",
+      "kanbanOrder": 1
+    },
+    {
+      "id": "v7",
+      "title": "Middle Backend (Go)",
+      "clientId": "c4",
+      "engagementType": "agency",
+      "grade": "Middle",
+      "stack": [
+        "Go",
+        "gRPC",
+        "PostgreSQL"
+      ],
+      "format": "Офис",
+      "rateClient": 3900,
+      "positions": 3,
+      "status": "new",
+      "priority": "medium",
+      "accountManagerId": "u3",
+      "recruiterIds": [],
+      "daysInStatus": 1,
+      "candidatesCount": 0,
+      "deadline": "2026-07-15",
+      "description": "Расширение команды бэкенда логистической платформы. Разработка новых микросервисов, оптимизация существующих, работа с большими объёмами данных в реальном времени.",
+      "requirements": "Обязательно:\n— Go от 2 лет коммерческой разработки\n— gRPC, Protobuf\n— PostgreSQL: написание сложных запросов, оптимизация\n— Docker, базовое понимание Kubernetes\n\nЖелательно:\n— Опыт работы с очередями (Kafka, NATS)\n— Знакомство с DDD / Clean Architecture",
+      "kanbanOrder": 1
+    },
+    {
+      "id": "v8",
+      "title": "ML Engineer",
+      "clientId": "c3",
+      "engagementType": "outstaff",
+      "project": "Рекомендательная система",
+      "grade": "Senior",
+      "stack": [
+        "Python",
+        "PyTorch",
+        "MLOps"
+      ],
+      "format": "Удалённо",
+      "rateClient": 5200,
+      "positions": 1,
+      "status": "in_work",
+      "priority": "high",
+      "accountManagerId": "u3",
+      "recruiterIds": [
+        "u5",
+        "u6"
+      ],
+      "daysInStatus": 8,
+      "candidatesCount": 0,
+      "deadline": "2026-06-20",
+      "description": "Развитие рекомендательной системы для e-commerce: коллаборативная фильтрация + контентная модель. Нужно довести MVP до прод-нагрузки и наладить регулярное переобучение.",
+      "requirements": "Обязательно:\n— Python, PyTorch / TensorFlow\n— Опыт MLOps: MLflow, DVC, feature store\n— Production-опыт развёртывания моделей\n— Знание классических алгоритмов рекомендательных систем\n\nЖелательно:\n— Опыт работы с векторными БД (Pinecone, Milvus)\n— A/B-тестирование моделей\n— Публикации или участие в Kaggle (top-tier)",
+      "kanbanOrder": 2
+    },
+    {
+      "id": "v9",
+      "title": "Senior SRE",
+      "clientId": "c2",
+      "engagementType": "agency",
+      "grade": "Senior",
+      "stack": [
+        "Kubernetes",
+        "Prometheus",
+        "Go"
+      ],
+      "format": "Удалённо",
+      "rateClient": 5000,
+      "positions": 1,
+      "status": "closed_success",
+      "priority": "medium",
+      "accountManagerId": "u2",
+      "recruiterIds": [
+        "u5"
+      ],
+      "daysInStatus": 22,
+      "candidatesCount": 0,
+      "deadline": "2026-05-10",
+      "description": "Усиление SRE-команды: настройка observability, инциденты, оптимизация инфраструктуры. Дежурства 1 неделя в месяц с компенсацией.",
+      "requirements": "Обязательно:\n— Kubernetes (опыт эксплуатации в продакшене)\n— Prometheus, Grafana, Loki\n— Go (написание операторов и тулинга)\n— Опыт incident response и postmortem-культуры\n\nЖелательно:\n— Service mesh (Istio, Linkerd)\n— Knative или serverless-платформы",
+      "kanbanOrder": 0
+    },
+    {
+      "id": "v10",
+      "title": "Product Analyst",
+      "clientId": "c4",
+      "engagementType": "outstaff",
+      "grade": "Middle",
+      "stack": [
+        "SQL",
+        "Python",
+        "Tableau"
+      ],
+      "format": "Гибрид",
+      "rateClient": 3400,
+      "positions": 1,
+      "status": "paused",
+      "priority": "low",
+      "accountManagerId": "u3",
+      "recruiterIds": [
+        "u4"
+      ],
+      "daysInStatus": 6,
+      "candidatesCount": 0,
+      "deadline": null,
+      "description": "Поддержка продуктовой команды маркетплейса аналитикой: продуктовые метрики, когортный анализ, ad-hoc отчёты, гипотезы для A/B. Вакансия на паузе до утверждения бюджета Q3.",
+      "requirements": "Обязательно:\n— Уверенный SQL (window functions, оптимизация)\n— Python для анализа (pandas, numpy)\n— Опыт визуализации (Tableau, Metabase или Superset)\n— Понимание продуктовых метрик (retention, LTV, funnel)\n\nЖелательно:\n— Опыт работы с системами продуктовой аналитики (Amplitude, Mixpanel)\n— Базовая статистика, A/B-тестирование",
+      "kanbanOrder": 0
+    }
+  ],
+  "candidates": [
+    {
+      "id": "k1",
+      "fullName": "Иван Петров",
+      "role": "Senior Java Developer",
+      "engagementType": "outstaff",
+      "grade": "Senior",
+      "experienceYears": 7,
+      "stack": [
+        "Java",
+        "Spring",
+        "Kafka",
+        "PostgreSQL",
+        "Docker"
+      ],
+      "rateMonth": 480000,
+      "employmentType": "ИП",
+      "format": "Гибрид",
+      "location": "Москва",
+      "recruiterId": "u4",
+      "status": "presented",
+      "daysInStatus": 3,
+      "vacancyIds": [
+        "v1"
+      ],
+      "telegram": "@ivan_petrov",
+      "phone": "+7 (916) 555-12-23",
+      "kanbanOrder": 0
+    },
+    {
+      "id": "k2",
+      "fullName": "Алина Смирнова",
+      "role": "Senior React Developer",
+      "engagementType": "outstaff",
+      "grade": "Senior",
+      "experienceYears": 6,
+      "stack": [
+        "React",
+        "TypeScript",
+        "Next.js"
+      ],
+      "rateMonth": 460000,
+      "employmentType": "СМЗ",
+      "format": "Удалённо",
+      "location": "СПб",
+      "recruiterId": "u4",
+      "status": "presented",
+      "daysInStatus": 9,
+      "vacancyIds": [
+        "v2"
+      ],
+      "kanbanOrder": 1
+    },
+    {
+      "id": "k3",
+      "fullName": "Сергей Николаев",
+      "role": "DevOps Engineer",
+      "engagementType": "agency",
+      "grade": "Middle",
+      "experienceYears": 4,
+      "stack": [
+        "Kubernetes",
+        "AWS",
+        "Terraform"
+      ],
+      "rateMonth": 400000,
+      "employmentType": "ИП",
+      "format": "Удалённо",
+      "location": "Екатеринбург",
+      "recruiterId": "u5",
+      "status": "recruiter_iv",
+      "daysInStatus": 2,
+      "vacancyIds": [
+        "v3"
+      ],
+      "kanbanOrder": 0
+    },
+    {
+      "id": "k4",
+      "fullName": "Мария Иванова",
+      "role": "Lead Data Engineer",
+      "engagementType": "agency",
+      "grade": "Lead",
+      "experienceYears": 10,
+      "stack": [
+        "Python",
+        "Spark",
+        "Airflow",
+        "AWS"
+      ],
+      "rateMonth": 620000,
+      "employmentType": "ИП",
+      "format": "Гибрид",
+      "location": "Москва",
+      "recruiterId": "u6",
+      "status": "ready",
+      "daysInStatus": 1,
+      "vacancyIds": [],
+      "kanbanOrder": 0
+    },
+    {
+      "id": "k5",
+      "fullName": "Дмитрий Козлов",
+      "role": "QA Automation Engineer",
+      "engagementType": "outstaff",
+      "grade": "Middle",
+      "experienceYears": 5,
+      "stack": [
+        "Python",
+        "Selenium",
+        "Pytest",
+        "Postman"
+      ],
+      "rateMonth": 370000,
+      "employmentType": "ТК РФ",
+      "format": "Офис",
+      "location": "Москва",
+      "recruiterId": "u4",
+      "status": "presented",
+      "daysInStatus": 6,
+      "vacancyIds": [
+        "v5"
+      ],
+      "kanbanOrder": 2
+    },
+    {
+      "id": "k6",
+      "fullName": "Ольга Лебедева",
+      "role": "Senior iOS Developer",
+      "engagementType": "outstaff",
+      "grade": "Senior",
+      "experienceYears": 8,
+      "stack": [
+        "Swift",
+        "SwiftUI",
+        "Combine",
+        "Objective-C"
+      ],
+      "rateMonth": 530000,
+      "employmentType": "ИП",
+      "format": "Гибрид",
+      "location": "Москва",
+      "recruiterId": "u6",
+      "status": "offer",
+      "daysInStatus": 4,
+      "vacancyIds": [
+        "v6"
+      ],
+      "kanbanOrder": 0
+    },
+    {
+      "id": "k7",
+      "fullName": "Андрей Соколов",
+      "role": "Backend Developer (Go)",
+      "engagementType": "agency",
+      "grade": "Middle",
+      "experienceYears": 4,
+      "stack": [
+        "Go",
+        "gRPC",
+        "PostgreSQL"
+      ],
+      "rateMonth": 430000,
+      "employmentType": "СМЗ",
+      "format": "Офис",
+      "location": "Москва",
+      "recruiterId": "u4",
+      "status": "new",
+      "daysInStatus": 1,
+      "vacancyIds": [],
+      "kanbanOrder": 0
+    },
+    {
+      "id": "k8",
+      "fullName": "Наталья Волкова",
+      "role": "ML Engineer",
+      "engagementType": "outstaff",
+      "grade": "Senior",
+      "experienceYears": 6,
+      "stack": [
+        "Python",
+        "PyTorch",
+        "MLOps",
+        "Kubernetes"
+      ],
+      "rateMonth": 560000,
+      "employmentType": "ИП",
+      "format": "Удалённо",
+      "location": "СПб",
+      "recruiterId": "u5",
+      "status": "presented",
+      "daysInStatus": 11,
+      "vacancyIds": [
+        "v8"
+      ],
+      "kanbanOrder": 3
+    },
+    {
+      "id": "k9",
+      "fullName": "Михаил Зайцев",
+      "role": "SRE Engineer",
+      "engagementType": "agency",
+      "grade": "Senior",
+      "experienceYears": 7,
+      "stack": [
+        "Kubernetes",
+        "Prometheus",
+        "Go",
+        "Terraform"
+      ],
+      "rateMonth": 560000,
+      "employmentType": "ИП",
+      "format": "Удалённо",
+      "location": "Казань",
+      "recruiterId": "u5",
+      "status": "hired",
+      "daysInStatus": 18,
+      "vacancyIds": [
+        "v9"
+      ],
+      "kanbanOrder": 0
+    },
+    {
+      "id": "k10",
+      "fullName": "Екатерина Беляева",
+      "role": "Product Analyst",
+      "engagementType": "outstaff",
+      "grade": "Middle",
+      "experienceYears": 4,
+      "stack": [
+        "SQL",
+        "Python",
+        "Tableau",
+        "PowerBI"
+      ],
+      "rateMonth": 380000,
+      "employmentType": "ТК РФ",
+      "format": "Гибрид",
+      "location": "Москва",
+      "recruiterId": "u4",
+      "status": "recruiter_iv",
+      "daysInStatus": 5,
+      "vacancyIds": [],
+      "kanbanOrder": 1
+    },
+    {
+      "id": "k11",
+      "fullName": "Павел Морозов",
+      "role": "Senior Backend (Java)",
+      "engagementType": "outstaff",
+      "grade": "Senior",
+      "experienceYears": 9,
+      "stack": [
+        "Java",
+        "Spring",
+        "Kafka"
+      ],
+      "rateMonth": 500000,
+      "employmentType": "ИП",
+      "format": "Гибрид",
+      "location": "Москва",
+      "recruiterId": "u5",
+      "status": "presented",
+      "daysInStatus": 2,
+      "vacancyIds": [
+        "v1"
+      ],
+      "kanbanOrder": 4
+    },
+    {
+      "id": "k12",
+      "fullName": "Юлия Тарасова",
+      "role": "ML Engineer",
+      "engagementType": "agency",
+      "grade": "Senior",
+      "experienceYears": 5,
+      "stack": [
+        "Python",
+        "PyTorch",
+        "TensorFlow"
+      ],
+      "rateMonth": 540000,
+      "employmentType": "СМЗ",
+      "format": "Удалённо",
+      "location": "СПб",
+      "recruiterId": "u6",
+      "status": "reserve",
+      "daysInStatus": 30,
+      "vacancyIds": [],
+      "kanbanOrder": 0
+    },
+    {
+      "id": "k13",
+      "fullName": "Михаил Геннадьевич Жуйков",
+      "role": "Консультант СЭД ST2",
+      "engagementType": "outstaff",
+      "grade": "Senior",
+      "experienceYears": 14,
+      "stack": [
+        "SharePoint",
+        "OpenText Content Server",
+        "C#",
+        "JavaScript",
+        "PowerShell",
+        "Jira",
+        "Confluence"
+      ],
+      "rateMonth": 420000,
+      "employmentType": "ИП",
+      "format": "Гибрид",
+      "location": "Москва",
+      "recruiterId": "u4",
+      "status": "ready",
+      "daysInStatus": 2,
+      "vacancyIds": [],
+      "birthday": "1981-06-16",
+      "summary": "14 лет работы с платформами SharePoint и СЭД: от установки и миграции до разработки и администрирования. Полный цикл: WSS 3.0 - Subscription Edition, Project Server, Confluence, Jira, OpenText Content Server. Разработка на C#, JavaScript, ASP.NET, создание workflow, PowerShell-автоматизация. Прошёл обучение по OpenText Content Server 25.3 и Directory Services.",
+      "skillCategories": [
+        {
+          "id": "sc-lang",
+          "name": "Языки программирования",
+          "items": [
+            "C#",
+            "JavaScript",
+            "Groovy",
+            "PowerShell",
+            "OScript",
+            "SQL"
+          ]
+        },
+        {
+          "id": "sc-tech",
+          "name": "Технологии",
+          "items": [
+            "MS SharePoint (2010/2013/2016/2019/SE)",
+            "MS Project Server (2010/2013/2016)",
+            "OpenText Content Server 25.3",
+            "OpenText Directory Services",
+            "Atlassian Confluence",
+            "Atlassian Jira",
+            "ASP.NET",
+            "HTML5",
+            "CSS3",
+            "XML",
+            "JSON",
+            "XSL/XSLT",
+            "CAML",
+            "REST",
+            "SOAP",
+            "AJAX",
+            "Bootstrap",
+            "jQuery",
+            "SPServices",
+            "CSOM",
+            "JSOM",
+            "CSR",
+            "JSLink",
+            "InfoPath",
+            "IIS",
+            "PWA"
+          ]
+        },
+        {
+          "id": "sc-admin",
+          "name": "Администрирование",
+          "items": [
+            "SharePoint Server",
+            "Project Server",
+            "Jira",
+            "Confluence",
+            "Active Directory",
+            "IIS",
+            "Windows Server 2012",
+            "oVirt",
+            "ProxMox",
+            "Backup Exec (Symantec/Veritas)"
+          ]
+        },
+        {
+          "id": "sc-devops",
+          "name": "DevOps и автоматизация",
+          "items": [
+            "PowerShell",
+            "Visual Studio (WSP)",
+            "SharePoint Designer",
+            "Eclipse IDE",
+            "CSIDE",
+            "Timer Job",
+            "Event Receiver",
+            "Custom Action",
+            "Visual Web Part",
+            "SSIS",
+            "REST API",
+            "TFS",
+            "Git"
+          ]
+        },
+        {
+          "id": "sc-extra",
+          "name": "Дополнительно",
+          "items": [
+            "СЭД",
+            "системная интеграция",
+            "миграция SharePoint/Project Server",
+            "разработка ТЗ и инструкций"
+          ]
+        }
+      ],
+      "experience": [
+        {
+          "id": "exp-fintech",
+          "company": "АО Финтех",
+          "position": "Ведущий инженер-разработчик SharePoint/Jira/Confluence",
+          "startMonth": "2025-07",
+          "endMonth": "2026-02",
+          "project": "Инфраструктура АО Финтех: серверы Confluence и Jira на 500+ пользователей, SharePoint-ферма (2010-SE), интеграция с Active Directory.",
+          "achievements": [
+            "Администрирование Confluence и Jira: обновление версий, установка плагинов, миграция пространств",
+            "Интеграция Confluence и Jira с Active Directory",
+            "Groovy (Eclipse IDE): скрипты для Jira",
+            "Миграция SharePoint Server и Project Server (2010, 2013, 2016)",
+            "СЭД на SharePoint: 20+ проектов, 500+ пользователей",
+            "C#, JavaScript, jQuery, HTML5, CSS3: веб-формы, веб-части, бизнес-аналитика",
+            "Восстановление SharePoint 2013 (Backup Exec 15) и 2016 (Veritas Backup Exec 20.3)",
+            "PowerShell-скрипты для автоматизации администрирования"
+          ],
+          "stack": [
+            "Confluence",
+            "Jira",
+            "SharePoint Server 2010/2013/2016/2019/SE",
+            "Project Server 2010/2013/2016",
+            "Active Directory",
+            "Groovy",
+            "C#",
+            "JavaScript",
+            "jQuery",
+            "HTML5",
+            "CSS3",
+            "Bootstrap",
+            "REST API",
+            "SharePoint Designer",
+            "Visual Studio (WSP)",
+            "PowerShell",
+            "IIS",
+            "Symantec Backup Exec 15",
+            "Veritas Backup Exec 20.3",
+            "PWA"
+          ]
+        },
+        {
+          "id": "exp-terralink",
+          "company": "Terralink Technologies LLC",
+          "position": "SharePoint Developer / OpenText Developer",
+          "startMonth": "2017-05",
+          "endMonth": "2025-07",
+          "project": "Разработка СЭД на базе SharePoint SE: 5 проектов, 2000+ пользователей. Обучение и работа с OpenText Content Server 25.3.",
+          "achievements": [
+            "Разработка СЭД на SharePoint SE: 5 проектов, 2000+ пользователей",
+            "Visual Studio 2022 (WSP): Custom Action, Event Receiver, Timer Job, Visual Web Part",
+            "C#, JavaScript, jQuery, HTML5, CSS3: веб-формы и веб-части для СЭД",
+            "Полный курс OpenText Content Server 25.3 и Directory Services: OScript, CSIDE, Eclipse IDE",
+            "Самостоятельная установка OpenText Directory Services и Content Server 25.3",
+            "Workflow в OpenText: создание с нуля, модули на OScript, публикация на сервере",
+            "PowerShell-скрипты: автоматизация администрирования и IIS",
+            "Разработка проектной и пользовательской документации"
+          ],
+          "stack": [
+            "C#",
+            "JavaScript",
+            "jQuery",
+            "HTML5",
+            "CSS3",
+            "Bootstrap",
+            "REST API",
+            "SharePoint Designer",
+            "Visual Studio 2022 (WSP)",
+            "Custom Action",
+            "Event Receiver",
+            "Timer Job",
+            "Visual Web Part",
+            "PowerShell",
+            "IIS",
+            "OpenText Directory Services",
+            "OpenText Content Server 25.3",
+            "OScript",
+            "CSIDE",
+            "Eclipse IDE"
+          ]
+        },
+        {
+          "id": "exp-xerox",
+          "company": "Xerox",
+          "position": "Разработчик SharePoint",
+          "startMonth": "2012-03",
+          "endMonth": "2017-05",
+          "project": "Установка, настройка и администрирование SharePoint Server и Project Server (2010, 2013). СЭД для 1100+ пользователей.",
+          "achievements": [
+            "Миграция SharePoint и Project Server (WSS 3.0, 2007, 2010, 2013)",
+            "СЭД на SharePoint: 30+ проектов, 1100+ пользователей",
+            "JavaScript, jQuery, HTML5, CSS3, Bootstrap, AJAX: веб-формы и бизнес-аналитика",
+            "SAP + SharePoint 2010/2013: интеграция через Active Directory и SSIS (MS SQL 2008 R2)",
+            "SOAP/REST, CAML, SPServices: работа с веб-сервисами",
+            "PowerShell-скрипты для автоматизации",
+            "Администрирование IIS и Project Server 2010/2013",
+            "Восстановление SharePoint 2010: Symantec Backup Exec 12.5"
+          ],
+          "stack": [
+            "MS SharePoint Server (WSS 3.0, 2007, 2010, 2013)",
+            "MS Project Server (2010, 2013)",
+            "JavaScript",
+            "jQuery",
+            "HTML5",
+            "CSS3",
+            "Bootstrap",
+            "AJAX",
+            "REST API",
+            "JSON",
+            "XML",
+            "XSL/XSLT",
+            "InfoPath",
+            "SharePoint Designer",
+            "SOAP",
+            "REST",
+            "CAML",
+            "SPServices",
+            "SAP",
+            "Active Directory",
+            "MS SQL Server 2008 R2",
+            "SSIS",
+            "PowerShell",
+            "IIS",
+            "Symantec Backup Exec 12.5"
+          ]
+        }
+      ],
+      "education": [
+        {
+          "id": "edu-mephi",
+          "degree": "Магистр",
+          "institution": "Национальный исследовательский ядерный университет «МИФИ»",
+          "city": "Москва",
+          "graduationYear": 2016,
+          "specialty": "Автоматики и электроники, Ядерные физика и технологии"
+        }
+      ],
+      "certifications": [
+        {
+          "id": "cert-opentext",
+          "title": "Консультант/администратор и разработчик OpenText Content Server 25.3 и Directory Services",
+          "issuer": "Terralink Technologies",
+          "period": "2017-2025"
+        }
+      ],
+      "languages": [
+        {
+          "language": "Русский",
+          "level": "родной"
+        },
+        {
+          "language": "Английский",
+          "level": "B2"
+        }
+      ],
+      "kanbanOrder": 1
+    }
+  ],
+  "comments": [
+    {
+      "id": "cm1",
+      "entityType": "candidate",
+      "entityId": "k1",
+      "authorId": "u4",
+      "parentId": null,
+      "text": "Хороший кандидат, прошёл техничку. @u2, можем презентовать клиенту?",
+      "mentions": [
+        "u2"
+      ],
+      "createdAt": "2026-05-19T11:12:00Z",
+      "updatedAt": null
+    },
+    {
+      "id": "cm2",
+      "entityType": "candidate",
+      "entityId": "k1",
+      "authorId": "u2",
+      "parentId": "cm1",
+      "text": "Да, согласовано. Готовь презентацию сегодня к 18:00.",
+      "mentions": [],
+      "createdAt": "2026-05-19T11:24:00Z",
+      "updatedAt": null
+    },
+    {
+      "id": "cm3",
+      "entityType": "vacancy",
+      "entityId": "v2",
+      "authorId": "u4",
+      "parentId": null,
+      "text": "@u1 подтверди, пожалуйста, формат: гибрид или офис у клиента?",
+      "mentions": [
+        "u1"
+      ],
+      "createdAt": "2026-05-18T14:08:00Z",
+      "updatedAt": null
+    },
+    {
+      "id": "cm4",
+      "entityType": "client",
+      "entityId": "c1",
+      "authorId": "u2",
+      "parentId": null,
+      "text": "Готовы расширять команду в Q3. Приоритет — backend и DevOps. @u3, держи в фокусе.",
+      "mentions": [
+        "u3"
+      ],
+      "createdAt": "2026-05-18T14:20:00Z",
+      "updatedAt": null
+    }
+  ],
+  "notifications": [
+    {
+      "id": "n1",
+      "userId": "u1",
+      "kind": "mention",
+      "text": "Анна Кузнецова упомянула вас в комментарии к вакансии Senior Frontend (React)",
+      "entityType": "vacancy",
+      "entityId": "v2",
+      "read": false,
+      "createdAt": "2026-05-19T08:42:00Z"
+    },
+    {
+      "id": "n2",
+      "userId": "u1",
+      "kind": "status_change",
+      "text": "Кандидат Алина Смирнова переведён в статус «На интервью у клиента»",
+      "entityType": "candidate",
+      "entityId": "k2",
+      "read": false,
+      "createdAt": "2026-05-19T07:21:00Z"
+    },
+    {
+      "id": "n3",
+      "userId": "u1",
+      "kind": "system",
+      "text": "Сегодня заканчивается deadline по вакансии Senior Frontend (React)",
+      "entityType": "vacancy",
+      "entityId": "v2",
+      "read": false,
+      "createdAt": "2026-05-19T06:00:00Z"
+    }
+  ]
+}

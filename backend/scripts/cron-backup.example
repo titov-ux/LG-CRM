@@ -1,0 +1,5 @@
+# /etc/cron.d/crm-lg-backup
+# Ежедневный бэкап БД в Yandex Object Storage в 03:15 UTC.
+# Файл .env.prod — с секретами; cron подхватывает их через `env -i + . .env.prod`.
+
+15 3 * * * root cd /opt/crm-lg && set -a && . .env.prod && set +a && /usr/bin/env bash backend/scripts/backup_db.sh >> /var/log/crm-lg-backup.log 2>&1

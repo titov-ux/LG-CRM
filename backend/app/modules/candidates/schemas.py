@@ -1,0 +1,170 @@
+"""DTO модуля candidates.
+
+Резюме-поля (`skillCategories`/`experience`/`education`/`certifications`/`languages`)
+живут в БД одной JSONB-колонкой `resume`, но фронту отдаются как плоские
+поля верхнего уровня — этого ждёт `frontend/src/api/types.ts:Candidate`.
+
+Сборка/разборка между БД и DTO — в сервисе.
+"""
+from __future__ import annotations
+
+import uuid
+from datetime import date, datetime
+from typing import Literal
+
+from pydantic import EmailStr, Field
+
+from app.core.schemas import CamelModel
+from app.modules.candidates.models import CandidateStatus, EmploymentType
+from app.modules.vacancies.models import EngagementType, Grade, WorkFormat
+
+
+# ─── Резюме-блоки (зеркала фронтовых типов) ───
+class SkillCategory(CamelModel):
+    id: str
+    name: str
+    items: list[str] = Field(default_factory=list)
+
+
+class CandidateExperience(CamelModel):
+    id: str
+    company: str
+    position: str
+    start_month: str  # YYYY-MM
+    end_month: str | None = None
+    project: str | None = None
+    achievements: list[str] = Field(default_factory=list)
+    stack: list[str] = Field(default_factory=list)
+
+
+class CandidateEducation(CamelModel):
+    id: str
+    degree: str
+    institution: str
+    city: str | None = None
+    graduation_year: int
+    specialty: str | None = None
+
+
+class CandidateCertification(CamelModel):
+    id: str
+    title: str
+    issuer: str
+    period: str | None = None
+
+
+LanguageLevel = Literal["A1", "A2", "B1", "B2", "C1", "C2", "родной"]
+
+
+class CandidateLanguage(CamelModel):
+    language: str
+    level: LanguageLevel
+
+
+# ─── Candidate DTO ───
+class CandidateResponse(CamelModel):
+    id: uuid.UUID
+    full_name: str
+    role: str
+    engagement_type: EngagementType
+    grade: Grade
+    experience_years: float
+    stack: list[str] = Field(default_factory=list)
+    rate_month: float | None = None
+    employment_type: EmploymentType
+    format: WorkFormat
+    location: str
+    recruiter_id: uuid.UUID
+    status: CandidateStatus
+    days_in_status: int
+    vacancy_ids: list[uuid.UUID] = Field(default_factory=list)
+    telegram: str | None = None
+    phone: str | None = None
+    email: EmailStr | None = None
+    birthday: date | None = None
+    kanban_order: int = 0
+    summary: str | None = None
+    skill_categories: list[SkillCategory] | None = None
+    experience: list[CandidateExperience] | None = None
+    education: list[CandidateEducation] | None = None
+    certifications: list[CandidateCertification] | None = None
+    languages: list[CandidateLanguage] | None = None
+    archived: bool = False
+    archived_at: datetime | None = None
+    archived_by_id: uuid.UUID | None = None
+    archive_reason: str | None = None
+
+
+class CreateCandidateRequest(CamelModel):
+    full_name: str = Field(min_length=1)
+    role: str = ""
+    engagement_type: EngagementType = EngagementType.outstaff
+    grade: Grade = Grade.middle
+    experience_years: float = 0
+    stack: list[str] = Field(default_factory=list)
+    rate_month: float | None = None
+    employment_type: EmploymentType = EmploymentType.smz
+    format: WorkFormat = WorkFormat.hybrid
+    location: str = ""
+    recruiter_id: uuid.UUID
+    status: CandidateStatus = CandidateStatus.new
+    telegram: str | None = None
+    phone: str | None = None
+    email: EmailStr | None = None
+    birthday: date | None = None
+    summary: str | None = None
+    skill_categories: list[SkillCategory] | None = None
+    experience: list[CandidateExperience] | None = None
+    education: list[CandidateEducation] | None = None
+    certifications: list[CandidateCertification] | None = None
+    languages: list[CandidateLanguage] | None = None
+
+
+class UpdateCandidateRequest(CamelModel):
+    full_name: str | None = None
+    role: str | None = None
+    engagement_type: EngagementType | None = None
+    grade: Grade | None = None
+    experience_years: float | None = None
+    stack: list[str] | None = None
+    rate_month: float | None = None
+    employment_type: EmploymentType | None = None
+    format: WorkFormat | None = None
+    location: str | None = None
+    recruiter_id: uuid.UUID | None = None
+    telegram: str | None = None
+    phone: str | None = None
+    email: EmailStr | None = None
+    birthday: date | None = None
+    summary: str | None = None
+    skill_categories: list[SkillCategory] | None = None
+    experience: list[CandidateExperience] | None = None
+    education: list[CandidateEducation] | None = None
+    certifications: list[CandidateCertification] | None = None
+    languages: list[CandidateLanguage] | None = None
+
+
+class ChangeCandidateStatusRequest(CamelModel):
+    status: CandidateStatus
+    comment: str | None = None
+
+
+class CandidateKanbanUpdate(CamelModel):
+    id: uuid.UUID
+    status: CandidateStatus
+    kanban_order: int
+
+
+class CandidateKanbanOrderRequest(CamelModel):
+    updates: list[CandidateKanbanUpdate]
+
+
+class ArchiveRequest(CamelModel):
+    reason: str | None = None
+
+
+class CandidatePage(CamelModel):
+    items: list[CandidateResponse]
+    total: int
+    page: int
+    page_size: int

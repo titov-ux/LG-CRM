@@ -1,0 +1,26 @@
+# Шаблон переменных для prod-контура.
+# Скопировать в prod.tfvars и заполнить (prod.tfvars в .gitignore — не коммитим).
+#
+# Применяется после: tofu workspace select prod
+#   tofu plan -var-file=prod.tfvars
+#   tofu apply -var-file=prod.tfvars
+
+cloud_id  = "b1g6qe43fg33imfik8bs"
+folder_id = "b1gl1opj9lktq3k2vp0v"
+zone      = "ru-central1-a"
+vm_name   = "crm-lg-prod"
+
+# Prod крупнее: 4 vCPU / 8 GB / 100 GB SSD. Подкрути под реальную нагрузку.
+vm_cores     = 4
+vm_memory_gb = 8
+vm_disk_gb   = 100
+
+# Тот же публичный SSH-ключ, что в staging.
+ssh_public_key = "ssh-ed25519 AAAA... titovalexeys@gmail.com"
+
+# Глобально уникальные имена бакетов. Обязательно отличаются от staging.
+files_bucket   = "crm-lg-prod-files"
+backups_bucket = "crm-lg-prod-backups"
+
+# Боевой домен.
+domain = "crm.lg.ru"

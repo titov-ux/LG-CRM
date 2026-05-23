@@ -1,0 +1,53 @@
+# ── Секреты и локальные env ──
+.env
+.env.*
+!.env.*.example
+!.env.example
+
+# ── Terraform ──
+infra/terraform/**/.terraform/
+infra/terraform/**/.terraform.lock.hcl
+infra/terraform/**/*.tfstate
+infra/terraform/**/*.tfstate.*
+infra/terraform/**/*.tfplan
+infra/terraform/**/*.tfvars
+# Шаблоны (без секретов) — оставляем в репо
+!infra/terraform/**/*.tfvars.example
+
+# ── TLS-сертификаты (выпускаются на VM) ──
+infra/certs/
+infra/nginx.conf
+
+# ── Python / FastAPI ──
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+backend/.pytest_cache/
+backend/pytest-cache-files-*/
+backend/.mypy_cache/
+backend/.ruff_cache/
+backend/htmlcov/
+backend/.coverage
+backend/coverage.xml
+
+# ── Node / pnpm / Vite ──
+node_modules/
+frontend/dist/
+frontend/.vite/
+.pnpm-store/
+.pnpm-debug.log*
+npm-debug.log*
+yarn-debug.log*
+
+# ── IDE / OS ──
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ── Прочие временные ──
+_tmp_*
+*.log

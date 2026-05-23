@@ -1,0 +1,1804 @@
+openapi: 3.1.0
+info:
+  title: CRM ЛГ Интеграция API
+  version: 0.1.0
+  description: |
+    Контракт REST API CRM-системы «ЛГ Интеграция».
+
+    Источник истины формируется в две стороны: код фронта (`frontend/src/api/*.ts`
+    и `frontend/src/mocks/handlers.ts`) → OpenAPI → код бэкенда (FastAPI).
+
+    Все мутирующие эндпоинты возвращают актуальное состояние ресурса (либо
+    `{ ok: true }` для удалений). Чувствительные поля кандидатов (`email`,
+    `phone`, `rateMonth`) фильтруются на сервере в зависимости от роли —
+    клиент получит `null` или `"—"` вместо значения.
+  contact:
+    name: ЛГ Интеграция
+    email: ops@lg.ru
+
+servers:
+  - url: /api/v1
+    description: Боевой API (через nginx reverse proxy)
+  - url: http://localhost:8000/api/v1
+    description: Локальная разработка
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: auth
+  - name: users
+  - name: clients
+  - name: contacts
+  - name: vacancies
+  - name: candidates
+  - name: matching
+  - name: comments
+  - name: notifications
+  - name: audit
+  - name: analytics
+  - name: permissions
+  - name: files
+
+paths:
+  # ─────────────── AUTH ───────────────
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: Войти по email/паролю
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Успешный вход. Refresh-токен ставится в httpOnly cookie.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenResponse' }
+        '401':
+          description: Неверный email/пароль (code=invalid_credentials)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '403':
+          description: |
+            Аккаунт временно заблокирован после неудачных попыток (code=account_locked)
+            или деактивирован (code=user_inactive)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /auth/refresh:
+    post:
+      tags: [auth]
+      summary: Обновить access-токен по refresh-cookie
+      security: []
+      responses:
+        '200':
+          description: Новый access-токен.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [accessToken]
+                properties:
+                  accessToken: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /auth/logout:
+    post:
+      tags: [auth]
+      summary: Выйти (отозвать refresh-токен)
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+  /auth/me:
+    get:
+      tags: [auth]
+      summary: Профиль текущего пользователя
+      responses:
+        '200':
+          description: User
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  # ─────────────── USERS ───────────────
+  /users:
+    get:
+      tags: [users]
+      summary: Список пользователей
+      responses:
+        '200':
+          description: Все пользователи (без пагинации — справочник)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/User' }
+    post:
+      tags: [users]
+      summary: Создать пользователя
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateUserRequest' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: Email уже существует
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+  /users/{id}:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    patch:
+      tags: [users]
+      summary: Обновить пользователя
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateUserRequest' }
+      responses:
+        '200':
+          description: User
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [users]
+      summary: Удалить пользователя (мягкое удаление)
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ─────────────── CLIENTS ───────────────
+  /clients:
+    get:
+      tags: [clients]
+      summary: Список клиентов
+      parameters:
+        - { in: query, name: search,           schema: { type: string } }
+        - { in: query, name: status,           schema: { $ref: '#/components/schemas/ClientStatus' } }
+        - { in: query, name: accountManagerId, schema: { $ref: '#/components/schemas/UUID' } }
+        - { in: query, name: industry,         schema: { type: string } }
+        - { in: query, name: clientKind,       schema: { $ref: '#/components/schemas/ClientKind' } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Страница клиентов
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClientPage' }
+    post:
+      tags: [clients]
+      summary: Создать клиента
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateClientRequest' }
+      responses:
+        '201':
+          description: Client
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Client' }
+  /clients/{id}:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    get:
+      tags: [clients]
+      summary: Клиент по id
+      responses:
+        '200':
+          description: Client
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Client' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [clients]
+      summary: Обновить клиента
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateClientRequest' }
+      responses:
+        '200':
+          description: Client
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Client' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [clients]
+      summary: Удалить клиента (soft-delete)
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /clients/{id}/contacts:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    get:
+      tags: [clients, contacts]
+      summary: Контакты клиента
+      responses:
+        '200':
+          description: Контакты
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Contact' }
+    post:
+      tags: [clients, contacts]
+      summary: Добавить контакт клиенту
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateContactRequest' }
+      responses:
+        '201':
+          description: Contact
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Contact' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ─────────────── CONTACTS (плоский список) ───────────────
+  /contacts:
+    get:
+      tags: [contacts]
+      summary: Список контактов всех клиентов
+      parameters:
+        - { in: query, name: search,      schema: { type: string } }
+        - { in: query, name: clientId,    schema: { $ref: '#/components/schemas/UUID' } }
+        - { in: query, name: hasEmail,    schema: { type: boolean } }
+        - { in: query, name: hasPhone,    schema: { type: boolean } }
+        - { in: query, name: hasTelegram, schema: { type: boolean } }
+        - { in: query, name: hasBirthday, schema: { type: boolean } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Страница контактов
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ContactListItemPage' }
+  /contacts/{id}:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    get:
+      tags: [contacts]
+      summary: Контакт по id (с названием клиента)
+      responses:
+        '200':
+          description: ContactListItem
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ContactListItem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [contacts]
+      summary: Обновить контакт
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateContactRequest' }
+      responses:
+        '200':
+          description: ContactListItem
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ContactListItem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [contacts]
+      summary: Удалить контакт
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ─────────────── VACANCIES ───────────────
+  /vacancies:
+    get:
+      tags: [vacancies]
+      summary: Список вакансий с фильтрами
+      parameters:
+        - { in: query, name: search,           schema: { type: string } }
+        - { in: query, name: status,           schema: { $ref: '#/components/schemas/VacancyStatus' } }
+        - { in: query, name: clientId,         schema: { $ref: '#/components/schemas/UUID' } }
+        - { in: query, name: grade,            schema: { $ref: '#/components/schemas/Grade' } }
+        - { in: query, name: priority,         schema: { $ref: '#/components/schemas/Priority' } }
+        - { in: query, name: recruiterId,      schema: { $ref: '#/components/schemas/UUID' } }
+        - { in: query, name: accountManagerId, schema: { $ref: '#/components/schemas/UUID' } }
+        - { in: query, name: engagementType,   schema: { $ref: '#/components/schemas/EngagementType' } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Страница вакансий
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VacancyPage' }
+    post:
+      tags: [vacancies]
+      summary: Создать вакансию
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateVacancyRequest' }
+      responses:
+        '201':
+          description: Vacancy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Vacancy' }
+  /vacancies/kanban-order:
+    put:
+      tags: [vacancies]
+      summary: Пакетное обновление порядка карточек на канбане
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [updates]
+              properties:
+                updates:
+                  type: array
+                  items:
+                    type: object
+                    required: [id, status, kanbanOrder]
+                    properties:
+                      id:          { $ref: '#/components/schemas/UUID' }
+                      status:      { $ref: '#/components/schemas/VacancyStatus' }
+                      kanbanOrder: { type: integer }
+      responses:
+        '200':
+          description: Обновлённые вакансии
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Vacancy' }
+  /vacancies/transitions:
+    get:
+      tags: [vacancies]
+      summary: Карта разрешённых переходов между статусами вакансии
+      description: |
+        Возвращает словарь `transitions` { fromStatus: [allowedTo...] } и
+        список финальных статусов (для них смена статуса требует комментария).
+      responses:
+        '200':
+          description: Transitions config
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TransitionsResponse' }
+  /vacancies/parse-text:
+    post:
+      tags: [vacancies]
+      summary: AI-парсинг сплошного текста брифа в структурированные поля
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string }
+      responses:
+        '200':
+          description: Распознанные поля вакансии
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [parsed]
+                properties:
+                  parsed: { $ref: '#/components/schemas/ParsedVacancy' }
+  /vacancies/{id}:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    get:
+      tags: [vacancies]
+      summary: Вакансия по id
+      responses:
+        '200':
+          description: Vacancy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Vacancy' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [vacancies]
+      summary: Обновить вакансию
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateVacancyRequest' }
+      responses:
+        '200':
+          description: Vacancy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Vacancy' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [vacancies]
+      summary: Удалить вакансию (soft-delete)
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /vacancies/{id}/status:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    patch:
+      tags: [vacancies]
+      summary: Сменить статус вакансии (с валидацией перехода и опциональным комментарием)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:  { $ref: '#/components/schemas/VacancyStatus' }
+                comment: { type: string }
+      responses:
+        '200':
+          description: Vacancy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Vacancy' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: Недопустимый переход / отсутствует обязательный комментарий
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+  /vacancies/{id}/activity:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    get:
+      tags: [vacancies, audit]
+      summary: Активность по вакансии
+      responses:
+        '200':
+          description: Activity
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ActivityEntry' }
+  /vacancies/{id}/candidates:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    get:
+      tags: [vacancies, matching]
+      summary: Прикреплённые к вакансии кандидаты
+      responses:
+        '200':
+          description: matches
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/VacancyCandidate' }
+    post:
+      tags: [vacancies, matching]
+      summary: Прикрепить кандидата к вакансии (идемпотентно)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [candidateId]
+              properties:
+                candidateId: { $ref: '#/components/schemas/UUID' }
+      responses:
+        '200':
+          description: Match (новый или существующий)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VacancyCandidate' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Тип кандидата не совпадает с типом вакансии (engagement_type_mismatch)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+
+  # ─────────────── MATCHES ───────────────
+  /matches/{matchId}:
+    parameters:
+      - in: path
+        name: matchId
+        required: true
+        schema: { type: string }
+        description: ID match-связки (UUID или синтетический `m-{vacancyId}-{candidateId}` в MSW)
+    patch:
+      tags: [matching]
+      summary: Сменить статус match
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:   { $ref: '#/components/schemas/MatchStatus' }
+                feedback: { type: string }
+      responses:
+        '200':
+          description: VacancyCandidate
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VacancyCandidate' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [matching]
+      summary: Открепить кандидата от вакансии
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ─────────────── CANDIDATES ───────────────
+  /candidates:
+    get:
+      tags: [candidates]
+      summary: Список кандидатов
+      parameters:
+        - { in: query, name: search,         schema: { type: string } }
+        - { in: query, name: status,         schema: { $ref: '#/components/schemas/CandidateStatus' } }
+        - { in: query, name: grade,          schema: { $ref: '#/components/schemas/Grade' } }
+        - { in: query, name: recruiterId,    schema: { $ref: '#/components/schemas/UUID' } }
+        - { in: query, name: stack,          schema: { type: string, description: 'CSV-список технологий' } }
+        - { in: query, name: engagementType, schema: { $ref: '#/components/schemas/EngagementType' } }
+        - { in: query, name: employmentType, schema: { $ref: '#/components/schemas/EmploymentType' } }
+        - in: query
+          name: archived
+          schema:
+            oneOf:
+              - { type: boolean }
+              - { type: string, enum: [all] }
+          description: |
+            false (по умолчанию) — только активные на доске; true — только архивные; "all" — оба.
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Страница кандидатов
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CandidatePage' }
+    post:
+      tags: [candidates]
+      summary: Создать кандидата
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateCandidateRequest' }
+      responses:
+        '201':
+          description: Candidate
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Candidate' }
+        '409':
+          description: Дубликат по email/phone
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+  /candidates/kanban-order:
+    put:
+      tags: [candidates]
+      summary: Пакетное обновление порядка карточек кандидатов
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [updates]
+              properties:
+                updates:
+                  type: array
+                  items:
+                    type: object
+                    required: [id, status, kanbanOrder]
+                    properties:
+                      id:          { $ref: '#/components/schemas/UUID' }
+                      status:      { $ref: '#/components/schemas/CandidateStatus' }
+                      kanbanOrder: { type: integer }
+      responses:
+        '200':
+          description: Обновлённые кандидаты
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Candidate' }
+  /candidates/{id}:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    get:
+      tags: [candidates]
+      summary: Кандидат по id
+      responses:
+        '200':
+          description: Candidate
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Candidate' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [candidates]
+      summary: Обновить кандидата
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateCandidateRequest' }
+      responses:
+        '200':
+          description: Candidate
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Candidate' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [candidates]
+      summary: |
+        Удалить кандидата. По умолчанию — soft-archive (убирает с канбана,
+        оставляет в базе). С `?permanent=true` — полное удаление (admin only).
+      parameters:
+        - in: query
+          name: permanent
+          schema: { type: boolean, default: false }
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /candidates/{id}/status:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    patch:
+      tags: [candidates]
+      summary: Сменить статус кандидата
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:  { $ref: '#/components/schemas/CandidateStatus' }
+                comment: { type: string }
+      responses:
+        '200':
+          description: Candidate
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Candidate' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: Недопустимый переход
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+  /candidates/{id}/archive:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [candidates]
+      summary: Убрать кандидата с канбан-доски (в архив)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string }
+      responses:
+        '200':
+          description: Candidate
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Candidate' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /candidates/{id}/restore:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [candidates]
+      summary: Вернуть кандидата на доску
+      responses:
+        '200':
+          description: Candidate
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Candidate' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /candidates/{id}/activity:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    get:
+      tags: [candidates, audit]
+      summary: Активность по кандидату
+      responses:
+        '200':
+          description: Activity
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ActivityEntry' }
+
+  /clients/{id}/activity:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    get:
+      tags: [clients, audit]
+      summary: Активность по клиенту
+      responses:
+        '200':
+          description: Activity
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ActivityEntry' }
+
+  # ─────────────── COMMENTS ───────────────
+  /comments:
+    get:
+      tags: [comments]
+      summary: Комментарии к сущности
+      parameters:
+        - { in: query, name: entityType, required: true, schema: { $ref: '#/components/schemas/CommentEntityType' } }
+        - { in: query, name: entityId,   required: true, schema: { $ref: '#/components/schemas/UUID' } }
+      responses:
+        '200':
+          description: Список комментариев (с ответами)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Comment' }
+    post:
+      tags: [comments]
+      summary: Создать комментарий
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateCommentRequest' }
+      responses:
+        '201':
+          description: Comment
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Comment' }
+  /comments/{id}:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    patch:
+      tags: [comments]
+      summary: Редактировать комментарий (автор)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateCommentRequest' }
+      responses:
+        '200':
+          description: Comment
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Comment' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [comments]
+      summary: Удалить комментарий (автор / admin)
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ─────────────── NOTIFICATIONS ───────────────
+  /notifications:
+    get:
+      tags: [notifications]
+      summary: Уведомления пользователя
+      responses:
+        '200':
+          description: Список уведомлений
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Notification' }
+  /notifications/{id}/read:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    patch:
+      tags: [notifications]
+      summary: Отметить уведомление прочитанным
+      responses:
+        '200':
+          description: Notification
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Notification' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /notifications/read-all:
+    post:
+      tags: [notifications]
+      summary: Отметить все прочитанными
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+
+  # ─────────────── AUDIT ───────────────
+  /audit:
+    get:
+      tags: [audit]
+      summary: Журнал аудита с фильтрами
+      parameters:
+        - { in: query, name: entityType, schema: { type: string } }
+        - { in: query, name: entityId,   schema: { $ref: '#/components/schemas/UUID' } }
+        - { in: query, name: actorId,    schema: { $ref: '#/components/schemas/UUID' } }
+        - { in: query, name: field,      schema: { type: string } }
+        - { in: query, name: dateFrom,   schema: { type: string, format: date } }
+        - { in: query, name: dateTo,     schema: { type: string, format: date } }
+        - { in: query, name: search,     schema: { type: string } }
+      responses:
+        '200':
+          description: Аудит
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AuditEntry' }
+
+  # ─────────────── ANALYTICS ───────────────
+  /analytics/summary:
+    get:
+      tags: [analytics]
+      summary: Сводка дашборда
+      responses:
+        '200':
+          description: DashboardSummary
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DashboardSummary' }
+  /analytics/funnel:
+    get:
+      tags: [analytics]
+      summary: Воронка по статусам вакансий
+      responses:
+        '200':
+          description: FunnelBucket[]
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/FunnelBucket' }
+  /analytics/recruiter-load:
+    get:
+      tags: [analytics]
+      summary: Нагрузка рекрутеров
+      responses:
+        '200':
+          description: RecruiterLoad[]
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/RecruiterLoad' }
+
+  # ─────────────── FILES ───────────────
+  /files/presign:
+    post:
+      tags: [files]
+      summary: Получить presigned URL для загрузки файла в S3
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PresignRequest' }
+      responses:
+        '200':
+          description: PresignResponse
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PresignResponse' }
+        '422':
+          description: Неподдерживаемый MIME или превышен размер (unsupported_mime / file_too_large)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+  /files/confirm:
+    post:
+      tags: [files]
+      summary: Подтвердить загрузку (создаёт запись в БД, ставит scan_status=pending)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConfirmRequest' }
+      responses:
+        '200':
+          description: FileResponse
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FileResponse' }
+  /files:
+    get:
+      tags: [files]
+      summary: Файлы сущности
+      parameters:
+        - { in: query, name: entityType, required: true, schema: { $ref: '#/components/schemas/FileEntityType' } }
+        - { in: query, name: entityId,   required: true, schema: { $ref: '#/components/schemas/UUID' } }
+      responses:
+        '200':
+          description: Список файлов
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/FileResponse' }
+  /files/{id}/download:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    get:
+      tags: [files]
+      summary: Временный URL для скачивания
+      responses:
+        '200':
+          description: DownloadResponse
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DownloadResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Файл найден антивирусом как заражённый (file_infected)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+  /files/{id}:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    delete:
+      tags: [files]
+      summary: Удалить файл (владелец или admin)
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ─────────────── PERMISSIONS MATRIX ───────────────
+  /permissions-matrix:
+    get:
+      tags: [permissions]
+      summary: Матрица прав
+      responses:
+        '200':
+          description: Матрица
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/MatrixPermission' }
+  /permissions-matrix/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+    put:
+      tags: [permissions]
+      summary: Обновить строку матрицы (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [matrix]
+              properties:
+                matrix:
+                  type: object
+                  additionalProperties: { type: boolean }
+                  description: 'Словарь { role: boolean }'
+      responses:
+        '200':
+          description: MatrixPermission
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MatrixPermission' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /permissions-matrix/reset:
+    post:
+      tags: [permissions]
+      summary: Сбросить матрицу к дефолту (admin)
+      responses:
+        '200':
+          description: Матрица
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/MatrixPermission' }
+
+# ───────────────────────────────────────────────────────────
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    UuidPathId:
+      in: path
+      name: id
+      required: true
+      schema: { $ref: '#/components/schemas/UUID' }
+    Page:
+      in: query
+      name: page
+      schema: { type: integer, minimum: 1, default: 1 }
+    PageSize:
+      in: query
+      name: pageSize
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+
+  responses:
+    Ok:
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [ok]
+            properties:
+              ok: { type: boolean, enum: [true] }
+    Unauthorized:
+      description: Не авторизован
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+    Forbidden:
+      description: Нет прав
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+    NotFound:
+      description: Не найдено
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+    RateLimited:
+      description: Слишком много запросов
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+
+  schemas:
+    UUID:
+      type: string
+      format: uuid
+
+    ApiError:
+      type: object
+      required: [code, message]
+      properties:
+        code:    { type: string, description: 'Машиночитаемый код, например engagement_type_mismatch' }
+        message: { type: string }
+        details: { type: object, additionalProperties: true }
+
+    # ─── Auth ───
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:    { type: string, format: email }
+        password: { type: string, minLength: 8 }
+    TokenResponse:
+      type: object
+      required: [accessToken, refreshToken]
+      properties:
+        accessToken:  { type: string }
+        refreshToken: { type: string }
+
+    # ─── Users ───
+    Role:
+      type: string
+      enum: [admin, account_manager, recruiter, viewer]
+    User:
+      type: object
+      required: [id, email, fullName, role, initials, color, isActive]
+      properties:
+        id:       { $ref: '#/components/schemas/UUID' }
+        email:    { type: string, format: email }
+        telegram: { type: string, nullable: true }
+        fullName: { type: string }
+        role:     { $ref: '#/components/schemas/Role' }
+        initials: { type: string }
+        color:    { type: string }
+        isActive: { type: boolean }
+    CreateUserRequest:
+      type: object
+      required: [email, fullName, role]
+      properties:
+        email:    { type: string, format: email }
+        telegram: { type: string }
+        fullName: { type: string }
+        role:     { $ref: '#/components/schemas/Role' }
+        password: { type: string, minLength: 8 }
+        isActive: { type: boolean }
+    UpdateUserRequest:
+      type: object
+      properties:
+        email:    { type: string, format: email }
+        telegram: { type: string, nullable: true }
+        fullName: { type: string }
+        role:     { $ref: '#/components/schemas/Role' }
+        isActive: { type: boolean }
+
+    # ─── Clients ───
+    ClientStatus:
+      type: string
+      enum: [lead, in_progress, active, paused, archived]
+    ClientKind:
+      type: string
+      enum: [direct, intermediary]
+      description: Прямой клиент / посредник
+    LegalEntity:
+      type: object
+      required: [id, name, inn]
+      properties:
+        id:   { $ref: '#/components/schemas/UUID' }
+        name: { type: string }
+        inn:  { type: string }
+    Client:
+      type: object
+      required: [id, name, legalEntities, industry, accountManagerId, status, clientKind, vacanciesCount, contactsCount]
+      properties:
+        id:               { $ref: '#/components/schemas/UUID' }
+        name:             { type: string }
+        legalEntities:
+          type: array
+          items: { $ref: '#/components/schemas/LegalEntity' }
+        industry:         { type: string }
+        accountManagerId: { $ref: '#/components/schemas/UUID' }
+        status:           { $ref: '#/components/schemas/ClientStatus' }
+        clientKind:       { $ref: '#/components/schemas/ClientKind' }
+        telegramChat:     { type: string, nullable: true }
+        vacanciesCount:   { type: integer, minimum: 0 }
+        contactsCount:    { type: integer, minimum: 0 }
+    CreateClientRequest:
+      type: object
+      required: [name, industry, accountManagerId, status, clientKind]
+      properties:
+        name:             { type: string }
+        legalEntities:
+          type: array
+          items:
+            type: object
+            required: [name, inn]
+            properties:
+              id:   { $ref: '#/components/schemas/UUID' }
+              name: { type: string }
+              inn:  { type: string }
+        industry:         { type: string }
+        accountManagerId: { $ref: '#/components/schemas/UUID' }
+        status:           { $ref: '#/components/schemas/ClientStatus' }
+        clientKind:       { $ref: '#/components/schemas/ClientKind' }
+        telegramChat:     { type: string }
+    UpdateClientRequest:
+      allOf:
+        - $ref: '#/components/schemas/CreateClientRequest'
+        - type: object
+      description: Все поля опциональны (Partial<Client>)
+
+    # ─── Contacts ───
+    Contact:
+      type: object
+      required: [id, clientId, name, role]
+      properties:
+        id:       { $ref: '#/components/schemas/UUID' }
+        clientId: { $ref: '#/components/schemas/UUID' }
+        name:     { type: string }
+        role:     { type: string }
+        email:    { type: string, format: email, nullable: true }
+        phone:    { type: string, nullable: true }
+        telegram: { type: string, nullable: true }
+        birthday:
+          type: string
+          format: date
+          nullable: true
+          description: ISO date YYYY-MM-DD
+    ContactListItem:
+      allOf:
+        - $ref: '#/components/schemas/Contact'
+        - type: object
+          required: [clientName]
+          properties:
+            clientName: { type: string }
+    CreateContactRequest:
+      type: object
+      required: [name, role]
+      properties:
+        name:     { type: string }
+        role:     { type: string }
+        email:    { type: string, format: email }
+        phone:    { type: string }
+        telegram: { type: string }
+        birthday: { type: string, format: date }
+
+    # ─── Vacancies ───
+    Grade:
+      type: string
+      enum: [Junior, Middle, Senior, Lead]
+    WorkFormat:
+      type: string
+      enum: ['Удалённо', 'Гибрид', 'Офис']
+    Priority:
+      type: string
+      enum: [low, medium, high, urgent]
+    EngagementType:
+      type: string
+      enum: [outstaff, agency]
+      description: Тип сделки/кандидата
+    VacancyStatus:
+      type: string
+      enum: [new, in_work, proposed, interview, waiting_os, closed_success, closed, paused]
+    Vacancy:
+      type: object
+      required:
+        - id
+        - title
+        - clientId
+        - engagementType
+        - grade
+        - stack
+        - format
+        - rateClient
+        - positions
+        - status
+        - priority
+        - accountManagerId
+        - recruiterIds
+        - daysInStatus
+        - candidatesCount
+        - kanbanOrder
+      properties:
+        id:                { $ref: '#/components/schemas/UUID' }
+        title:             { type: string }
+        clientId:          { $ref: '#/components/schemas/UUID' }
+        engagementType:    { $ref: '#/components/schemas/EngagementType' }
+        project:           { type: string, nullable: true }
+        grade:             { $ref: '#/components/schemas/Grade' }
+        stack:             { type: array, items: { type: string } }
+        format:            { $ref: '#/components/schemas/WorkFormat' }
+        rateClient:        { type: number, description: '₽/час' }
+        salaryMax:         { type: number, nullable: true, description: '₽/мес, агентство' }
+        positions:         { type: integer, minimum: 1 }
+        status:            { $ref: '#/components/schemas/VacancyStatus' }
+        priority:          { $ref: '#/components/schemas/Priority' }
+        accountManagerId:  { $ref: '#/components/schemas/UUID' }
+        recruiterIds:
+          type: array
+          items: { $ref: '#/components/schemas/UUID' }
+        daysInStatus:      { type: integer, minimum: 0 }
+        candidatesCount:   { type: integer, minimum: 0 }
+        deadline:          { type: string, format: date, nullable: true }
+        kanbanOrder:       { type: integer }
+        description:       { type: string, nullable: true }
+        requirements:      { type: string, nullable: true }
+    CreateVacancyRequest:
+      type: object
+      required: [title, clientId, engagementType, grade, format, positions, status, priority, accountManagerId]
+      properties:
+        title:            { type: string }
+        clientId:         { $ref: '#/components/schemas/UUID' }
+        engagementType:   { $ref: '#/components/schemas/EngagementType' }
+        project:          { type: string }
+        grade:            { $ref: '#/components/schemas/Grade' }
+        stack:            { type: array, items: { type: string } }
+        format:           { $ref: '#/components/schemas/WorkFormat' }
+        rateClient:       { type: number }
+        salaryMax:        { type: number, nullable: true }
+        positions:        { type: integer, minimum: 1 }
+        status:           { $ref: '#/components/schemas/VacancyStatus' }
+        priority:         { $ref: '#/components/schemas/Priority' }
+        accountManagerId: { $ref: '#/components/schemas/UUID' }
+        recruiterIds:
+          type: array
+          items: { $ref: '#/components/schemas/UUID' }
+        deadline:         { type: string, format: date, nullable: true }
+        description:      { type: string }
+        requirements:     { type: string }
+    UpdateVacancyRequest:
+      allOf:
+        - $ref: '#/components/schemas/CreateVacancyRequest'
+        - type: object
+      description: Partial<Vacancy>
+    TransitionsResponse:
+      type: object
+      required: [transitions, finalStatuses]
+      properties:
+        transitions:
+          type: object
+          description: 'Словарь { fromStatus: [allowedTo...] }'
+          additionalProperties:
+            type: array
+            items: { $ref: '#/components/schemas/VacancyStatus' }
+        finalStatuses:
+          type: array
+          items: { $ref: '#/components/schemas/VacancyStatus' }
+    ParsedVacancy:
+      type: object
+      properties:
+        title:        { type: string }
+        project:      { type: string }
+        grade:        { $ref: '#/components/schemas/Grade' }
+        format:       { $ref: '#/components/schemas/WorkFormat' }
+        priority:     { $ref: '#/components/schemas/Priority' }
+        rateClient:   { type: number }
+        deadline:     { type: string, format: date }
+        stack:        { type: string, description: 'CSV-список технологий' }
+        description:  { type: string }
+        requirements: { type: string }
+
+    # ─── Candidates ───
+    CandidateStatus:
+      type: string
+      enum:
+        - new
+        - recruiter_iv
+        - ready
+        - presented
+        - waiting_os
+        - offer
+        - rejected_client
+        - rejected_candidate
+        - hired
+        - reserve
+    EmploymentType:
+      type: string
+      enum: ['ИП', 'СМЗ', 'ТК РФ']
+    LanguageLevel:
+      type: string
+      enum: ['A1', 'A2', 'B1', 'B2', 'C1', 'C2', 'родной']
+    SkillCategory:
+      type: object
+      required: [id, name, items]
+      properties:
+        id:    { type: string }
+        name:  { type: string }
+        items: { type: array, items: { type: string } }
+    CandidateExperience:
+      type: object
+      required: [id, company, position, startMonth, achievements, stack]
+      properties:
+        id:           { type: string }
+        company:      { type: string }
+        position:     { type: string }
+        startMonth:   { type: string, description: 'YYYY-MM' }
+        endMonth:     { type: string, nullable: true, description: 'YYYY-MM или null = «по настоящее время»' }
+        project:      { type: string }
+        achievements: { type: array, items: { type: string } }
+        stack:        { type: array, items: { type: string } }
+    CandidateEducation:
+      type: object
+      required: [id, degree, institution, graduationYear]
+      properties:
+        id:             { type: string }
+        degree:         { type: string }
+        institution:    { type: string }
+        city:           { type: string }
+        graduationYear: { type: integer }
+        specialty:      { type: string }
+    CandidateCertification:
+      type: object
+      required: [id, title, issuer]
+      properties:
+        id:     { type: string }
+        title:  { type: string }
+        issuer: { type: string }
+        period: { type: string }
+    CandidateLanguage:
+      type: object
+      required: [language, level]
+      properties:
+        language: { type: string }
+        level:    { $ref: '#/components/schemas/LanguageLevel' }
+    Candidate:
+      type: object
+      required:
+        - id
+        - fullName
+        - role
+        - engagementType
+        - grade
+        - experienceYears
+        - stack
+        - rateMonth
+        - employmentType
+        - format
+        - location
+        - recruiterId
+        - status
+        - daysInStatus
+        - vacancyIds
+        - kanbanOrder
+      properties:
+        id:               { $ref: '#/components/schemas/UUID' }
+        fullName:         { type: string }
+        role:             { type: string }
+        engagementType:   { $ref: '#/components/schemas/EngagementType' }
+        grade:            { $ref: '#/components/schemas/Grade' }
+        experienceYears:  { type: number }
+        stack:            { type: array, items: { type: string } }
+        rateMonth:        { type: number, nullable: true, description: '₽/мес. Скрыто для ролей без прав на чувствительные поля.' }
+        employmentType:   { $ref: '#/components/schemas/EmploymentType' }
+        format:           { $ref: '#/components/schemas/WorkFormat' }
+        location:         { type: string }
+        recruiterId:      { $ref: '#/components/schemas/UUID' }
+        status:           { $ref: '#/components/schemas/CandidateStatus' }
+        daysInStatus:     { type: integer, minimum: 0 }
+        vacancyIds:
+          type: array
+          items: { $ref: '#/components/schemas/UUID' }
+        telegram:         { type: string, nullable: true }
+        phone:            { type: string, nullable: true, description: 'Скрыто для ролей без прав' }
+        email:            { type: string, format: email, nullable: true, description: 'Скрыто для ролей без прав' }
+        birthday:         { type: string, format: date, nullable: true }
+        kanbanOrder:      { type: integer }
+        summary:          { type: string }
+        skillCategories:
+          type: array
+          items: { $ref: '#/components/schemas/SkillCategory' }
+        experience:
+          type: array
+          items: { $ref: '#/components/schemas/CandidateExperience' }
+        education:
+          type: array
+          items: { $ref: '#/components/schemas/CandidateEducation' }
+        certifications:
+          type: array
+          items: { $ref: '#/components/schemas/CandidateCertification' }
+        languages:
+          type: array
+          items: { $ref: '#/components/schemas/CandidateLanguage' }
+        archived:       { type: boolean }
+        archivedAt:     { type: string, format: date-time, nullable: true }
+        archivedById:   { allOf: [{ $ref: '#/components/schemas/UUID' }], nullable: true }
+        archiveReason:  { type: string }
+    CreateCandidateRequest:
+      type: object
+      required: [fullName, role, engagementType, grade, employmentType, format]
+      properties:
+        fullName:        { type: string }
+        role:            { type: string }
+        engagementType:  { $ref: '#/components/schemas/EngagementType' }
+        grade:           { $ref: '#/components/schemas/Grade' }
+        experienceYears: { type: number }
+        stack:           { type: array, items: { type: string } }
+        rateMonth:       { type: number }
+        employmentType:  { $ref: '#/components/schemas/EmploymentType' }
+        format:          { $ref: '#/components/schemas/WorkFormat' }
+        location:        { type: string }
+        recruiterId:     { $ref: '#/components/schemas/UUID' }
+        status:          { $ref: '#/components/schemas/CandidateStatus' }
+        telegram:        { type: string }
+        phone:           { type: string }
+        email:           { type: string, format: email }
+        birthday:        { type: string, format: date }
+        summary:         { type: string }
+        skillCategories:
+          type: array
+          items: { $ref: '#/components/schemas/SkillCategory' }
+        experience:
+          type: array
+          items: { $ref: '#/components/schemas/CandidateExperience' }
+        education:
+          type: array
+          items: { $ref: '#/components/schemas/CandidateEducation' }
+        certifications:
+          type: array
+          items: { $ref: '#/components/schemas/CandidateCertification' }
+        languages:
+          type: array
+          items: { $ref: '#/components/schemas/CandidateLanguage' }
+    UpdateCandidateRequest:
+      allOf:
+        - $ref: '#/components/schemas/CreateCandidateRequest'
+        - type: object
+      description: Partial<Candidate>
+
+    # ─── Matching ───
+    MatchStatus:
+      type: string
+      enum: [submitted, reviewed, interview, offered, accepted, rejected_client, rejected_internal]
+    VacancyCandidate:
+      type: object
+      required: [id, vacancyId, candidateId, status, addedById, addedAt]
+      properties:
+        id:           { type: string, description: 'UUID или синтетический id в моках' }
+        vacancyId:    { $ref: '#/components/schemas/UUID' }
+        candidateId:  { $ref: '#/components/schemas/UUID' }
+        status:       { $ref: '#/components/schemas/MatchStatus' }
+        addedById:    { $ref: '#/components/schemas/UUID' }
+        addedAt:      { type: string, format: date-time }
+        feedback:     { type: string, nullable: true }
+
+    # ─── Comments ───
+    CommentEntityType:
+      type: string
+      enum: [contact, candidate, vacancy, client]
+    Comment:
+      type: object
+      required: [id, entityType, entityId, authorId, parentId, text, mentions, createdAt, updatedAt]
+      properties:
+        id:         { $ref: '#/components/schemas/UUID' }
+        entityType: { $ref: '#/components/schemas/CommentEntityType' }
+        entityId:   { $ref: '#/components/schemas/UUID' }
+        authorId:   { $ref: '#/components/schemas/UUID' }
+        parentId:
+          allOf: [{ $ref: '#/components/schemas/UUID' }]
+          nullable: true
+        text:       { type: string }
+        mentions:
+          type: array
+          items: { $ref: '#/components/schemas/UUID' }
+        createdAt:  { type: string, format: date-time }
+        updatedAt:  { type: string, format: date-time, nullable: true }
+    CreateCommentRequest:
+      type: object
+      required: [entityType, entityId, text]
+      properties:
+        entityType: { $ref: '#/components/schemas/CommentEntityType' }
+        entityId:   { $ref: '#/components/schemas/UUID' }
+        text:       { type: string, minLength: 1 }
+        parentId:
+          allOf: [{ $ref: '#/components/schemas/UUID' }]
+          nullable: true
+        mentions:
+          type: array
+          items: { $ref: '#/components/schemas/UUID' }
+    UpdateCommentRequest:
+      type: object
+      required: [text]
+      properties:
+        text: { type: string, minLength: 1 }
+        mentions:
+          type: array
+          items: { $ref: '#/components/schemas/UUID' }
+
+    # ─── Notifications ───
+    Notification:
+      type: object
+      required: [id, userId, kind, text, read, createdAt]
+      properties:
+        id:        { $ref: '#/components/schemas/UUID' }
+        userId:    { $ref: '#/components/schemas/UUID' }
+        kind:
+          type: string
+          enum: [mention, status_change, system]
+        text:      { type: string }
+        entityType:
+          type: string
+          enum: [vacancy, candidate, client, contact]
+          nullable: true
+        entityId:
+          allOf: [{ $ref: '#/components/schemas/UUID' }]
+          nullable: true
+        read:      { type: boolean }
+        createdAt: { type: string, format: date-time }
+
+    # ─── Audit / Activity ───
+    ActivityEntry:
+      type: object
+      required: [id, entityType, entityId, actorId, kind, text, createdAt]
+      properties:
+        id:         { $ref: '#/components/schemas/UUID' }
+        entityType:
+          type: string
+          enum: [vacancy, candidate, client]
+        entityId:   { $ref: '#/components/schemas/UUID' }
+        actorId:    { $ref: '#/components/schemas/UUID' }
+        kind:
+          type: string
+          enum: [create, status, note, call, email]
+        text:       { type: string }
+        createdAt:  { type: string, format: date-time }
+    AuditEntry:
+      type: object
+      required: [id, entityType, entityId, actorId, field, before, after, createdAt]
+      properties:
+        id:         { $ref: '#/components/schemas/UUID' }
+        entityType: { type: string }
+        entityId:   { $ref: '#/components/schemas/UUID' }
+        actorId:    { $ref: '#/components/schemas/UUID' }
+        field:      { type: string }
+        before:     { type: string, nullable: true }
+        after:      { type: string, nullable: true }
+        createdAt:  { type: string, format: date-time }
+
+    # ─── Analytics ───
+    DashboardSummary:
+      type: object
+      required: [openVacancies, activeCandidates, closedThisMonth, hiredThisMonth, delta]
+      properties:
+        openVacancies:    { type: integer }
+        activeCandidates: { type: integer }
+        closedThisMonth:  { type: integer }
+        hiredThisMonth:   { type: integer }
+        delta:
+          type: object
+          required: [openVacancies, activeCandidates, closedThisMonth, hiredThisMonth]
+          properties:
+            openVacancies:    { type: number }
+            activeCandidates: { type: number }
+            closedThisMonth:  { type: number }
+            hiredThisMonth:   { type: number }
+    FunnelBucket:
+      type: object
+      required: [status, count]
+      properties:
+        status: { $ref: '#/components/schemas/VacancyStatus' }
+        count:  { type: integer }
+    RecruiterLoad:
+      type: object
+      required: [recruiterId, activeCount]
+      properties:
+        recruiterId: { $ref: '#/components/schemas/UUID' }
+        activeCount: { type: integer }
+
+    # ─── Files ───
+    FileEntityType:
+      type: string
+      enum: [candidate, vacancy, client, contact]
+    ScanStatus:
+      type: string
+      enum: [pending, clean, infected, error]
+    FileResponse:
+      type: object
+      required: [id, ownerUserId, entityType, entityId, fileKey, originalName, mime, size, scanStatus, createdAt]
+      properties:
+        id:           { $ref: '#/components/schemas/UUID' }
+        ownerUserId:  { $ref: '#/components/schemas/UUID' }
+        entityType:   { $ref: '#/components/schemas/FileEntityType' }
+        entityId:     { $ref: '#/components/schemas/UUID' }
+        fileKey:      { type: string }
+        originalName: { type: string }
+        mime:         { type: string }
+        size:         { type: integer, format: int64 }
+        scanStatus:   { $ref: '#/components/schemas/ScanStatus' }
+        scannedAt:    { type: string, format: date-time, nullable: true }
+        createdAt:    { type: string, format: date-time }
+    PresignRequest:
+      type: object
+      required: [entityType, entityId, originalName, mime, size]
+      properties:
+        entityType:   { $ref: '#/components/schemas/FileEntityType' }
+        entityId:     { $ref: '#/components/schemas/UUID' }
+        originalName: { type: string, minLength: 1, maxLength: 512 }
+        mime:         { type: string }
+        size:         { type: integer, minimum: 1 }
+    PresignResponse:
+      type: object
+      required: [url, fields, fileKey, maxBytes]
+      properties:
+        url:      { type: string }
+        fields:
+          type: object
+          additionalProperties: { type: string }
+        fileKey:  { type: string }
+        maxBytes: { type: integer }
+    ConfirmRequest:
+      type: object
+      required: [fileKey, entityType, entityId, originalName, mime, size]
+      properties:
+        fileKey:      { type: string }
+        entityType:   { $ref: '#/components/schemas/FileEntityType' }
+        entityId:     { $ref: '#/components/schemas/UUID' }
+        originalName: { type: string }
+        mime:         { type: string }
+        size:         { type: integer, minimum: 1 }
+    DownloadResponse:
+      type: object
+      required: [url, expiresIn]
+      properties:
+        url:       { type: string }
+        expiresIn: { type: integer }
+
+    # ─── Permissions Matrix ───
+    MatrixPermission:
+      type: object
+      required: [id, group, permission, description, actions, matrix]
+      properties:
+        id:          { type: string }
+        group:       { type: string }
+        permission:  { type: string }
+        description: { type: string }
+        actions:
+          type: array
+          items: { type: string, description: 'Action key, см. lib/permissions-data.ts' }
+        matrix:
+          type: object
+          description: 'Словарь { role: boolean } по всем ролям.'
+          additionalProperties: { type: boolean }
+
+    # ─── Pagination ───
+    Page:
+      type: object
+      required: [items, total, page, pageSize]
+      properties:
+        items:    { type: array, items: {} }
+        total:    { type: integer, minimum: 0 }
+        page:     { type: integer, minimum: 1 }
+        pageSize: { type: integer, minimum: 1 }
+    ClientPage:
+      allOf:
+        - $ref: '#/components/schemas/Page'
+        - type: object
+          properties:
+            items: { type: array, items: { $ref: '#/components/schemas/Client' } }
+    ContactListItemPage:
+      allOf:
+        - $ref: '#/components/schemas/Page'
+        - type: object
+          properties:
+            items: { type: array, items: { $ref: '#/components/schemas/ContactListItem' } }
+    VacancyPage:
+      allOf:
+        - $ref: '#/components/schemas/Page'
+        - type: object
+          properties:
+            items: { type: array, items: { $ref: '#/components/schemas/Vacancy' } }
+    CandidatePage:
+      allOf:
+        - $ref: '#/components/schemas/Page'
+        - type: object
+          properties:
+            items: { type: array, items: { $ref: '#/components/schemas/Candidate' } }

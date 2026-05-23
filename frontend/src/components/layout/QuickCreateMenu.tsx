@@ -32,6 +32,13 @@ function splitStack(value: string | undefined): string[] {
     .filter(Boolean);
 }
 
+function splitLines(value: string | undefined): string[] {
+  return (value ?? '')
+    .split(/\r?\n/)
+    .map((s) => s.replace(/^[-•*]\s*/, '').trim())
+    .filter(Boolean);
+}
+
 async function getApiErrorMessage(error: unknown): Promise<string | null> {
   if (!(error instanceof HTTPError)) return null;
   try {
@@ -130,6 +137,37 @@ export function QuickCreateMenu() {
       toast.error('Выберите рекрутера из реального API (ожидается UUID)');
       return;
     }
+    const skillCategories = values.skillCategories.map((c) => ({
+      id: c.id,
+      name: c.name,
+      items: splitStack(c.itemsText),
+    }));
+    const experience = values.experience.map((e) => ({
+      id: e.id,
+      company: e.company,
+      position: e.position,
+      startMonth: e.startMonth,
+      endMonth: e.endMonth ? e.endMonth : null,
+      project: e.project || undefined,
+      achievements: splitLines(e.achievementsText),
+      stack: splitStack(e.stackText),
+    }));
+    const education = values.education.map((e) => ({
+      id: e.id,
+      degree: e.degree,
+      institution: e.institution,
+      city: e.city || undefined,
+      graduationYear: Number(e.graduationYear),
+      specialty: e.specialty || undefined,
+    }));
+    const certifications = values.certifications.map((c) => ({
+      id: c.id,
+      title: c.title,
+      issuer: c.issuer,
+      period: c.period || undefined,
+    }));
+    const languages = values.languages;
+
     const payload = {
       fullName: values.fullName,
       role: values.role,
@@ -144,7 +182,14 @@ export function QuickCreateMenu() {
       birthday: values.birthday || undefined,
       telegram: values.telegram || undefined,
       phone: values.phone || undefined,
+      email: values.email || undefined,
       stack: splitStack(values.stack),
+      summary: values.summary || undefined,
+      skillCategories,
+      experience,
+      education,
+      certifications,
+      languages,
     };
     createCandidate.mutate(payload, {
       onSuccess: (c) => {

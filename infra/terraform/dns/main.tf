@@ -58,6 +58,12 @@ variable "prod_ip" {
   description = "Публичный IP prod-VM. Пока пусто — prod-запись не создаётся."
 }
 
+variable "prod_subdomain" {
+  type        = string
+  default     = "crm"
+  description = "Поддомен для prod (получится <prod_subdomain>.<domain>). Если пусто — запись пойдёт на apex домена."
+}
+
 provider "yandex" {
   cloud_id  = var.cloud_id
   folder_id = var.folder_id
@@ -80,21 +86,12 @@ resource "yandex_dns_recordset" "staging_a" {
   data    = [var.staging_ip]
 }
 
-// prod = корень <domain>. Создаётся только если prod_ip задан.
-resource "yandex_dns_recordset" "prod_apex_a" {
+// prod_subdomain.<domain> — основная prod-запись (например, crm.lachevsky.ru).
+// Если prod_subdomain пусто — пишется на apex домена. Создаётся только если prod_ip задан.
+resource "yandex_dns_recordset" "prod_a" {
   count   = var.prod_ip == "" ? 0 : 1
   zone_id = yandex_dns_zone.main.id
-  name    = var.domain
-  type    = "A"
-  ttl     = 300
-  data    = [var.prod_ip]
-}
-
-// www.<domain> → тот же prod-IP (через A, чтобы не зависеть от CNAME-ограничений)
-resource "yandex_dns_recordset" "prod_www_a" {
-  count   = var.prod_ip == "" ? 0 : 1
-  zone_id = yandex_dns_zone.main.id
-  name    = "www.${var.domain}"
+  name    = var.prod_subdomain == "" ? var.domain : "${var.prod_subdomain}.${var.domain}"
   type    = "A"
   ttl     = 300
   data    = [var.prod_ip]
@@ -111,4 +108,10 @@ output "ns_records" {
 
 output "staging_fqdn" {
   value = "${var.staging_subdomain}.${trimsuffix(var.domain, ".")}"
+}
+
+output "prod_fqdn" {
+  value = var.prod_ip == "" ? "(prod_ip не задан)" : (
+    var.prod_subdomain == "" ? trimsuffix(var.domain, ".") : "${var.prod_subdomain}.${trimsuffix(var.domain, ".")}"
+  )
 }

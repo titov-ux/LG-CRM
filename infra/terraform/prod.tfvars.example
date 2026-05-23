@@ -10,10 +10,10 @@ folder_id = "b1gl1opj9lktq3k2vp0v"
 zone      = "ru-central1-a"
 vm_name   = "crm-lg-prod"
 
-# Prod крупнее: 4 vCPU / 8 GB / 100 GB SSD. Подкрути под реальную нагрузку.
-vm_cores     = 4
-vm_memory_gb = 8
-vm_disk_gb   = 100
+# Размер как у staging — пилотный запуск. При росте нагрузки увеличим cores/memory/disk.
+vm_cores     = 2
+vm_memory_gb = 4
+vm_disk_gb   = 60
 
 # Тот же публичный SSH-ключ, что в staging.
 ssh_public_key = "ssh-ed25519 AAAA... titovalexeys@gmail.com"
@@ -22,5 +22,5 @@ ssh_public_key = "ssh-ed25519 AAAA... titovalexeys@gmail.com"
 files_bucket   = "crm-lg-prod-files"
 backups_bucket = "crm-lg-prod-backups"
 
-# Боевой домен.
-domain = "crm.lg.ru"
+# Боевой домен — используется в CORS files-бакета.
+domain = "crm.lachevsky.ru"

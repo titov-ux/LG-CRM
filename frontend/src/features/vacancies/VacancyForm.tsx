@@ -38,7 +38,6 @@ import { EngagementTypeField } from '@/components/forms/EngagementTypeField';
 import { DateField } from '@/components/forms/DateField';
 import { cn } from '@/lib/utils';
 import type { EngagementType, Grade, Priority, WorkFormat } from '@/api/types';
-import { vacancyDraftStorage } from './draftStorage';
 
 // Полная форма вакансии. Используется и в quick-create, и в drawer редактирования.
 
@@ -107,7 +106,6 @@ interface Props {
   onSubmit: (values: VacancyFormValues) => void;
   isPending?: boolean;
   submitLabel?: string;
-  draftKey?: string;
 }
 
 export function VacancyForm({
@@ -115,7 +113,6 @@ export function VacancyForm({
   onSubmit,
   isPending,
   submitLabel = 'Сохранить',
-  draftKey,
 }: Props) {
   const { data: clientsData } = useClients();
   const { data: users } = useUsers();
@@ -152,7 +149,6 @@ export function VacancyForm({
   const shouldAutofillAm = !defaultValues?.accountManagerId;
   const watchedClientId = useWatch({ control: form.control, name: 'clientId' });
   const watchedEngagement = useWatch({ control: form.control, name: 'engagementType' });
-  const watchedValues = useWatch({ control: form.control });
   const isAgency = watchedEngagement === 'agency';
   useEffect(() => {
     if (!shouldAutofillAm) return;
@@ -170,21 +166,6 @@ export function VacancyForm({
       form.setValue('accountManagerId', nextAccountManagerId, { shouldDirty: false, shouldValidate: false });
     }
   }, [watchedClientId, clientsData, form, shouldAutofillAm]);
-
-  useEffect(() => {
-    if (!draftKey) return;
-    const draft = vacancyDraftStorage.load(draftKey);
-    if (!draft) return;
-    form.reset({ ...form.getValues(), ...draft });
-  }, [draftKey, form]);
-
-  useEffect(() => {
-    if (!draftKey) return;
-    const timeoutId = window.setTimeout(() => {
-      vacancyDraftStorage.save(draftKey, watchedValues);
-    }, 250);
-    return () => window.clearTimeout(timeoutId);
-  }, [draftKey, watchedValues]);
 
   const applyParsed = (parsed: ParsedVacancy) => {
     const setIf = (key: keyof VacancyFormValues, value: unknown) => {

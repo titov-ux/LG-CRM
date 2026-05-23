@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFieldArray, useForm, useWatch, type Control } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -34,7 +34,6 @@ import type {
   WorkFormat,
 } from '@/api/types';
 import { useAuthStore } from '@/stores/auth';
-import { candidateDraftStorage } from './draftStorage';
 
 const GRADES: Grade[] = ['Junior', 'Middle', 'Senior', 'Lead'];
 const FORMATS: WorkFormat[] = ['Удалённо', 'Гибрид', 'Офис'];
@@ -124,7 +123,6 @@ interface Props {
   onSubmit: (values: CandidateFormValues) => void;
   isPending?: boolean;
   submitLabel?: string;
-  draftKey?: string;
   /**
    * Показывать ли кнопку «Распознать из файла» в шапке формы. По умолчанию
    * true — нужна при быстром добавлении кандидата. В режиме редактирования
@@ -138,13 +136,15 @@ export function CandidateForm({
   onSubmit,
   isPending,
   submitLabel = 'Сохранить',
-  draftKey,
   enableResumeImport = true,
 }: Props) {
   const { data: users } = useUsers();
   const currentUser = useAuthStore((s) => s.user);
   // В качестве «ответственных рекрутеров» можно назначать и админов — они тоже ведут кандидатов.
-  const recruiters = (users ?? []).filter((u) => u.role === 'recruiter' || u.role === 'admin');
+  const recruiters = useMemo(
+    () => (users ?? []).filter((u) => u.role === 'recruiter' || u.role === 'admin'),
+    [users],
+  );
 
   const form = useForm<CandidateFormValues>({
     resolver: zodResolver(schema),
@@ -173,36 +173,7 @@ export function CandidateForm({
       ...defaultValues,
     } as CandidateFormValues,
   });
-  const watchedValues = useWatch({ control: form.control });
   const watchedRecruiterId = useWatch({ control: form.control, name: 'recruiterId' });
-
-  useEffect(() => {
-    if (!draftKey) return;
-    const draft = candidateDraftStorage.load(draftKey);
-    if (!draft) return;
-    form.reset({ ...form.getValues(), ...draft });
-  }, [draftKey, form]);
-
-  useEffect(() => {
-    if (!draftKey) return;
-    const timeoutId = window.setTimeout(() => {
-      candidateDraftStorage.save(draftKey, form.getValues());
-    }, 250);
-    return () => window.clearTimeout(timeoutId);
-  }, [draftKey, watchedValues, form]);
-
-  useEffect(() => {
-    // В черновике может сохраниться recruiterId из другого окружения (например,
-    // mock-идентификатор). Для create-формы сбрасываем такое значение, чтобы
-    // пользователь выбрал валидного рекрутера из текущего списка.
-    if (!draftKey) return;
-    if (!watchedRecruiterId) return;
-    if (recruiters.length === 0) return;
-    const exists = recruiters.some((r) => r.id === watchedRecruiterId);
-    if (!exists) {
-      form.setValue('recruiterId', '', { shouldDirty: true, shouldValidate: true });
-    }
-  }, [draftKey, watchedRecruiterId, recruiters, form]);
 
   useEffect(() => {
     // Для формы создания по умолчанию ставим «Ответственного рекрутера» равным

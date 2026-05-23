@@ -50,7 +50,6 @@ import { AttachCandidateDialog } from '@/features/matching/AttachCandidateDialog
 import { useAttachCandidate, useDetachCandidate } from '@/features/matching/hooks';
 import { MatchCompensationRow } from '@/features/matching/MatchCompensationRow';
 import { DEFAULT_HOURS_PER_MONTH, vacancyMaxNetSalary } from '@/lib/compensation';
-import { vacancyDraftStorage } from './draftStorage';
 import { generateResumeDocxBlob, resumeFileName } from '@/features/candidates/resume';
 
 function splitStack(value: string | undefined): string[] {
@@ -329,7 +328,6 @@ export function VacancyCardPage() {
       { id: vacancy.id, payload },
       {
         onSuccess: (v) => {
-          vacancyDraftStorage.clear(`edit:${vacancy.id}`);
           toast.success(`Вакансия «${v.title}» обновлена`);
           setEditOpen(false);
         },
@@ -666,7 +664,6 @@ export function VacancyCardPage() {
             defaultValues={toFormValues(vacancy)}
             onSubmit={handleEdit}
             isPending={updateVacancy.isPending}
-            draftKey={`edit:${vacancy.id}`}
           />
         )}
       </SheetContent>

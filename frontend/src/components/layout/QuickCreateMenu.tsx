@@ -13,7 +13,6 @@ import {
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { VacancyForm, type VacancyFormValues } from '@/features/vacancies/VacancyForm';
 import { useCreateVacancy } from '@/features/vacancies/hooks';
-import { vacancyDraftStorage } from '@/features/vacancies/draftStorage';
 import { CandidateForm, type CandidateFormValues } from '@/features/candidates/CandidateForm';
 import { useCreateCandidate } from '@/features/candidates/hooks';
 import { useCan } from '@/lib/permissions';
@@ -92,7 +91,6 @@ export function QuickCreateMenu() {
 
   const close = () => setOpen(null);
   const closeVacancySheet = () => {
-    vacancyDraftStorage.clear('create');
     setVacancyFormResetKey((k) => k + 1);
     close();
   };
@@ -123,7 +121,6 @@ export function QuickCreateMenu() {
     };
     createVacancy.mutate(payload, {
       onSuccess: (v) => {
-        vacancyDraftStorage.clear('create');
         toast.success(`Вакансия «${v.title}» создана`);
         close();
         navigate({ to: '/vacancies' });
@@ -258,7 +255,6 @@ export function QuickCreateMenu() {
             onSubmit={handleVacancy}
             isPending={createVacancy.isPending}
             submitLabel="Создать"
-            draftKey="create"
           />
         </SheetContent>
       </Sheet>

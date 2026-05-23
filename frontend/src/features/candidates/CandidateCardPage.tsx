@@ -77,7 +77,6 @@ import {
   resumeFileName,
   resumeFileNameKhronyuk,
 } from './resume';
-import { candidateDraftStorage } from './draftStorage';
 
 function splitStack(value: string | undefined): string[] {
   return (value ?? '')
@@ -466,7 +465,6 @@ export function CandidateCardPage({ source: sourceProp }: CandidateCardPageProps
       },
       {
         onSuccess: (c) => {
-          candidateDraftStorage.clear(`edit:${candidate.id}`);
           toast.success(`Кандидат «${c.fullName}» обновлён`);
           setEditOpen(false);
         },
@@ -970,7 +968,6 @@ export function CandidateCardPage({ source: sourceProp }: CandidateCardPageProps
             defaultValues={toFormValues(candidate)}
             onSubmit={handleEdit}
             isPending={updateCandidate.isPending}
-            draftKey={`edit:${candidate.id}`}
             enableResumeImport={false}
           />
         )}

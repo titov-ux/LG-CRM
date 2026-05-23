@@ -16,7 +16,7 @@ from typing import Any, Iterable
 
 from fastapi import status
 from sqlalchemy import Select, func, or_, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DataError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ApiError
@@ -78,6 +78,41 @@ def _ensure_can_permanent_delete(user: User) -> None:
             "forbidden",
             "Полное удаление кандидата — только админ",
         )
+
+
+async def _ensure_valid_recruiter_id(db: AsyncSession, recruiter_id: uuid.UUID) -> None:
+    recruiter = (
+        await db.execute(select(User).where(User.id == recruiter_id, User.is_active.is_(True)))
+    ).scalar_one_or_none()
+    if recruiter is None:
+        raise ApiError(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "invalid_recruiter",
+            "Указанный рекрутер не найден или неактивен",
+        )
+    if recruiter.role not in (Role.recruiter, Role.admin):
+        raise ApiError(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "invalid_recruiter",
+            "Ответственным может быть только recruiter или admin",
+        )
+
+
+def _raise_candidate_write_error(exc: Exception) -> None:
+    text = str(exc).lower()
+    if "email" in text and ("unique" in text or "duplicate" in text):
+        raise ApiError(status.HTTP_409_CONFLICT, "duplicate_candidate", "Email уже занят") from exc
+    if "recruiter_id" in text and ("foreign key" in text or "violates" in text):
+        raise ApiError(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "invalid_recruiter",
+            "Указанный рекрутер не найден",
+        ) from exc
+    raise ApiError(
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        "invalid_candidate_payload",
+        "Некорректные данные кандидата: проверьте формат и длину полей",
+    ) from exc
 
 
 async def _vacancy_ids_map(
@@ -207,6 +242,7 @@ async def create_candidate(
     db: AsyncSession, user: User, payload: CreateCandidateRequest
 ) -> tuple[Candidate, list[uuid.UUID]]:
     _ensure_can_mutate(user)
+    await _ensure_valid_recruiter_id(db, payload.recruiter_id)
 
     # Дубль-чек по email/phone.
     duplicate: Candidate | None = None
@@ -260,11 +296,9 @@ async def create_candidate(
     db.add(cand)
     try:
         await db.flush()
-    except IntegrityError as e:
+    except (IntegrityError, DataError) as e:
         await db.rollback()
-        raise ApiError(
-            status.HTTP_409_CONFLICT, "duplicate_candidate", "Email уже занят"
-        ) from e
+        _raise_candidate_write_error(e)
     await db.commit()
     await db.refresh(cand)
     created_candidate_id = cand.id
@@ -326,12 +360,14 @@ async def update_candidate(
         cand.stack = list(data["stack"])
     if "email" in data:
         cand.email = str(data["email"]) if data["email"] else None
+    if "recruiter_id" in data and data["recruiter_id"] is not None:
+        await _ensure_valid_recruiter_id(db, data["recruiter_id"])
     _apply_resume_patch(cand, data)
     try:
         await db.commit()
-    except IntegrityError as e:
+    except (IntegrityError, DataError) as e:
         await db.rollback()
-        raise ApiError(status.HTTP_409_CONFLICT, "duplicate_candidate", "Email уже занят") from e
+        _raise_candidate_write_error(e)
     await db.refresh(cand)
     vmap = await _vacancy_ids_map(db, [cand.id])
     return cand, vmap[cand.id]

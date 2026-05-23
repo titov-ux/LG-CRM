@@ -55,8 +55,7 @@ function toFormValues(client: Client): Partial<ClientFormValues> {
 function toDuplicatePayload(client: Client): Partial<Client> {
   return {
     name: `${client.name} (копия)`,
-    legalEntities: client.legalEntities.map((le, i) => ({
-      id: `le-${Date.now()}-${i}`,
+    legalEntities: client.legalEntities.map((le) => ({
       name: le.name,
       inn: le.inn,
     })),
@@ -128,7 +127,7 @@ export function ClientCardPage() {
         payload: {
           name: values.name,
           legalEntities: values.legalEntities.map((le, i) => ({
-            id: client.legalEntities[i]?.id ?? `le-${Date.now()}-${i}`,
+            ...(client.legalEntities[i]?.id ? { id: client.legalEntities[i].id } : {}),
             name: le.name,
             inn: le.inn,
           })),

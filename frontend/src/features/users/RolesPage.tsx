@@ -37,6 +37,7 @@ import type { Role, User } from '@/api/types';
 import { useDeleteUser, useUpdateUser, useUsers } from './hooks';
 import { AddUserDialog } from './AddUserDialog';
 import { ROLE_DESCRIPTION, ROLE_LABEL } from './UserForm';
+import { useAuthStore } from '@/stores/auth';
 import type { MatrixPermission } from '@/lib/permissions';
 import {
   usePermissionsMatrix,
@@ -60,9 +61,11 @@ export function RolesPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
 
+  const currentUser = useAuthStore((s) => s.user);
   const { data: users, isLoading } = useUsers();
   const updateUser = useUpdateUser();
   const deleteUser = useDeleteUser();
+  const canManageRoles = currentUser?.role === 'admin';
 
   const { permissions, isFetching: isPermissionsFetching } = usePermissionsMatrix();
   const togglePermissionMutation = useTogglePermission();
@@ -96,6 +99,14 @@ export function RolesPage() {
   }, [users]);
 
   const handleRoleChange = (user: User, role: Role) => {
+    if (!canManageRoles) {
+      toast.error('Менять роли может только администратор');
+      return;
+    }
+    if (currentUser?.id === user.id) {
+      toast.error('Нельзя изменить свою роль');
+      return;
+    }
     updateUser.mutate(
       { id: user.id, patch: { role } },
       {
@@ -121,6 +132,11 @@ export function RolesPage() {
   const handleDeleteConfirm = () => {
     if (!userToDelete) return;
     const user = userToDelete;
+    if (currentUser?.id === user.id) {
+      toast.error('Нельзя удалить свой аккаунт');
+      setUserToDelete(null);
+      return;
+    }
     deleteUser.mutate(user.id, {
       onSuccess: () => {
         toast.success(`Пользователь «${user.fullName}» удалён`);
@@ -223,11 +239,24 @@ export function RolesPage() {
                     </TableCell>
                     <TableCell className="text-[12.5px] text-muted-foreground">{u.email}</TableCell>
                     <TableCell>
+                      {(() => {
+                        const canChangeThisRole = canManageRoles && currentUser?.id !== u.id;
+                        return (
                       <Select
                         value={u.role}
                         onValueChange={(v) => handleRoleChange(u, v as Role)}
+                        disabled={!canChangeThisRole}
                       >
-                        <SelectTrigger className="h-8 text-[12.5px]">
+                        <SelectTrigger
+                          className="h-8 text-[12.5px]"
+                          title={
+                            canChangeThisRole
+                              ? 'Изменить роль'
+                              : canManageRoles
+                                ? 'Нельзя изменить свою роль'
+                                : 'Менять роли может только администратор'
+                          }
+                        >
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -238,6 +267,8 @@ export function RolesPage() {
                           ))}
                         </SelectContent>
                       </Select>
+                        );
+                      })()}
                     </TableCell>
                     <TableCell className="text-center">
                       <Switch
@@ -246,15 +277,17 @@ export function RolesPage() {
                       />
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 text-muted-foreground hover:text-rose-600"
-                        onClick={() => setUserToDelete(u)}
-                        title="Удалить пользователя"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      {currentUser?.id !== u.id && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-rose-600"
+                          onClick={() => setUserToDelete(u)}
+                          title="Удалить пользователя"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}

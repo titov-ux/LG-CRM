@@ -16,7 +16,6 @@ import { useCreateVacancy } from '@/features/vacancies/hooks';
 import { vacancyDraftStorage } from '@/features/vacancies/draftStorage';
 import { CandidateForm, type CandidateFormValues } from '@/features/candidates/CandidateForm';
 import { useCreateCandidate } from '@/features/candidates/hooks';
-import { candidateDraftStorage } from '@/features/candidates/draftStorage';
 import { useCan } from '@/lib/permissions';
 
 // Сквозная кнопка «Создать» в шапке. Сюда сознательно вынесены только сущности,
@@ -91,7 +90,6 @@ export function QuickCreateMenu() {
     close();
   };
   const closeCandidateSheet = () => {
-    candidateDraftStorage.clear('create');
     setCandidateFormResetKey((k) => k + 1);
     close();
   };
@@ -150,7 +148,6 @@ export function QuickCreateMenu() {
     };
     createCandidate.mutate(payload, {
       onSuccess: (c) => {
-        candidateDraftStorage.clear('create');
         toast.success(`Кандидат «${c.fullName}» создан`);
         close();
         navigate({ to: '/candidates/$id', params: { id: c.id } });
@@ -232,7 +229,6 @@ export function QuickCreateMenu() {
             onSubmit={handleCandidate}
             isPending={createCandidate.isPending}
             submitLabel="Создать"
-            draftKey="create"
           />
         </SheetContent>
       </Sheet>

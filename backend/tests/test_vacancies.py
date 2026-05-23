@@ -223,6 +223,36 @@ def test_kanban_reorder(client: TestClient, admin_user, account_manager_user) ->
     assert items[ids[0]]["status"] == "in_work"
 
 
+def test_kanban_reorder_writes_status_activity_and_audit(
+    client: TestClient, admin_user, account_manager_user
+) -> None:
+    h = auth_headers(client, admin_user.email)
+    cid = _create_client(client, h, account_manager_user.id)
+    r = client.post("/api/v1/vacancies", headers=h, json=_vac_payload(cid, account_manager_user.id))
+    assert r.status_code == 201, r.text
+    vac_id = r.json()["id"]
+
+    r = client.put(
+        "/api/v1/vacancies/kanban-order",
+        headers=h,
+        json={"updates": [{"id": vac_id, "status": "in_work", "kanbanOrder": 0}]},
+    )
+    assert r.status_code == 200, r.text
+
+    r = client.get(f"/api/v1/vacancies/{vac_id}/activity", headers=h)
+    assert r.status_code == 200, r.text
+    assert any(
+        a["kind"] == "status" and "new → in_work" in a["text"] for a in r.json()
+    )
+
+    r = client.get(
+        f"/api/v1/audit?entityType=vacancy&entityId={vac_id}&field=status",
+        headers=h,
+    )
+    assert r.status_code == 200, r.text
+    assert any(a["before"] == "new" and a["after"] == "in_work" for a in r.json())
+
+
 def test_kanban_reorder_cannot_close(
     client: TestClient, admin_user, account_manager_user
 ) -> None:

@@ -53,7 +53,7 @@ function tryParseDay(text: string): Date | null {
   if (!trimmed) return null;
 
   // Три числовых сегмента через .  / -  или пробел.
-  const segs = trimmed.split(/[\s./\-]+/).filter(Boolean);
+  const segs = trimmed.split(/[\s./-]+/).filter(Boolean);
   if (segs.length === 3 && segs.every((s) => /^\d+$/.test(s))) {
     const [a, b, c] = segs.map(Number);
     if (segs[0].length === 4) {
@@ -265,7 +265,11 @@ export function DateField({
           )
         }
         onBlur={() => {
-          commitText(text);
+          // Пока открыт popover, blur часто приходит из-за клика по календарю.
+          // В этом случае не коммитим текст, иначе можно затереть выбранную дату.
+          if (!open) {
+            commitText(text);
+          }
           onBlur?.();
         }}
         className="pr-9"

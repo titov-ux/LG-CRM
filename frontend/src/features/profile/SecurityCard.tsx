@@ -3,7 +3,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { toast } from 'sonner';
-import { KeyRound, ShieldCheck, ShieldAlert, Eye, EyeOff } from 'lucide-react';
+import { KeyRound, ShieldCheck, ShieldAlert, Eye, EyeOff, LogOut } from 'lucide-react';
 import {
   Card,
   CardContent,
@@ -25,6 +25,8 @@ import {
   FormMessage,
 } from '@/components/ui/form';
 import { usePreferencesStore } from '@/stores/preferences';
+import { useLogout } from '@/features/auth/useAuth';
+import { useProfileStore } from '@/stores/profile';
 
 const passwordSchema = z
   .object({
@@ -63,6 +65,13 @@ function strength(pw: string): { score: number; label: string; color: string } {
 export function SecurityCard() {
   const twoFA = usePreferencesStore((s) => s.twoFactorEnabled);
   const setTwoFA = usePreferencesStore((s) => s.setTwoFactorEnabled);
+  const closeProfile = useProfileStore((s) => s.setOpen);
+  const logout = useLogout();
+
+  const handleLogout = () => {
+    closeProfile(false);
+    logout.mutate();
+  };
 
   const [show, setShow] = useState<{ current: boolean; next: boolean }>({
     current: false,
@@ -261,6 +270,27 @@ export function SecurityCard() {
               </Button>
             </div>
           </div>
+        </div>
+
+        <Separator />
+
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <div className="text-[13px] font-medium">Выход из аккаунта</div>
+            <p className="text-[12px] text-muted-foreground">
+              Завершит текущую сессию и вернёт вас на страницу входа.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleLogout}
+            disabled={logout.isPending}
+            className="gap-1.5 border-rose-200 text-rose-600 hover:bg-rose-50 hover:text-rose-700"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+            {logout.isPending ? 'Выходим…' : 'Выйти'}
+          </Button>
         </div>
       </CardContent>
     </Card>

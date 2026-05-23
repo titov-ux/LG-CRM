@@ -1,0 +1,50 @@
+# Локальное окружение для разработки backend.
+# Поднимает Postgres 16 + Redis 7.
+# Бэк в этом compose НЕ запускается — он крутится локально через `make dev`
+# (для скорости горячей перезагрузки и удобного debug).
+#
+# Запуск:
+#   docker compose -f infra/docker-compose.dev.yml up -d
+# Остановка:
+#   docker compose -f infra/docker-compose.dev.yml down
+# Полный сброс данных:
+#   docker compose -f infra/docker-compose.dev.yml down -v
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: crm-lg-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: crm
+      POSTGRES_PASSWORD: crm
+      POSTGRES_DB: crm_lg
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crm -d crm_lg"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: crm-lg-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres_data:
+  redis_data:

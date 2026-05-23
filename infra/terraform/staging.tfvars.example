@@ -1,0 +1,28 @@
+# Шаблон переменных для staging-контура.
+# Скопировать в staging.tfvars и заполнить (staging.tfvars в .gitignore — не коммитим).
+#
+# Применяется после: tofu workspace select staging
+#   tofu plan -var-file=staging.tfvars
+#   tofu apply -var-file=staging.tfvars
+
+cloud_id  = "b1g6qe43fg33imfik8bs"
+folder_id = "b1gl1opj9lktq3k2vp0v"
+zone      = "ru-central1-a"
+vm_name   = "crm-lg-staging"
+
+# Скромная VM под staging — 2 vCPU / 4 GB / 60 GB SSD по умолчанию.
+# Если хочется ещё дешевле в простое — можно урезать core_fraction в main.tf до 20.
+vm_cores     = 2
+vm_memory_gb = 4
+vm_disk_gb   = 60
+
+# Публичный SSH-ключ. cat ~/.ssh/id_ed25519.pub
+ssh_public_key = "ssh-ed25519 AAAA... titovalexeys@gmail.com"
+
+# Глобально уникальные имена бакетов в Yandex Object Storage.
+# Должны отличаться от prod (иначе apply упадёт).
+files_bucket   = "crm-lg-staging-files"
+backups_bucket = "crm-lg-staging-backups"
+
+# Домен staging — используется в CORS для files-bucket и в outputs.
+domain = "staging.crm.lg.ru"

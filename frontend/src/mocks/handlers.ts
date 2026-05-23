@@ -1116,3 +1116,30 @@ export const handlers = [
     return HttpResponse.json({ items });
   }),
 ];
+
+// ─────────────────────────────────────────────────────────────
+// Постепенный переход с MSW на боевой API (см. План_перехода_на_API.docx).
+// VITE_DISABLED_HANDLERS — CSV-список доменов (первый сегмент пути), MSW которых
+// отключается. Пример: VITE_DISABLED_HANDLERS=users,permissions-matrix —
+// фронт всё ещё мокает остальное, но /users и /permissions-matrix идут в реальный API.
+// ─────────────────────────────────────────────────────────────
+function domainOfHandler(handler: (typeof handlers)[number]): string {
+  // MSW v2: у каждого handler есть info.path (см. https://mswjs.io)
+  const path = (handler as unknown as { info?: { path: string } }).info?.path ?? '';
+  // Срезаем API_BASE_URL и берём первый сегмент.
+  const rest = path
+    .replace(API_BASE_URL, '')
+    .replace(/^https?:\/\/[^/]+/, '')
+    .replace(/^\/+/, '');
+  return rest.split('/')[0] ?? '';
+}
+
+export function enabledHandlers(): typeof handlers {
+  const raw = (import.meta.env.VITE_DISABLED_HANDLERS as string | undefined) ?? '';
+  const disabled = raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (disabled.length === 0) return handlers;
+  return handlers.filter((h) => !disabled.includes(domainOfHandler(h)));
+}

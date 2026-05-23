@@ -1,0 +1,96 @@
+# Production-стек для Yandex Cloud VM.
+# Поднимает: postgres + redis + backend (uvicorn) + celery worker + celery beat + nginx.
+#
+# Перед запуском:
+#   1. cp .env.prod.example .env.prod и заполнить (БД-пароль, JWT_SECRET, S3-ключи, SENTRY_DSN).
+#   2. cp infra/nginx.example.conf infra/nginx.conf и обновить server_name + сертификаты.
+#   3. Положить TLS-сертификаты в infra/certs/ (fullchain.pem, privkey.pem).
+#   4. Сбилдить фронт: cd frontend && pnpm build → frontend/dist (его монтируем в nginx).
+#   5. docker compose -f infra/docker-compose.prod.yml --env-file .env.prod up -d
+#
+# Миграции: docker compose ... exec backend alembic upgrade head
+# Seed admin/permissions: docker compose ... exec backend make seed
+
+x-backend-base: &backend-base
+  build:
+    context: ../backend
+    dockerfile: Dockerfile
+  env_file: ../.env.prod
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: crm-lg-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-crm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set me in .env.prod}
+      POSTGRES_DB: ${POSTGRES_DB:-crm_lg}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: crm-lg-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    <<: *backend-base
+    container_name: crm-lg-backend
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--proxy-headers", "--forwarded-allow-ips=*"]
+    expose:
+      - "8000"
+
+  celery-worker:
+    <<: *backend-base
+    container_name: crm-lg-celery-worker
+    command: ["celery", "-A", "app.celery_app", "worker", "--loglevel=info"]
+    # На этапе 8 у нас ещё нет celery_app — этот сервис стартует только когда
+    # будет AI/ClamAV (этап 9). Закомментировать, если запускаешь раньше.
+    profiles: ["celery"]
+
+  celery-beat:
+    <<: *backend-base
+    container_name: crm-lg-celery-beat
+    command: ["celery", "-A", "app.celery_app", "beat", "--loglevel=info"]
+    profiles: ["celery"]
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: crm-lg-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+      - ../frontend/dist:/usr/share/nginx/html:ro
+      # ACME-challenge для certbot renew (webroot-mode).
+      - ./certbot-webroot:/var/www/certbot:ro
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  redis_data:

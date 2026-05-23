@@ -44,3 +44,19 @@ export function useLogout() {
     },
   });
 }
+
+export function useUpdateMe() {
+  const queryClient = useQueryClient();
+  const setUser = useAuthStore((s) => s.setUser);
+  return useMutation({
+    mutationFn: (payload: { fullName?: string; email?: string; telegram?: string | null }) =>
+      authApi.updateMe(payload),
+    onSuccess: async (user) => {
+      setUser(user);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: authKeys.me }),
+        queryClient.invalidateQueries({ queryKey: ['users'] }),
+      ]);
+    },
+  });
+}

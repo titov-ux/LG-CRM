@@ -35,3 +35,9 @@ class UpdateUserRequest(CamelModel):
     full_name: str | None = None
     role: Role | None = None
     is_active: bool | None = None
+
+
+class UpdateProfileRequest(CamelModel):
+    email: EmailStr | None = None
+    telegram: str | None = None
+    full_name: str | None = None

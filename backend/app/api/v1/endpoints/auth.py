@@ -22,8 +22,9 @@ from app.modules.auth.schemas import (
     RefreshResponse,
     TokenResponse,
 )
+from app.modules.users import service as users_service
 from app.modules.users.models import User
-from app.modules.users.schemas import UserResponse
+from app.modules.users.schemas import UpdateProfileRequest, UserResponse
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -108,3 +109,13 @@ async def logout(
 @router.get("/me", response_model=UserResponse, summary="Профиль текущего пользователя")
 async def me(user: User = Depends(get_current_user)) -> UserResponse:
     return UserResponse.model_validate(user)
+
+
+@router.patch("/me", response_model=UserResponse, summary="Обновить профиль текущего пользователя")
+async def update_me(
+    payload: UpdateProfileRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> UserResponse:
+    updated = await users_service.update_profile(db, user.id, payload)
+    return UserResponse.model_validate(updated)

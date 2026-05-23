@@ -143,6 +143,30 @@ export const handlers = [
   http.post(url('/auth/refresh'), () => HttpResponse.json({ accessToken: 'mock.access.refreshed' })),
   http.post(url('/auth/logout'), () => HttpResponse.json({ ok: true })),
   http.get(url('/auth/me'), () => HttpResponse.json(usersDb[0])),
+  http.patch(url('/auth/me'), async ({ request }) => {
+    const body = (await request.json()) as { fullName?: string; email?: string; telegram?: string | null };
+    const actorId = actorIdFromRequest(request);
+    const user = usersDb.find((u) => u.id === actorId) ?? usersDb[0];
+    if (!user) return new HttpResponse(null, { status: 404 });
+    if (body.fullName !== undefined) {
+      const fullName = body.fullName.trim();
+      user.fullName = fullName;
+      user.initials =
+        fullName
+          .split(/\s+/)
+          .filter(Boolean)
+          .slice(0, 2)
+          .map((w) => w[0]?.toUpperCase() ?? '')
+          .join('') || 'NN';
+    }
+    if (body.email !== undefined) user.email = body.email.trim().toLowerCase();
+    if (body.telegram !== undefined) {
+      const telegram = (body.telegram ?? '').trim();
+      if (telegram) user.telegram = telegram;
+      else delete user.telegram;
+    }
+    return HttpResponse.json(user);
+  }),
 
   // === Users ===
   http.get(url('/users'), () => HttpResponse.json(usersDb)),

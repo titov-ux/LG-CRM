@@ -10,11 +10,12 @@ import { UserAvatar } from '@/components/common/UserAvatar';
 import { useAuthStore } from '@/stores/auth';
 import { telegramUrl } from '@/lib/utils';
 import { ROLE_LABEL } from '@/features/users/UserForm';
+import { useUpdateMe } from '@/features/auth/useAuth';
 import { ROLE_BADGE } from './constants';
 
 export function ProfileHeaderCard() {
   const user = useAuthStore((s) => s.user);
-  const setUser = useAuthStore((s) => s.setUser);
+  const updateMe = useUpdateMe();
 
   const [editing, setEditing] = useState(false);
   const [fullName, setFullName] = useState(user?.fullName ?? '');
@@ -34,7 +35,7 @@ export function ProfileHeaderCard() {
     setEditing(false);
   };
 
-  const save = () => {
+  const save = async () => {
     if (fullName.trim().length < 2) {
       toast.error('Имя должно быть не короче 2 символов');
       return;
@@ -44,22 +45,17 @@ export function ProfileHeaderCard() {
       return;
     }
     const telegramTrimmed = telegram.trim();
-    // Локально: на этапе 2 — PATCH /users/{me}. См. ТЗ §6.2.
-    const newInitials = fullName
-      .trim()
-      .split(/\s+/)
-      .slice(0, 2)
-      .map((p) => p[0]?.toUpperCase() ?? '')
-      .join('');
-    setUser({
-      ...user,
-      fullName: fullName.trim(),
-      email: email.trim(),
-      ...(telegramTrimmed ? { telegram: telegramTrimmed } : { telegram: undefined }),
-      initials: newInitials,
-    });
-    setEditing(false);
-    toast.success('Профиль обновлён');
+    try {
+      await updateMe.mutateAsync({
+        fullName: fullName.trim(),
+        email: email.trim(),
+        telegram: telegramTrimmed || null,
+      });
+      setEditing(false);
+      toast.success('Профиль обновлён');
+    } catch {
+      toast.error('Не удалось сохранить профиль');
+    }
   };
 
   return (
@@ -117,9 +113,9 @@ export function ProfileHeaderCard() {
                   <X className="h-3.5 w-3.5" />
                   Отмена
                 </Button>
-                <Button size="sm" onClick={save} className="gap-1.5">
+                <Button size="sm" onClick={save} className="gap-1.5" disabled={updateMe.isPending}>
                   <Save className="h-3.5 w-3.5" />
-                  Сохранить
+                  {updateMe.isPending ? 'Сохраняем...' : 'Сохранить'}
                 </Button>
               </div>
             </div>

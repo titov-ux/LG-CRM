@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import ApiError
 from app.core.security import hash_password
 from app.modules.users.models import User, compute_initials
-from app.modules.users.schemas import CreateUserRequest, UpdateUserRequest
+from app.modules.users.schemas import CreateUserRequest, UpdateProfileRequest, UpdateUserRequest
 
 # Палитра «аватарок» — соответствует тому, что фронт рисует в UI.
 _DEFAULT_COLORS = [
@@ -91,6 +91,29 @@ async def update_user(
         user.telegram = data["telegram"]
     if "is_active" in data:
         user.is_active = data["is_active"]
+    try:
+        await db.commit()
+    except IntegrityError as e:
+        await db.rollback()
+        raise ApiError(
+            status.HTTP_409_CONFLICT, "email_exists", "Email уже занят"
+        ) from e
+    await db.refresh(user)
+    return user
+
+
+async def update_profile(
+    db: AsyncSession, user_id: uuid.UUID, payload: UpdateProfileRequest
+) -> User:
+    user = await get_user(db, user_id)
+    data = payload.model_dump(exclude_unset=True)
+    if "email" in data:
+        user.email = data["email"]
+    if "full_name" in data:
+        user.full_name = data["full_name"]
+        user.initials = compute_initials(data["full_name"])
+    if "telegram" in data:
+        user.telegram = data["telegram"]
     try:
         await db.commit()
     except IntegrityError as e:

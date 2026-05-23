@@ -63,6 +63,36 @@ def test_me_requires_auth(client: TestClient) -> None:
     assert r.status_code == 401
 
 
+def test_me_can_update_profile(client: TestClient, admin_user: User) -> None:
+    login = _login(client, admin_user.email, "correct-horse-battery-staple")
+    assert login.status_code == 200, login.text
+    access = login.json()["accessToken"]
+    headers = {"Authorization": f"Bearer {access}"}
+
+    r = client.patch(
+        "/api/v1/auth/me",
+        headers=headers,
+        json={
+            "fullName": "Новый Админ",
+            "email": "new-admin@lg.ru",
+            "telegram": None,
+        },
+    )
+    assert r.status_code == 200, r.text
+    updated = r.json()
+    assert updated["fullName"] == "Новый Админ"
+    assert updated["email"] == "new-admin@lg.ru"
+    assert updated["telegram"] is None
+    assert updated["initials"] == "НА"
+
+    r = client.get("/api/v1/auth/me", headers=headers)
+    assert r.status_code == 200, r.text
+    me = r.json()
+    assert me["fullName"] == "Новый Админ"
+    assert me["email"] == "new-admin@lg.ru"
+    assert me["telegram"] is None
+
+
 def test_full_flow_login_me_refresh_logout(client: TestClient, admin_user: User) -> None:
     r = _login(client, admin_user.email, "correct-horse-battery-staple")
     assert r.status_code == 200

@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Iterable
@@ -33,6 +34,8 @@ from app.modules.candidates.schemas import (
 from app.modules.matching.models import VacancyCandidate
 from app.modules.users.models import Role, User
 from app.modules.vacancies.models import EngagementType
+
+logger = logging.getLogger(__name__)
 
 
 # Поля, что хранятся в resume jsonb (camelCase ключи — как на фронте).
@@ -262,16 +265,23 @@ async def create_candidate(
         raise ApiError(
             status.HTTP_409_CONFLICT, "duplicate_candidate", "Email уже занят"
         ) from e
-    await audit_service.record_activity(
-        db,
-        entity_type=ActivityEntityType.candidate,
-        entity_id=cand.id,
-        actor_id=user.id,
-        kind=ActivityKind.create,
-        text="Кандидат добавлен в базу",
-    )
     await db.commit()
     await db.refresh(cand)
+    try:
+        # История активности не должна ронять создание кандидата:
+        # если activity-подсистема временно недоступна, карточка всё равно сохраняется.
+        await audit_service.record_activity(
+            db,
+            entity_type=ActivityEntityType.candidate,
+            entity_id=cand.id,
+            actor_id=user.id,
+            kind=ActivityKind.create,
+            text="Кандидат добавлен в базу",
+        )
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        logger.exception("Failed to write candidate create activity", extra={"candidate_id": str(cand.id)})
     return cand, []
 
 

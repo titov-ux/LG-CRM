@@ -59,7 +59,7 @@ def upgrade() -> None:
             server_default="direct",
         ),
         sa.Column("telegram_chat", sa.String(length=255), nullable=True),
-        sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True, index=True),
+        sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -134,7 +134,7 @@ def upgrade() -> None:
         sa.Column("phone", sa.String(length=64), nullable=True),
         sa.Column("telegram", sa.String(length=255), nullable=True),
         sa.Column("birthday", sa.Date(), nullable=True),
-        sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True, index=True),
+        sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),

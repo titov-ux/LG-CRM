@@ -9,20 +9,30 @@ from datetime import datetime, timedelta, timezone
 UTC = timezone.utc
 from typing import Any
 
+import bcrypt
 import jwt
-from passlib.context import CryptContext
 
 from app.core.config import get_settings
 
-_pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# bcrypt не принимает пароли длиннее 72 байт. Чтобы не падать на длинных
+# паролях (особенно с кириллицей в UTF-8), молча обрезаем — это совместимо
+# со старым поведением passlib + не теряет энтропию для разумных паролей.
+_BCRYPT_MAX_BYTES = 72
+
+
+def _truncate(password: str) -> bytes:
+    return password.encode("utf-8")[:_BCRYPT_MAX_BYTES]
 
 
 def hash_password(password: str) -> str:
-    return _pwd_ctx.hash(password)
+    return bcrypt.hashpw(_truncate(password), bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(password: str, hashed: str) -> bool:
-    return _pwd_ctx.verify(password, hashed)
+    try:
+        return bcrypt.checkpw(_truncate(password), hashed.encode("utf-8"))
+    except ValueError:
+        return False
 
 
 def create_access_token(subject: str, extra: dict[str, Any] | None = None) -> str:

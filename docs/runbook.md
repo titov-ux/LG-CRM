@@ -165,3 +165,26 @@ sudo cp scripts/cron-backup.example /etc/cron.d/crm-lg-backup
 - OpenAPI: `docs/openapi.yaml` (Swagger UI на `/docs`)
 - Backend README: `backend/README.md`
 - Infra README: `infra/README.md`
+
+---
+
+## Быстрый деплой обновлений на VM
+
+Стандартный путь для выката новой версии:
+
+```bash
+bash scripts/deploy-vm.sh --branch main
+```
+
+Что делает скрипт:
+
+1. Забирает обновления из git (`fetch` + `pull --ff-only`).
+2. Собирает фронт (`pnpm install --frozen-lockfile && pnpm build`).
+3. Пересобирает и поднимает сервисы (`docker compose ... up -d --build`).
+4. Прогоняет миграции (`alembic upgrade head`).
+5. Делает health-check `http://localhost:8000/healthz`.
+
+Полезные опции:
+
+- `--skip-frontend` — если фронт не менялся.
+- `--skip-migrate` — если точно нет миграций.

@@ -85,6 +85,10 @@ services:
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - ./certs:/etc/nginx/certs:ro
+      # /etc/letsencrypt смонтирован read-only, чтобы симлинки в ./certs
+      # (которые ссылаются на /etc/letsencrypt/live/<domain>/...) разрешались
+      # внутри контейнера. После certbot renew nginx сразу видит новый сертификат.
+      - /etc/letsencrypt:/etc/letsencrypt:ro
       - ../frontend/dist:/usr/share/nginx/html:ro
       # ACME-challenge для certbot renew (webroot-mode).
       - ./certbot-webroot:/var/www/certbot:ro

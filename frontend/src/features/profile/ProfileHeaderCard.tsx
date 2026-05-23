@@ -64,7 +64,7 @@ export function ProfileHeaderCard() {
 
   return (
     <Card>
-      <CardContent className="flex flex-col gap-5 p-5 sm:flex-row sm:items-center">
+      <CardContent className="flex flex-col gap-5 p-5 sm:flex-row sm:items-start">
         <div className="flex shrink-0 items-center gap-4">
           <UserAvatar user={user} size={72} ring interactive={false} />
           <div className="sm:hidden">
@@ -87,28 +87,40 @@ export function ProfileHeaderCard() {
 
         <div className="min-w-0 flex-1">
           {editing ? (
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-1">
-                <Label className="text-[12px]">ФИО</Label>
-                <Input value={fullName} onChange={(e) => setFullName(e.target.value)} />
+            <div className="space-y-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <Label className="text-[12px]">ФИО</Label>
+                  <Input value={fullName} onChange={(e) => setFullName(e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[12px]">Email</Label>
+                  <Input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    autoComplete="email"
+                  />
+                </div>
+                <div className="space-y-1 sm:col-span-2">
+                  <Label className="text-[12px]">Telegram</Label>
+                  <Input
+                    value={telegram}
+                    onChange={(e) => setTelegram(e.target.value)}
+                    placeholder="@username"
+                    autoComplete="off"
+                  />
+                </div>
               </div>
-              <div className="space-y-1">
-                <Label className="text-[12px]">Email</Label>
-                <Input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  autoComplete="email"
-                />
-              </div>
-              <div className="space-y-1 sm:col-span-2">
-                <Label className="text-[12px]">Telegram</Label>
-                <Input
-                  value={telegram}
-                  onChange={(e) => setTelegram(e.target.value)}
-                  placeholder="@username"
-                  autoComplete="off"
-                />
+              <div className="flex flex-wrap gap-2">
+                <Button variant="ghost" size="sm" onClick={cancel} className="gap-1.5">
+                  <X className="h-3.5 w-3.5" />
+                  Отмена
+                </Button>
+                <Button size="sm" onClick={save} className="gap-1.5">
+                  <Save className="h-3.5 w-3.5" />
+                  Сохранить
+                </Button>
               </div>
             </div>
           ) : (
@@ -157,25 +169,14 @@ export function ProfileHeaderCard() {
           )}
         </div>
 
-        <div className="flex shrink-0 gap-2">
-          {editing ? (
-            <>
-              <Button variant="ghost" size="sm" onClick={cancel} className="gap-1.5">
-                <X className="h-3.5 w-3.5" />
-                Отмена
-              </Button>
-              <Button size="sm" onClick={save} className="gap-1.5">
-                <Save className="h-3.5 w-3.5" />
-                Сохранить
-              </Button>
-            </>
-          ) : (
+        {!editing && (
+          <div className="flex shrink-0 gap-2">
             <Button variant="outline" size="sm" onClick={startEdit} className="gap-1.5">
               <Pencil className="h-3.5 w-3.5" />
               Редактировать
             </Button>
-          )}
-        </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

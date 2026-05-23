@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsr generate && tsc -b && vite build",
     "preview": "vite preview",
     "lint": "eslint .",
     "format": "prettier --write .",
@@ -58,6 +58,7 @@
     "zustand": "^4.5.4"
   },
   "devDependencies": {
+    "@tanstack/router-cli": "^1.167.9",
     "@tanstack/router-devtools": "^1.50.0",
     "@tanstack/router-vite-plugin": "^1.50.0",
     "@types/node": "^20.14.10",
@@ -83,6 +84,8 @@
     "vitest": "^2.0.2"
   },
   "msw": {
-    "workerDirectory": ["public"]
+    "workerDirectory": [
+      "public"
+    ]
   }
 }

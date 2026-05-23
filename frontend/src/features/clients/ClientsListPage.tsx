@@ -87,8 +87,7 @@ export function ClientsListPage() {
     createClient.mutate(
       {
         name: values.name,
-        legalEntities: values.legalEntities.map((le, i) => ({
-          id: `le-${Date.now()}-${i}`,
+        legalEntities: values.legalEntities.map((le) => ({
           name: le.name,
           inn: le.inn,
         })),

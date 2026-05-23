@@ -11,6 +11,10 @@ domain = "lachevsky.ru."
 # IP staging-VM. Берётся из `tofu output public_ip` основного workspace 'staging'.
 staging_ip = "46.21.247.114"
 
-# IP prod-VM. Пока пусто — prod-recordset'ы создаваться не будут.
+# Поддомен prod (по умолчанию "crm" → crm.lachevsky.ru).
+# Пустая строка — запись пойдёт на корень домена.
+prod_subdomain = "crm"
+
+# IP prod-VM. Пока пусто — prod-recordset не создаётся.
 # Когда поднимем prod-контур, обновим это значение и сделаем повторный apply.
 prod_ip = ""

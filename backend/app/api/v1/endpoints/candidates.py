@@ -1,12 +1,14 @@
 """Эндпоинты /candidates (включая archive/restore и kanban)."""
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import ApiError
 from app.db.session import get_db
 from app.modules.auth.dependencies import get_current_user
 from app.modules.auth.schemas import OkResponse
@@ -25,6 +27,7 @@ from app.modules.users.models import Role, User
 from app.modules.vacancies.models import EngagementType, Grade
 
 router = APIRouter(prefix="/candidates", tags=["candidates"])
+logger = logging.getLogger(__name__)
 
 
 def _maybe_mask(value: Any, user: User) -> Any:
@@ -141,8 +144,22 @@ async def create_candidate(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> CandidateResponse:
-    cand, vids = await service.create_candidate(db, user, payload)
-    return _to_dto(cand, vids, user)
+    try:
+        cand, vids = await service.create_candidate(db, user, payload)
+        return _to_dto(cand, vids, user)
+    except ApiError:
+        raise
+    except Exception as exc:
+        logger.exception(
+            "Unexpected error while creating candidate",
+            extra={"recruiter_id": str(payload.recruiter_id), "actor_id": str(user.id)},
+        )
+        raise ApiError(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "candidate_create_failed",
+            "Не удалось создать кандидата из-за внутренней ошибки сервера",
+            details={"errorType": exc.__class__.__name__},
+        ) from exc
 
 
 @router.get("/{cand_id}", response_model=CandidateResponse, summary="Кандидат по id")

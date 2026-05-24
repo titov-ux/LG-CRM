@@ -24,6 +24,7 @@ from app.modules.notifications import service as notify_service
 from app.modules.notifications.models import NotificationEntityType, NotificationKind
 from app.modules.users.models import Role, User
 from app.modules.vacancies import transitions
+from app.realtime.events import publish_vacancy_changed
 from app.modules.vacancies.models import (
     EngagementType,
     Grade,
@@ -201,6 +202,7 @@ async def create_vacancy(
     )
     await db.commit()
     await db.refresh(vac, attribute_names=["recruiters"])
+    publish_vacancy_changed("created", id=vac.id, actor_id=user.id)
     return vac
 
 
@@ -246,6 +248,7 @@ async def update_vacancy(
 
     await db.commit()
     await db.refresh(vac, attribute_names=["recruiters"])
+    publish_vacancy_changed("updated", id=vac.id, actor_id=user.id)
     return vac
 
 
@@ -264,6 +267,7 @@ async def delete_vacancy(db: AsyncSession, user: User, vac_id: uuid.UUID) -> Non
     vac = await get_vacancy(db, user, vac_id)
     vac.deleted_at = datetime.now(timezone.utc)
     await db.commit()
+    publish_vacancy_changed("deleted", id=vac_id, actor_id=user.id)
 
 
 # ---------------------------------------------------------------------------
@@ -341,6 +345,7 @@ async def change_status(
             )
     await db.commit()
     await db.refresh(vac, attribute_names=["recruiters"])
+    publish_vacancy_changed("status_changed", id=vac.id, actor_id=user.id)
     return vac
 
 
@@ -409,4 +414,9 @@ async def reorder_kanban(
     await db.commit()
     for v in rows:
         await db.refresh(v, attribute_names=["recruiters"])
+    publish_vacancy_changed(
+        "reordered",
+        ids=[v.id for v in rows],
+        actor_id=user.id,
+    )
     return list(rows)

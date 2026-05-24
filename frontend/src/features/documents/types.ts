@@ -7,7 +7,7 @@ export type DocumentSectionId =
   | 'tender'
   | 'general';
 
-export type DocumentKind = 'doc' | 'pdf' | 'xlsx' | 'pptx' | 'image' | 'folder';
+export type DocumentKind = 'doc' | 'pdf' | 'xlsx' | 'pptx' | 'image' | 'folder' | 'note';
 
 export interface DocumentVersion {
   id: string;
@@ -47,6 +47,8 @@ export interface DocumentItem {
   comments?: DocumentComment[];
   /** мета приложенного файла; контент лежит либо в `file.dataUrl`, либо в in-memory store */
   file?: DocumentFileMeta;
+  /** HTML-контент заметки (kind='note'). Tiptap-вывод. */
+  body?: string;
 }
 
 export interface DocumentTemplate {

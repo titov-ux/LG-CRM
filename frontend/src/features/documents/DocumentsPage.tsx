@@ -15,11 +15,11 @@ import {
   FolderClosed,
   FolderOpen,
   FolderPlus,
-  Globe,
   Image as ImageIcon,
   LayoutGrid,
   List as ListIcon,
   Menu,
+  StickyNote,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -71,6 +71,7 @@ import { MoveDialog } from './MoveDialog';
 import { PreviewDialog } from './PreviewDialog';
 import { EmojiPicker } from './EmojiPicker';
 import { TemplatesDialog } from './TemplatesDialog';
+import { NoteDialog } from './NoteDialog';
 import { bindBlobToDoc, formatBytes, getCachedBlobUrl } from './fileBlob';
 
 type ScopeId = DocumentSectionId | 'all' | 'favorites';
@@ -85,6 +86,7 @@ const KIND_ICON: Record<DocumentKind, LucideIcon> = {
   pptx: FileText,
   image: ImageIcon,
   folder: FolderClosed,
+  note: StickyNote,
 };
 
 const KIND_COLOR: Record<DocumentKind, string> = {
@@ -94,6 +96,7 @@ const KIND_COLOR: Record<DocumentKind, string> = {
   pptx: 'text-orange-600 bg-orange-50',
   image: 'text-purple-600 bg-purple-50',
   folder: 'text-amber-600 bg-amber-50',
+  note: 'text-yellow-700 bg-yellow-50',
 };
 
 const KIND_LABEL: Record<DocumentKind, string> = {
@@ -103,6 +106,7 @@ const KIND_LABEL: Record<DocumentKind, string> = {
   pptx: 'Презентация',
   image: 'Изображение',
   folder: 'Папка',
+  note: 'Заметка',
 };
 
 function formatRelative(iso: string): string {
@@ -162,7 +166,6 @@ export function DocumentsPage() {
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState(() => readPersistedSort());
   const [activeTag, setActiveTag] = useState<string | null>(null);
-  const [globalSearch, setGlobalSearch] = useState(false);
   const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>(() => readPersistedView());
   const [expandedSections, setExpandedSections] = useState<Set<DocumentSectionId>>(new Set());
@@ -183,6 +186,7 @@ export function DocumentsPage() {
   const [uploadInitialFiles, setUploadInitialFiles] = useState<File[] | null>(null);
   const [moveDoc, setMoveDoc] = useState<DocumentItem | null>(null);
   const [previewDoc, setPreviewDoc] = useState<DocumentItem | null>(null);
+  const [noteDoc, setNoteDoc] = useState<DocumentItem | null>(null);
   const [deleteDoc, setDeleteDoc] = useState<DocumentItem | null>(null);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
@@ -227,13 +231,11 @@ export function DocumentsPage() {
 
   const items = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const effectiveAll = globalSearch && q.length > 0;
     let list = documents.filter((d) => {
-      if (effectiveAll) return true;
       if (scope === 'all') return true;
       if (scope === 'favorites') return favorites.includes(d.id);
       if (d.section !== scope) return false;
-      // Если идёт поиск без globalSearch — показываем всё в разделе плоско
+      // При активном поиске показываем всё в разделе плоско
       if (q) return true;
       // Иначе соблюдаем папочную иерархию
       return (d.parentId ?? null) === (currentFolderId ?? null);
@@ -271,7 +273,7 @@ export function DocumentsPage() {
       }
     });
     return list;
-  }, [documents, scope, favorites, activeTag, query, sort, globalSearch, currentFolderId]);
+  }, [documents, scope, favorites, activeTag, query, sort, currentFolderId]);
 
   const headerSection = isSection(scope) ? SECTIONS.find((s) => s.id === scope)! : null;
   const currentFolderDoc = inFolder
@@ -336,6 +338,19 @@ export function DocumentsPage() {
   const handleCreateFolder = () => {
     handleCreate({ kind: 'folder', emoji: '📁', title: 'Новая папка' });
   };
+  const handleCreateNote = () => {
+    const created = addDocument({
+      title: 'Без названия',
+      emoji: '📝',
+      kind: 'note',
+      section: isSection(scope) ? scope : 'general',
+      owner: 'Я',
+      body: '',
+      parentId: currentFolderId,
+    });
+    if (created.section !== scope) setScope(created.section);
+    setNoteDoc(created);
+  };
   const handleEdit = (d: DocumentItem) => {
     setFormEditDoc(d);
     setFormPrefill(undefined);
@@ -370,6 +385,17 @@ export function DocumentsPage() {
   const handleDuplicate = (d: DocumentItem) => {
     const copy = duplicateDocument(d.id);
     if (copy) toast.success(`Создана копия: «${copy.title}»`);
+  };
+  const openDoc = (d: DocumentItem) => {
+    if (d.kind === 'folder') {
+      enterFolder(d.id);
+      return;
+    }
+    if (d.kind === 'note') {
+      setNoteDoc(d);
+      return;
+    }
+    setPreviewDoc(d);
   };
 
   // — bulk —
@@ -661,11 +687,11 @@ export function DocumentsPage() {
           <li>
             <button
               type="button"
-              onClick={() => handleCreate()}
+              onClick={handleCreateNote}
               className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13.5px] text-muted-foreground transition-colors hover:bg-background/70 hover:text-foreground"
             >
-              <Plus className="h-3.5 w-3.5" />
-              Новый документ
+              <StickyNote className="h-3.5 w-3.5" />
+              Заметка
             </button>
           </li>
           <li>
@@ -887,35 +913,10 @@ export function DocumentsPage() {
                 <Input
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder={
-                    globalSearch ? 'Поиск во всех разделах…' : 'Поиск по этому разделу…'
-                  }
+                  placeholder="Поиск по этому разделу…"
                   className="h-8 pl-8 text-[13px]"
                 />
               </div>
-              <Button
-                size="sm"
-                variant={globalSearch ? 'default' : 'outline'}
-                className="h-8 gap-1.5 text-[13px]"
-                onClick={() => setGlobalSearch((v) => !v)}
-                title={
-                  globalSearch
-                    ? 'Поиск по всем разделам — кликните, чтобы искать только в текущем'
-                    : 'Поиск только в текущем разделе — кликните, чтобы искать везде'
-                }
-              >
-                {globalSearch ? (
-                  <>
-                    <Globe className="h-3.5 w-3.5" />
-                    Везде
-                  </>
-                ) : (
-                  <>
-                    <FolderClosed className="h-3.5 w-3.5" />
-                    В разделе
-                  </>
-                )}
-              </Button>
               <div className="inline-flex h-8 items-center rounded-md border bg-background p-0.5">
                 <button
                   type="button"
@@ -951,11 +952,11 @@ export function DocumentsPage() {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-56">
-                  <DropdownMenuItem onClick={() => handleCreate()}>
-                    <FileText className="mr-2 h-3.5 w-3.5" />
+                  <DropdownMenuItem onClick={handleCreateNote}>
+                    <StickyNote className="mr-2 h-3.5 w-3.5" />
                     <div className="flex min-w-0 flex-1 flex-col">
-                      <span>Новый документ</span>
-                      <span className="text-[11px] text-muted-foreground">Карточка без файла</span>
+                      <span>Заметка</span>
+                      <span className="text-[11px] text-muted-foreground">Текст с форматированием</span>
                     </div>
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={handleCreateFolder}>
@@ -1009,19 +1010,6 @@ export function DocumentsPage() {
                   ))}
                 </SelectContent>
               </Select>
-              <button
-                type="button"
-                onClick={() => setSort((p) => ({ ...p, dir: p.dir === 'asc' ? 'desc' : 'asc' }))}
-                className="inline-flex h-7 items-center gap-1 rounded-md border bg-background px-2 text-[11.5px] text-muted-foreground hover:text-foreground"
-                title={sort.dir === 'asc' ? 'По возрастанию' : 'По убыванию'}
-              >
-                {sort.dir === 'asc' ? (
-                  <ArrowUp className="h-3 w-3" />
-                ) : (
-                  <ArrowDown className="h-3 w-3" />
-                )}
-                {sort.dir === 'asc' ? 'A→Я' : 'Я→A'}
-              </button>
 
               {tagsInScope.length > 0 && (
                 <>
@@ -1117,7 +1105,7 @@ export function DocumentsPage() {
                 title="Ничего не найдено"
                 description={
                   query
-                    ? 'Попробуйте изменить запрос или включить поиск «Везде».'
+                    ? 'Попробуйте изменить запрос или зайти в «Все документы».'
                     : inFolder
                       ? 'Папка пуста. Перетащите файлы сюда или создайте новый документ.'
                       : 'В этом разделе пока нет документов. Перетащите файлы или добавьте первый.'
@@ -1205,8 +1193,8 @@ export function DocumentsPage() {
 
                     <button
                       type="button"
-                      onClick={() => (isFolder ? enterFolder(d.id) : setPreviewDoc(d))}
-                      onDoubleClick={() => !isFolder && setPreviewDoc(d)}
+                      onClick={() => openDoc(d)}
+                      onDoubleClick={() => !isFolder && openDoc(d)}
                       className="min-w-0 flex-1 text-left"
                     >
                       <div className="flex items-center gap-2">
@@ -1240,7 +1228,7 @@ export function DocumentsPage() {
                           {d.description}
                         </div>
                       )}
-                      {(globalSearch || scope === 'all' || scope === 'favorites') && section && (
+                      {(scope === 'all' || scope === 'favorites') && section && (
                         <div className="mt-0.5 text-[11px] text-muted-foreground">
                           {section.emoji} {section.title}
                         </div>
@@ -1324,8 +1312,8 @@ export function DocumentsPage() {
                     {/* preview area */}
                     <button
                       type="button"
-                      onClick={() => (isFolder ? enterFolder(d.id) : setPreviewDoc(d))}
-                      onDoubleClick={() => !isFolder && setPreviewDoc(d)}
+                      onClick={() => openDoc(d)}
+                      onDoubleClick={() => !isFolder && openDoc(d)}
                       className={cn(
                         'flex h-28 items-center justify-center overflow-hidden rounded-md bg-muted/40',
                         KIND_COLOR[d.kind],
@@ -1354,7 +1342,7 @@ export function DocumentsPage() {
                         <span>·</span>
                         <span className="truncate">{formatRelative(d.updatedAt)}</span>
                       </div>
-                      {(globalSearch || scope === 'all' || scope === 'favorites') && section && (
+                      {(scope === 'all' || scope === 'favorites') && section && (
                         <div className="mt-0.5 truncate text-[10.5px] text-muted-foreground">
                           {section.emoji} {section.title}
                         </div>
@@ -1420,6 +1408,12 @@ export function DocumentsPage() {
         currentSection={isSection(scope) ? scope : 'general'}
         documentTitle={`${selected.size} док.`}
         onSubmit={handleBulkMove}
+      />
+
+      <NoteDialog
+        open={!!noteDoc}
+        onOpenChange={(v) => !v && setNoteDoc(null)}
+        document={noteDoc}
       />
 
       <PreviewDialog
@@ -1554,11 +1548,11 @@ function ScopeRailItem({
       <button
         type="button"
         onClick={onClick}
-        className="flex flex-1 items-center gap-2 rounded-md px-1 py-1.5 text-left text-[13.5px]"
+        className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-1.5 pr-2 text-left text-[13.5px]"
       >
-        <span className="text-base leading-none">{emoji}</span>
-        <span className="flex-1 truncate font-medium">{label}</span>
-        <span className="tnum text-[11px] text-muted-foreground">{count}</span>
+        <span className="shrink-0 text-base leading-none">{emoji}</span>
+        <span className="min-w-0 flex-1 truncate font-medium">{label}</span>
+        <span className="tnum shrink-0 text-[11px] text-muted-foreground">{count}</span>
       </button>
     </div>
   );

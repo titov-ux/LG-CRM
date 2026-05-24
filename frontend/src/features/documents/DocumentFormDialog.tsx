@@ -29,6 +29,7 @@ const KIND_OPTIONS: { value: DocumentKind; label: string }[] = [
   { value: 'pptx', label: 'Презентация' },
   { value: 'image', label: 'Изображение' },
   { value: 'folder', label: 'Папка' },
+  { value: 'note', label: 'Заметка' },
 ];
 
 interface Props {

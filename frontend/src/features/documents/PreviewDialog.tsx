@@ -33,6 +33,7 @@ import {
   readAsDataUrl,
   rememberBlobUrl,
 } from './fileBlob';
+import { NoteViewer } from './NoteEditor';
 
 const KIND_LABEL: Record<string, string> = {
   doc: 'Документ',
@@ -41,6 +42,7 @@ const KIND_LABEL: Record<string, string> = {
   pptx: 'Презентация',
   image: 'Изображение',
   folder: 'Папка',
+  note: 'Заметка',
 };
 
 interface Props {
@@ -141,6 +143,13 @@ export function PreviewDialog({
   };
 
   const renderPreviewBody = () => {
+    if (fresh.kind === 'note') {
+      return (
+        <div className="max-h-[420px] overflow-auto rounded-md border bg-background p-4">
+          <NoteViewer html={fresh.body ?? ''} />
+        </div>
+      );
+    }
     if (!fresh.file || !previewUrl) {
       return (
         <div className="flex h-64 flex-col items-center justify-center gap-3 rounded-md border border-dashed bg-muted/20 text-center">

@@ -34,6 +34,7 @@ from app.modules.candidates.schemas import (
 from app.modules.matching.models import VacancyCandidate
 from app.modules.users.models import Role, User
 from app.modules.vacancies.models import EngagementType
+from app.realtime.events import publish_candidate_changed
 
 logger = logging.getLogger(__name__)
 
@@ -344,6 +345,7 @@ async def create_candidate(
         ).scalar_one_or_none()
         if reloaded is not None:
             cand = reloaded
+    publish_candidate_changed("created", id=cand.id, actor_id=user.id)
     return cand, []
 
 
@@ -390,6 +392,7 @@ async def update_candidate(
         _raise_candidate_write_error(e)
     await db.refresh(cand)
     vmap = await _vacancy_ids_map(db, [cand.id])
+    publish_candidate_changed("updated", id=cand.id, actor_id=user.id)
     return cand, vmap[cand.id]
 
 
@@ -409,6 +412,7 @@ async def archive_candidate(
     cand.archive_reason = reason
     await db.commit()
     await db.refresh(cand)
+    publish_candidate_changed("archived", id=cand.id, actor_id=user.id)
     return cand, vids
 
 
@@ -423,6 +427,7 @@ async def restore_candidate(
     cand.archive_reason = None
     await db.commit()
     await db.refresh(cand)
+    publish_candidate_changed("restored", id=cand.id, actor_id=user.id)
     return cand, vids
 
 
@@ -433,11 +438,12 @@ async def delete_candidate(
         _ensure_can_permanent_delete(user)
         cand, _ = await get_candidate(db, cand_id)
         await db.delete(cand)
-    else:
-        # Дефолтный DELETE без ?permanent=true = архивирование (как в моках)
-        await archive_candidate(db, user, cand_id, reason=None)
+        await db.commit()
+        publish_candidate_changed("deleted", id=cand_id, actor_id=user.id)
         return
-    await db.commit()
+    # Дефолтный DELETE без ?permanent=true = архивирование (как в моках)
+    await archive_candidate(db, user, cand_id, reason=None)
+    return
 
 
 # ---------------------------------------------------------------------------
@@ -494,6 +500,7 @@ async def change_status(
     await db.commit()
     await db.refresh(cand)
     vmap = await _vacancy_ids_map(db, [cand.id])
+    publish_candidate_changed("status_changed", id=cand.id, actor_id=user.id)
     return cand, vmap[cand.id]
 
 
@@ -521,4 +528,9 @@ async def reorder_kanban(
     for c in rows:
         await db.refresh(c)
     vmap = await _vacancy_ids_map(db, [c.id for c in rows])
+    publish_candidate_changed(
+        "reordered",
+        ids=[c.id for c in rows],
+        actor_id=user.id,
+    )
     return list(rows), vmap

@@ -3,6 +3,7 @@
 
 import ky from 'ky';
 import { API_BASE_URL } from '@/lib/constants';
+import { getClientId } from '@/lib/clientId';
 import { useAuthStore } from '@/stores/auth';
 
 let refreshPromise: Promise<void> | null = null;
@@ -35,6 +36,8 @@ export const api = ky.create({
       (request) => {
         const token = useAuthStore.getState().accessToken;
         if (token) request.headers.set('Authorization', `Bearer ${token}`);
+        // Корреляция со своими же realtime-событиями (echo-suppress на фронте).
+        request.headers.set('X-Client-Id', getClientId());
       },
     ],
     afterResponse: [

@@ -291,6 +291,30 @@ export const DOCUMENTS: DocumentItem[] = [
     owner: 'Команда LG',
   },
 
+  // notes
+  {
+    id: 'd-note-1',
+    section: 'regulations',
+    title: 'Шаблон welcome-сообщения',
+    emoji: '📝',
+    kind: 'note',
+    updatedAt: '2026-05-20T10:00:00Z',
+    owner: 'Команда LG',
+    tags: ['шаблон', 'коммуникации'],
+    body: '<h2>Добрый день, {{Имя}}!</h2><p>Меня зовут {{Рекрутер}}, я подбираю кандидатов для {{Клиент}}. Хочу обсудить с вами вакансию <strong>{{Должность}}</strong>.</p><ul><li>График: …</li><li>Зарплата: …</li><li>Локация: …</li></ul><p>Будет удобно созвониться сегодня после 17:00?</p>',
+  },
+  {
+    id: 'd-note-2',
+    section: 'general',
+    title: 'Чек-лист онбординга нового рекрутера',
+    emoji: '✅',
+    kind: 'note',
+    updatedAt: '2026-05-21T12:30:00Z',
+    owner: 'HR',
+    tags: ['онбординг'],
+    body: '<h2>Первая неделя</h2><ul data-type="taskList"><li data-checked="false"><label><input type="checkbox"><span></span></label><div><p>Доступ к CRM и почте</p></div></li><li data-checked="false"><label><input type="checkbox"><span></span></label><div><p>Знакомство с командой</p></div></li><li data-checked="false"><label><input type="checkbox"><span></span></label><div><p>Прочитать регламент работы</p></div></li><li data-checked="false"><label><input type="checkbox"><span></span></label><div><p>Тестовое интервью с наставником</p></div></li></ul><h2>Вторая неделя</h2><ul data-type="taskList"><li data-checked="false"><label><input type="checkbox"><span></span></label><div><p>Первый самостоятельный звонок</p></div></li><li data-checked="false"><label><input type="checkbox"><span></span></label><div><p>Ретро с руководителем</p></div></li></ul>',
+  },
+
   // general
   {
     id: 'd-gen-1',

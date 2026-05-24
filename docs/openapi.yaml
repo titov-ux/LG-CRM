@@ -2448,7 +2448,10 @@ components:
         - general: общие материалы команды
     DocumentKind:
       type: string
-      enum: [doc, pdf, xlsx, pptx, image, folder]
+      enum: [doc, pdf, xlsx, pptx, image, folder, note]
+      description: |
+        `note` — внутренняя заметка с HTML-телом (рендерится Tiptap). Тело хранится
+        в `Document.body`, файл (`fileId`) для заметок не используется.
     Document:
       type: object
       required: [id, title, emoji, kind, section, ownerUserId, updatedAt, createdAt]
@@ -2478,6 +2481,10 @@ components:
           allOf:
             - $ref: '#/components/schemas/DocumentFileMeta'
           nullable: true
+        body:
+          type: string
+          nullable: true
+          description: 'HTML-контент для kind=note (вывод Tiptap)'
         versionsCount:  { type: integer, minimum: 0 }
         commentsCount:  { type: integer, minimum: 0 }
         isFavorite:     { type: boolean, description: 'Избранное для текущего пользователя' }
@@ -2508,6 +2515,7 @@ components:
           items: { type: string, maxLength: 64 }
         ownerUserId: { $ref: '#/components/schemas/UUID', nullable: true, description: 'По умолчанию — текущий пользователь' }
         fileId:      { $ref: '#/components/schemas/UUID', nullable: true }
+        body:        { type: string, nullable: true, description: 'HTML для kind=note' }
     UpdateDocumentRequest:
       type: object
       properties:
@@ -2518,6 +2526,7 @@ components:
           type: array
           items: { type: string, maxLength: 64 }
         ownerUserId: { $ref: '#/components/schemas/UUID' }
+        body:        { type: string, nullable: true, description: 'HTML для kind=note' }
     MoveDocumentRequest:
       type: object
       required: [section]

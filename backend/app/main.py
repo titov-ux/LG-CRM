@@ -5,11 +5,13 @@
 """
 from __future__ import annotations
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.v1 import api_router
 from app.core.config import get_settings
+from app.realtime.events import current_client_id_var
 
 
 def _init_sentry(dsn: str, environment: str, traces_sample_rate: float) -> None:
@@ -57,6 +59,21 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    class _ClientIdMiddleware(BaseHTTPMiddleware):
+        """Прокидывает X-Client-Id из запроса в contextvar, чтобы realtime-события
+        могли пометить отправителя. Используется для echo-suppression на фронте.
+        """
+
+        async def dispatch(self, request: Request, call_next):  # type: ignore[override]
+            client_id = request.headers.get("X-Client-Id", "")
+            token = current_client_id_var.set(client_id)
+            try:
+                return await call_next(request)
+            finally:
+                current_client_id_var.reset(token)
+
+    app.add_middleware(_ClientIdMiddleware)
 
     app.include_router(api_router, prefix=settings.api_v1_prefix)
 

@@ -68,12 +68,12 @@ class Candidate(Base, TimestampsMixin, SoftDeleteMixin):
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     engagement_type: Mapped[EngagementType] = mapped_column(
-        Enum(EngagementType, name="engagement_type", create_type=False),
+        Enum(EngagementType, name="engagement_type", values_callable=_enum_values, create_type=False),
         nullable=False,
         default=EngagementType.outstaff,
     )
     grade: Mapped[Grade] = mapped_column(
-        Enum(Grade, name="grade", create_type=False),
+        Enum(Grade, name="grade", values_callable=_enum_values, create_type=False),
         nullable=False,
         default=Grade.middle,
     )
@@ -91,7 +91,7 @@ class Candidate(Base, TimestampsMixin, SoftDeleteMixin):
     )
     format_: Mapped[WorkFormat] = mapped_column(
         "format",
-        Enum(WorkFormat, name="work_format", create_type=False),
+        Enum(WorkFormat, name="work_format", values_callable=_enum_values, create_type=False),
         nullable=False,
         default=WorkFormat.hybrid,
     )

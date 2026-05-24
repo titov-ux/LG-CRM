@@ -270,14 +270,12 @@ async def create_candidate(
     duplicate: Candidate | None = None
     if payload.email:
         duplicate = (
-            await db.execute(
-                _base_query().where(Candidate.email == str(payload.email))
-            )
-        ).scalar_one_or_none()
+            await db.execute(_base_query().where(Candidate.email == str(payload.email)))
+        ).scalars().first()
     if duplicate is None and payload.phone:
         duplicate = (
             await db.execute(_base_query().where(Candidate.phone == payload.phone))
-        ).scalar_one_or_none()
+        ).scalars().first()
     if duplicate is not None:
         raise ApiError(
             status.HTTP_409_CONFLICT,

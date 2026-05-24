@@ -108,7 +108,7 @@ async def parse_text(
 ) -> ParseVacancyTextResponse:
     """Разбирает текст брифа от клиента в поля формы.
 
-    Использует Anthropic Claude (см. `modules/vacancies/ai.py`). Если ключ не
+    Использует YandexGPT (см. `modules/vacancies/ai.py`). Если ключ не
     сконфигурирован или сервис недоступен — возвращает 503 ai_unavailable.
     """
     try:
@@ -132,7 +132,23 @@ async def parse_text(
         ) from exc
 
     # `parsed_raw` уже в camelCase — но Pydantic с alias_generator примет и snake/camel.
-    return ParseVacancyTextResponse(parsed=ParsedVacancy.model_validate(parsed_raw))
+    # На случай, если в _coerce_parsed что-то пропустили: ловим ValidationError и
+    # удаляем «битое» поле по сообщению ошибки, а не падаем 500 на пользователе.
+    from pydantic import ValidationError
+
+    try:
+        parsed = ParsedVacancy.model_validate(parsed_raw)
+    except ValidationError as exc:
+        # Тихо отбрасываем поля, на которые ругнулся валидатор, и пробуем ещё раз.
+        bad_keys = {".".join(str(p) for p in e["loc"]) for e in exc.errors()}
+        logger.warning(
+            "vacancies.parse_text validation error, dropping fields %s: raw=%r",
+            bad_keys,
+            parsed_raw,
+        )
+        cleaned = {k: v for k, v in parsed_raw.items() if k not in bad_keys}
+        parsed = ParsedVacancy.model_validate(cleaned)
+    return ParseVacancyTextResponse(parsed=parsed)
 
 
 @router.get("", response_model=VacancyPage, summary="Список вакансий с фильтрами")

@@ -166,6 +166,24 @@ def _resume_get(cand: Candidate, snake: str) -> list[dict[str, Any]] | None:
     return (cand.resume or {}).get(_RESUME_CAMEL[snake])
 
 
+def _next_kanban_order(peers: Iterable[Candidate]) -> int:
+    """Безопасно считает следующий порядок даже при грязных данных в БД."""
+    max_order = -1
+    for peer in peers:
+        value = getattr(peer, "kanban_order", None)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            max_order = max(max_order, value)
+            continue
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            continue
+        max_order = max(max_order, parsed)
+    return max_order + 1
+
+
 # ---------------------------------------------------------------------------
 # CRUD
 # ---------------------------------------------------------------------------
@@ -272,7 +290,7 @@ async def create_candidate(
     in_col = (
         await db.execute(_base_query().where(Candidate.status == payload.status))
     ).scalars().all()
-    order = (max((c.kanban_order for c in in_col), default=-1)) + 1
+    order = _next_kanban_order(in_col)
 
     cand = Candidate(
         full_name=payload.full_name,
@@ -444,7 +462,7 @@ async def change_status(
         peers = (
             await db.execute(_base_query().where(Candidate.status == payload.status))
         ).scalars().all()
-        cand.kanban_order = max((p.kanban_order for p in peers), default=-1) + 1
+        cand.kanban_order = _next_kanban_order(peers)
         await audit_service.record_audit(
             db,
             entity_type="candidate",

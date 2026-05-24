@@ -1072,19 +1072,59 @@ export const handlers = [
   }),
 
   // === Analytics ===
-  http.get(url('/analytics/summary'), () => {
-    const openVacancies = vacanciesDb.filter((v) => !['closed_success', 'paused'].includes(v.status)).length;
+  http.get(url('/analytics/summary'), ({ request }) => {
+    const u = new URL(request.url);
+    const fromParam = u.searchParams.get('from');
+    const toParam = u.searchParams.get('to');
+    const compare = (u.searchParams.get('compare') ?? 'prev') as 'prev' | 'yoy' | 'none';
+    const now = new Date();
+    const periodFrom = fromParam ? new Date(fromParam) : new Date(now.getFullYear(), now.getMonth(), 1);
+    const periodTo = toParam ? new Date(toParam) : now;
+    const periodLen = periodTo.getTime() - periodFrom.getTime();
+
+    // снимки на «сейчас» — не зависят от периода
+    const openVacancies = vacanciesDb.filter(
+      (v) => !['closed_success', 'paused', 'closed'].includes(v.status),
+    ).length;
     const activeCandidates = candidatesDb.filter(
       (c) => !['hired', 'reserve', 'rejected_client', 'rejected_candidate'].includes(c.status),
     ).length;
-    const closedThisMonth = vacanciesDb.filter((v) => v.status === 'closed_success').length;
-    const hiredThisMonth = candidatesDb.filter((c) => c.status === 'hired').length;
+    // событийные KPI — псевдо-привязка к периоду. В моке у нас нет истории смены статусов,
+    // поэтому масштабируем «всего закрыто/нанято» пропорционально длине периода к месяцу.
+    const totalClosed = vacanciesDb.filter((v) => ['closed', 'closed_success'].includes(v.status)).length;
+    const totalHired = candidatesDb.filter((c) => c.status === 'hired').length;
+    const monthMs = 30 * 86400_000;
+    const scale = Math.min(1, periodLen / monthMs);
+    const closedThisMonth = Math.round(totalClosed * scale);
+    const hiredThisMonth = Math.round(totalHired * scale);
+
+    // окно сравнения
+    let cmp: { from: string; to: string; mode: 'prev' | 'yoy' } | null = null;
+    if (compare === 'prev') {
+      cmp = {
+        from: new Date(periodFrom.getTime() - periodLen).toISOString(),
+        to: periodFrom.toISOString(),
+        mode: 'prev',
+      };
+    } else if (compare === 'yoy') {
+      const f = new Date(periodFrom); f.setFullYear(f.getFullYear() - 1);
+      const t = new Date(periodTo); t.setFullYear(t.getFullYear() - 1);
+      cmp = { from: f.toISOString(), to: t.toISOString(), mode: 'yoy' };
+    }
+
+    // моковые дельты — детерминированные «псевдоданные»
+    const delta = cmp
+      ? { openVacancies: 0, activeCandidates: 0, closedThisMonth: 12.5, hiredThisMonth: -4.2 }
+      : { openVacancies: 0, activeCandidates: 0, closedThisMonth: 0, hiredThisMonth: 0 };
+
     return HttpResponse.json({
       openVacancies,
       activeCandidates,
       closedThisMonth,
       hiredThisMonth,
-      delta: { openVacancies: 3, activeCandidates: 12, closedThisMonth: 2, hiredThisMonth: 1 },
+      delta,
+      period: { from: periodFrom.toISOString(), to: periodTo.toISOString() },
+      compare: cmp,
     });
   }),
   http.get(url('/analytics/funnel'), () => {
@@ -1104,6 +1144,287 @@ export const handlers = [
         ).length,
       }));
     return HttpResponse.json(out);
+  }),
+  http.get(url('/analytics/client-performance'), ({ request }) => {
+    const u = new URL(request.url);
+    const fromParam = u.searchParams.get('from');
+    const toParam = u.searchParams.get('to');
+    const now = new Date();
+    const periodFrom = fromParam ? new Date(fromParam) : new Date(now.getFullYear(), now.getMonth(), 1);
+    const periodTo = toParam ? new Date(toParam) : now;
+
+    const openStatuses = ['new', 'in_work', 'proposed', 'interview', 'waiting_os'];
+    const items = clientsDb.map((c, i) => {
+      const myVacs = vacanciesDb.filter((v) => v.clientId === c.id);
+      const vacanciesOpen = myVacs.filter((v) => openStatuses.includes(v.status)).length;
+      const vacanciesClosed = myVacs.filter((v) =>
+        ['closed', 'closed_success'].includes(v.status),
+      ).length;
+      const myCands = candidatesDb.filter((c2) =>
+        c2.vacancyIds?.some((vid) => myVacs.some((v) => v.id === vid)),
+      );
+      const hired = myCands.filter((c2) => c2.status === 'hired').length;
+      const presented = myCands.filter((c2) =>
+        ['presented', 'waiting_os', 'offer', 'hired'].includes(c2.status),
+      ).length;
+      const rejected = myCands.filter((c2) =>
+        ['rejected_client', 'rejected_candidate'].includes(c2.status),
+      ).length;
+      const total = myCands.length || 1;
+      const conv = presented > 0 ? Math.round((hired * 1000) / presented) / 10 : 0;
+      const rejRate = Math.round((rejected * 1000) / total) / 10;
+      const margin = hired * (350 * 160 - 280000);
+      const lastVacancyAt =
+        myVacs.length > 0
+          ? new Date(now.getTime() - (i * 7 + 3) * 86400_000).toISOString()
+          : null;
+      const daysSinceLast =
+        lastVacancyAt
+          ? Math.floor((now.getTime() - new Date(lastVacancyAt).getTime()) / 86400_000)
+          : null;
+      const flags: string[] = [];
+      if (daysSinceLast != null && daysSinceLast >= 60) flags.push('stale');
+      if (vacanciesOpen === 0 && myVacs.length > 0 && !flags.includes('stale'))
+        flags.push('no_open');
+      if (rejRate >= 30) flags.push('high_rejection');
+      if (myVacs.length === 0) flags.push('no_vacancies_ever');
+      const sparkline = Array.from({ length: 8 }, (_, k) =>
+        Math.max(0, Math.round(0.4 + Math.sin(k / 1.6 + i * 0.7) + (k % 4 === 0 ? 1 : 0))),
+      );
+      return {
+        clientId: c.id,
+        name: c.name,
+        industry: c.industry,
+        status: c.status,
+        clientKind: c.clientKind,
+        vacanciesTotal: myVacs.length,
+        vacanciesOpen,
+        vacanciesClosedInPeriod: vacanciesClosed,
+        hiresInPeriod: hired,
+        avgTimeToFillDays: vacanciesClosed > 0 ? 28 + i * 2 : 0,
+        monthlyMarginRunRate: margin,
+        presentedToHiredPct: conv,
+        lastVacancyAt,
+        daysSinceLastVacancy: daysSinceLast,
+        rejectionRatePct: rejRate,
+        healthFlags: flags,
+        sparkline,
+      };
+    });
+    items.sort(
+      (a, b) => b.hiresInPeriod - a.hiresInPeriod || b.vacanciesOpen - a.vacanciesOpen,
+    );
+    return HttpResponse.json({
+      items,
+      period: { from: periodFrom.toISOString(), to: periodTo.toISOString() },
+    });
+  }),
+  http.get(url('/analytics/recruiter-performance'), ({ request }) => {
+    const u = new URL(request.url);
+    const fromParam = u.searchParams.get('from');
+    const toParam = u.searchParams.get('to');
+    const now = new Date();
+    const periodFrom = fromParam ? new Date(fromParam) : new Date(now.getFullYear(), now.getMonth(), 1);
+    const periodTo = toParam ? new Date(toParam) : now;
+    const recs = usersDb.filter((u) => u.role === 'recruiter');
+    const items = recs.map((r, i) => {
+      const myCands = candidatesDb.filter((c) => c.recruiterId === r.id);
+      const hired = myCands.filter((c) => c.status === 'hired').length;
+      const presented = myCands.filter((c) =>
+        ['presented', 'waiting_os', 'offer', 'hired'].includes(c.status),
+      ).length;
+      const created = myCands.length;
+      const totalMargin = hired * (350 * 160 - 280000); // моковая средняя маржа на найм
+      // моковая sparkline — небольшой синус-шум
+      const sparkline = Array.from({ length: 8 }, (_, k) =>
+        Math.max(0, Math.round(0.5 + Math.sin(k / 2 + i) + (k % 3 === 0 ? 1 : 0))),
+      );
+      return {
+        recruiterId: r.id,
+        fullName: r.fullName,
+        candidatesCreated: created,
+        presented,
+        hired,
+        hireRatePct: presented > 0 ? Math.round((hired * 1000) / presented) / 10 : 0,
+        avgTimeToHireDays: hired > 0 ? 24 + i * 1.5 : 0,
+        totalMargin: hired > 0 ? totalMargin : 0,
+        sparkline,
+      };
+    });
+    items.sort((a, b) => b.hired - a.hired || b.hireRatePct - a.hireRatePct);
+    return HttpResponse.json({
+      items,
+      period: { from: periodFrom.toISOString(), to: periodTo.toISOString() },
+    });
+  }),
+  http.get(url('/analytics/funnel-v2'), ({ request }) => {
+    const u = new URL(request.url);
+    const fromParam = u.searchParams.get('from');
+    const toParam = u.searchParams.get('to');
+    const now = new Date();
+    const periodFrom = fromParam ? new Date(fromParam) : new Date(now.getFullYear(), now.getMonth(), 1);
+    const periodTo = toParam ? new Date(toParam) : now;
+    // моковая «matching-воронка» — выводим из статусов кандидатов как прокси
+    const cnt = (statuses: string[]) =>
+      candidatesDb.filter((c) => statuses.includes(c.status)).length;
+    const accepted = cnt(['hired']);
+    const offered = accepted + cnt(['offer']);
+    const interview = offered + cnt(['waiting_os']);
+    const reviewed = interview + cnt(['ready']);
+    const submitted = reviewed + cnt(['presented']);
+    const rejectedClient = cnt(['rejected_client']);
+    const rejectedInternal = cnt(['rejected_candidate']);
+    const cumulative = [submitted, reviewed, interview, offered, accepted];
+    const ids = ['submitted', 'reviewed', 'interview', 'offered', 'accepted'] as const;
+    const stages = cumulative.map((count, i) => {
+      const prev = i === 0 ? count : cumulative[i - 1];
+      const conv = i === 0 ? 100 : prev > 0 ? Math.round((count * 1000) / prev) / 10 : 0;
+      const drop = i === 0 ? 0 : Math.max(0, prev - count);
+      return { status: ids[i], count, conversionPct: conv, dropOff: drop };
+    });
+    const overall = submitted > 0 ? Math.round((accepted * 1000) / submitted) / 10 : 0;
+    return HttpResponse.json({
+      stages,
+      rejected: { client: rejectedClient, internal: rejectedInternal, total: rejectedClient + rejectedInternal },
+      total: submitted + rejectedClient + rejectedInternal,
+      overallConversionPct: overall,
+      period: { from: periodFrom.toISOString(), to: periodTo.toISOString() },
+    });
+  }),
+  http.get(url('/analytics/time-to-hire'), ({ request }) => {
+    const u = new URL(request.url);
+    const fromParam = u.searchParams.get('from');
+    const toParam = u.searchParams.get('to');
+    const now = new Date();
+    const periodFrom = fromParam ? new Date(fromParam) : new Date(now.getFullYear(), now.getMonth(), 1);
+    const periodTo = toParam ? new Date(toParam) : now;
+    const hired = candidatesDb.filter((c) => c.status === 'hired').length;
+    return HttpResponse.json({
+      sampleSize: hired,
+      avgDays: 28.4,
+      medianDays: 24,
+      p90Days: 52,
+      distribution: [
+        { label: '≤ 14 дней', maxDays: 14, count: Math.max(0, Math.floor(hired * 0.2)) },
+        { label: '15–30 дней', maxDays: 30, count: Math.max(0, Math.floor(hired * 0.45)) },
+        { label: '31–60 дней', maxDays: 60, count: Math.max(0, Math.floor(hired * 0.25)) },
+        { label: '> 60 дней', maxDays: null, count: Math.max(0, Math.ceil(hired * 0.1)) },
+      ],
+      byStage: [
+        { status: 'new', avgDays: 2.1, medianDays: 1, sample: 24 },
+        { status: 'recruiter_iv', avgDays: 5.4, medianDays: 4, sample: 18 },
+        { status: 'ready', avgDays: 3.0, medianDays: 2, sample: 16 },
+        { status: 'presented', avgDays: 7.5, medianDays: 6, sample: 12 },
+        { status: 'waiting_os', avgDays: 9.2, medianDays: 7, sample: 8 },
+        { status: 'offer', avgDays: 4.1, medianDays: 3, sample: 5 },
+      ],
+      period: { from: periodFrom.toISOString(), to: periodTo.toISOString() },
+    });
+  }),
+  http.get(url('/analytics/attention'), ({ request }) => {
+    const u = new URL(request.url);
+    const top = Number(u.searchParams.get('top') ?? '5');
+    const now = new Date();
+    const openStatuses = ['new', 'in_work', 'proposed', 'interview', 'waiting_os'];
+
+    const stuckVac = vacanciesDb
+      .filter((v) => openStatuses.includes(v.status))
+      .map((v) => ({ id: v.id, title: v.title, status: v.status, daysInStatus: v.daysInStatus }))
+      .filter((v) => v.daysInStatus > 30)
+      .sort((a, b) => b.daysInStatus - a.daysInStatus);
+
+    const activeCandStatuses = ['new', 'recruiter_iv', 'ready', 'presented', 'waiting_os', 'offer'];
+    const stuckCand = candidatesDb
+      .filter((c) => activeCandStatuses.includes(c.status))
+      .map((c) => ({ id: c.id, fullName: c.fullName, status: c.status, daysInStatus: c.daysInStatus }))
+      .filter((c) => c.daysInStatus > 14)
+      .sort((a, b) => b.daysInStatus - a.daysInStatus);
+
+    const noCand = vacanciesDb
+      .filter((v) => openStatuses.includes(v.status))
+      .filter((v) => !candidatesDb.some((c) => c.vacancyIds?.includes(v.id)))
+      .map((v) => ({ id: v.id, title: v.title, daysOpen: v.daysInStatus }));
+
+    const today = new Date(now); today.setHours(0, 0, 0, 0);
+    const in7 = new Date(today); in7.setDate(in7.getDate() + 7);
+    const in14 = new Date(today); in14.setDate(in14.getDate() + 14);
+    const dayDiff = (a: Date, b: Date) => Math.floor((a.getTime() - b.getTime()) / 86400_000);
+
+    const withDl = vacanciesDb.filter((v) => openStatuses.includes(v.status) && v.deadline);
+    const overdue = withDl
+      .filter((v) => new Date(v.deadline!) < today)
+      .map((v) => ({ id: v.id, title: v.title, deadline: v.deadline, daysOverdue: dayDiff(today, new Date(v.deadline!)) }));
+    const soon7 = withDl
+      .filter((v) => {
+        const d = new Date(v.deadline!);
+        return d >= today && d <= in7;
+      })
+      .map((v) => ({ id: v.id, title: v.title, deadline: v.deadline, daysLeft: dayDiff(new Date(v.deadline!), today) }));
+    const soon14 = withDl.filter((v) => {
+      const d = new Date(v.deadline!);
+      return d > in7 && d <= in14;
+    });
+
+    return HttpResponse.json({
+      stuckVacancies: { total: stuckVac.length, thresholdDays: 30, items: stuckVac.slice(0, top) },
+      stuckCandidates: { total: stuckCand.length, thresholdDays: 14, items: stuckCand.slice(0, top) },
+      vacanciesWithoutCandidates: { total: noCand.length, items: noCand.slice(0, top) },
+      overdueDeadlines: { total: overdue.length, items: overdue.slice(0, top) },
+      deadlinesNext7Days: { total: soon7.length, items: soon7.slice(0, top) },
+      deadlinesNext14Days: { total: soon14.length },
+    });
+  }),
+  http.get(url('/analytics/trends'), ({ request }) => {
+    const u = new URL(request.url);
+    const fromParam = u.searchParams.get('from');
+    const toParam = u.searchParams.get('to');
+    const granParam = (u.searchParams.get('granularity') ?? 'auto') as
+      | 'auto' | 'day' | 'week' | 'month';
+    const now = new Date();
+    const periodFrom = fromParam ? new Date(fromParam) : new Date(now.getFullYear(), now.getMonth(), 1);
+    const periodTo = toParam ? new Date(toParam) : now;
+
+    const days = Math.max(1, Math.ceil((periodTo.getTime() - periodFrom.getTime()) / 86400_000));
+    const gran: 'day' | 'week' | 'month' =
+      granParam !== 'auto'
+        ? granParam
+        : days <= 31 ? 'day' : days <= 180 ? 'week' : 'month';
+
+    // строим бакеты
+    const buckets: Date[] = [];
+    const cursor = new Date(periodFrom);
+    cursor.setHours(0, 0, 0, 0);
+    if (gran === 'week') {
+      const dow = (cursor.getDay() + 6) % 7; // понедельник = 0
+      cursor.setDate(cursor.getDate() - dow);
+    } else if (gran === 'month') {
+      cursor.setDate(1);
+    }
+    while (cursor < periodTo) {
+      buckets.push(new Date(cursor));
+      if (gran === 'day') cursor.setDate(cursor.getDate() + 1);
+      else if (gran === 'week') cursor.setDate(cursor.getDate() + 7);
+      else cursor.setMonth(cursor.getMonth() + 1);
+    }
+
+    // моковые серии: лёгкий синусоидальный шум + базовый уровень
+    const seed = (i: number, off: number) =>
+      Math.max(0, Math.round(2 + 1.5 * Math.sin(i / 2 + off) + (i % 3 === 0 ? 1 : 0)));
+    const series = {
+      vacanciesCreated: buckets.map((b, i) => ({ bucket: b.toISOString(), value: seed(i, 0) })),
+      vacanciesClosed: buckets.map((b, i) => ({ bucket: b.toISOString(), value: seed(i, 1.3) })),
+      candidatesCreated: buckets.map((b, i) => ({
+        bucket: b.toISOString(),
+        value: seed(i, 0.7) + 2,
+      })),
+      hires: buckets.map((b, i) => ({ bucket: b.toISOString(), value: i % 4 === 0 ? 1 : 0 })),
+    };
+
+    return HttpResponse.json({
+      granularity: gran,
+      period: { from: periodFrom.toISOString(), to: periodTo.toISOString() },
+      series,
+    });
   }),
 
   // === Permissions matrix ===

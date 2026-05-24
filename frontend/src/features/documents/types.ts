@@ -24,6 +24,14 @@ export interface DocumentComment {
   text: string;
 }
 
+export interface DocumentFileMeta {
+  fileName: string;
+  mime: string;
+  size: number; // bytes
+  /** small files (<2МБ) — сохраняем dataURL в persist-store для оффлайн-просмотра */
+  dataUrl?: string;
+}
+
 export interface DocumentItem {
   id: string;
   title: string;
@@ -37,6 +45,8 @@ export interface DocumentItem {
   parentId?: string; // для вложения внутрь папки
   versions?: DocumentVersion[];
   comments?: DocumentComment[];
+  /** мета приложенного файла; контент лежит либо в `file.dataUrl`, либо в in-memory store */
+  file?: DocumentFileMeta;
 }
 
 export interface DocumentTemplate {

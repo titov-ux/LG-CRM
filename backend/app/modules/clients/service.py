@@ -4,9 +4,9 @@
 - admin / recruiter / viewer — все клиенты;
 - account_manager — только клиенты, где он `account_manager_id`.
 
-`vacancies_count` и `contacts_count` считаются на чтении: вакансии появятся на
-Этапе 4 (пока считаем 0), контакты — JOIN/подзапрос. Денормализация — когда
-нагрузка вырастет.
+`vacancies_count` и `contacts_count` считаются на чтении — GROUP BY-подзапросы
+в `_counts_for_clients` (фильтр `deleted_at IS NULL` для обоих). Денормализация
+— когда нагрузка вырастет.
 """
 from __future__ import annotations
 
@@ -32,6 +32,7 @@ from app.modules.clients.schemas import (
     UpdateClientRequest,
 )
 from app.modules.users.models import Role, User
+from app.modules.vacancies.models import Vacancy
 
 # ---------------------------------------------------------------------------
 # Access control helpers
@@ -78,16 +79,30 @@ async def _counts_for_clients(
     if not ids:
         return {}
     # contacts_count: только не удалённые
-    rows = (
+    contact_rows = (
         await db.execute(
             select(Contact.client_id, func.count(Contact.id))
             .where(Contact.client_id.in_(ids), Contact.deleted_at.is_(None))
             .group_by(Contact.client_id)
         )
     ).all()
-    contacts_map = {cid: cnt for cid, cnt in rows}
+    contacts_map = {cid: cnt for cid, cnt in contact_rows}
+    # vacancies_count: только не удалённые (любой статус — закрытые/архивные
+    # вакансии тоже должны учитываться: счётчик в списке клиентов отражает,
+    # сколько всего вакансий когда-либо заводили в систему по клиенту).
+    vacancy_rows = (
+        await db.execute(
+            select(Vacancy.client_id, func.count(Vacancy.id))
+            .where(Vacancy.client_id.in_(ids), Vacancy.deleted_at.is_(None))
+            .group_by(Vacancy.client_id)
+        )
+    ).all()
+    vacancies_map = {cid: cnt for cid, cnt in vacancy_rows}
     return {
-        cid: {"contacts_count": contacts_map.get(cid, 0), "vacancies_count": 0}
+        cid: {
+            "contacts_count": contacts_map.get(cid, 0),
+            "vacancies_count": vacancies_map.get(cid, 0),
+        }
         for cid in ids
     }
 
@@ -194,7 +209,8 @@ async def create_client(
     db.add(client)
     await db.commit()
     await db.refresh(client, attribute_names=["legal_entities"])
-    return client, {"contacts_count": 0, "vacancies_count": 0}
+    counts = (await _counts_for_clients(db, [client.id]))[client.id]
+    return client, counts
 
 
 async def update_client(

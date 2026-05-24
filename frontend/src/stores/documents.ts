@@ -2,11 +2,15 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type {
   DocumentComment,
+  DocumentFileMeta,
   DocumentItem,
   DocumentSectionId,
   DocumentVersion,
 } from '@/features/documents/types';
 import { DOCUMENTS } from '@/features/documents/mocks';
+
+/** Граница, до которой кладём dataURL в persist-store (≈2МБ исходного файла ≈ 2.7МБ base64). */
+const PERSIST_BLOB_LIMIT = 2 * 1024 * 1024;
 
 // Локальный стор документов. Пока работаем без бэка — данные и избранное
 // живут в localStorage. При появлении API заменится на TanStack Query +
@@ -22,9 +26,13 @@ interface DocumentsState {
   deleteDocument: (id: string) => void;
   moveDocument: (id: string, section: DocumentSectionId, parentId?: string) => void;
   setEmoji: (id: string, emoji: string) => void;
+  /** Дублирование документа (новая копия, не разделяет blob-контент) */
+  duplicateDocument: (id: string) => DocumentItem | null;
+  /** Прикрепить/обновить файл к документу */
+  attachFile: (id: string, file: DocumentFileMeta) => void;
   // Bulk
   bulkDelete: (ids: string[]) => void;
-  bulkMove: (ids: string[], section: DocumentSectionId) => void;
+  bulkMove: (ids: string[], section: DocumentSectionId, parentId?: string) => void;
   // Versions & comments
   addVersion: (id: string, version: Omit<DocumentVersion, 'id' | 'createdAt'>) => void;
   addComment: (id: string, comment: Omit<DocumentComment, 'id' | 'createdAt'>) => void;
@@ -48,8 +56,15 @@ export const useDocumentsStore = create<DocumentsState>()(
       recentEmojis: [],
 
       addDocument: (doc) => {
+        // если файл большой — dataURL в persist не пишем, остаётся только в in-memory кэше
+        const file = doc.file
+          ? doc.file.size <= PERSIST_BLOB_LIMIT
+            ? doc.file
+            : { ...doc.file, dataUrl: undefined }
+          : undefined;
         const created: DocumentItem = {
           ...doc,
+          file,
           id: newId(),
           updatedAt: nowIso(),
         };
@@ -86,17 +101,45 @@ export const useDocumentsStore = create<DocumentsState>()(
           };
         }),
 
-      bulkMove: (ids, section) =>
+      bulkMove: (ids, section, parentId) =>
         set((s) => {
           const idSet = new Set(ids);
           return {
             documents: s.documents.map((d) =>
               idSet.has(d.id)
-                ? { ...d, section, parentId: undefined, updatedAt: nowIso() }
+                ? { ...d, section, parentId, updatedAt: nowIso() }
                 : d,
             ),
           };
         }),
+
+      duplicateDocument: (id) => {
+        const original = get().documents.find((d) => d.id === id);
+        if (!original) return null;
+        const copy: DocumentItem = {
+          ...original,
+          id: newId(),
+          title: `${original.title} — копия`,
+          updatedAt: nowIso(),
+          versions: [],
+          comments: [],
+        };
+        set((s) => ({ documents: [copy, ...s.documents] }));
+        return copy;
+      },
+
+      attachFile: (id, file) =>
+        set((s) => ({
+          documents: s.documents.map((d) =>
+            d.id === id
+              ? {
+                  ...d,
+                  file: file.size <= PERSIST_BLOB_LIMIT ? file : { ...file, dataUrl: undefined },
+                  updatedAt: nowIso(),
+                }
+              : d,
+          ),
+        })),
 
       addVersion: (id, version) =>
         set((s) => ({

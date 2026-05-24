@@ -1,106 +1,161 @@
+import { useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { UserAvatar } from '@/components/common/UserAvatar';
-import { useFunnel, useRecruiterLoad, useSummary } from './hooks';
-import { useClients } from '@/features/clients/hooks';
-import { useUsers } from '@/features/users/hooks';
-import { vacancyStatuses } from '@/mocks/db/vacancies';
+import {
+  useAttention,
+  useClientPerformance,
+  useFunnelV2,
+  useRecruiterPerformance,
+  useSummary,
+  useTimeToHire,
+  useTrends,
+} from './hooks';
+import { PeriodPicker } from './PeriodPicker';
+import { KpiCard } from './KpiCard';
+import { TrendsChart } from './TrendsChart';
+import { FunnelChart } from './FunnelChart';
+import { TimeToHireCard } from './TimeToHireCard';
+import { AttentionList } from './AttentionList';
+import { RecruitersTable } from './RecruitersTable';
+import { ClientsTable } from './ClientsTable';
+import {
+  COMPARE_LABEL,
+  resolvePeriod,
+  useAnalyticsPeriod,
+} from '@/stores/analyticsPeriod';
 
 export function DashboardPage() {
-  const { data: summary, isLoading } = useSummary();
-  const { data: funnel } = useFunnel();
-  const { data: load } = useRecruiterLoad();
-  const { data: users } = useUsers();
-  const { data: clients } = useClients();
+  const { preset, custom, compare } = useAnalyticsPeriod();
+  const period = useMemo(() => resolvePeriod(preset, custom), [preset, custom]);
+  const queryParams = useMemo(
+    () => ({ from: period.from, to: period.to }),
+    [period.from, period.to],
+  );
 
-  const metrics = summary
-    ? [
-        { label: 'Открытых вакансий', value: summary.openVacancies, delta: summary.delta.openVacancies, accent: 'text-foreground' },
-        { label: 'Активных кандидатов', value: summary.activeCandidates, delta: summary.delta.activeCandidates, accent: 'text-foreground' },
-        { label: 'Закрыто в этом месяце', value: summary.closedThisMonth, delta: summary.delta.closedThisMonth, accent: 'text-emerald-600' },
-        { label: 'Трудоустроено', value: summary.hiredThisMonth, delta: summary.delta.hiredThisMonth, accent: 'text-emerald-600' },
-      ]
-    : [];
-  const maxFunnel = Math.max(1, ...((funnel ?? []).map((f) => f.count)));
+  const { data: summary, isLoading } = useSummary({
+    ...queryParams,
+    compare,
+  });
+  const { data: trends, isLoading: trendsLoading } = useTrends(queryParams);
+  const { data: funnel, isLoading: funnelLoading } = useFunnelV2(queryParams);
+  const { data: tth, isLoading: tthLoading } = useTimeToHire(queryParams);
+  const { data: attention, isLoading: attentionLoading } = useAttention(5);
+  const { data: recruiters, isLoading: recruitersLoading } =
+    useRecruiterPerformance(queryParams);
+  const { data: clientsPerf, isLoading: clientsPerfLoading } =
+    useClientPerformance(queryParams);
+
+  const deltaCaption = compare === 'none' ? undefined : COMPARE_LABEL[compare];
 
   return (
     <div className="flex-1 space-y-3 overflow-auto px-6 pb-6 pt-5">
-      <div className="grid grid-cols-4 gap-3">
-        {isLoading
-          ? Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-20" />)
-          : metrics.map((m) => (
-              <Card key={m.label}>
-                <CardContent className="p-4">
-                  <div className="mb-2 text-[11.5px] font-medium text-muted-foreground">{m.label}</div>
-                  <div className="flex items-baseline gap-2">
-                    <div className={`tnum text-[26px] font-bold leading-none tracking-tight ${m.accent}`}>{m.value}</div>
-                    <div className="tnum text-xs font-semibold text-emerald-600">+{m.delta}</div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
+      {/* Заголовок + селектор периода */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-[15px] font-semibold tracking-tight">Дашборд</h1>
+          <p className="text-[11.5px] text-muted-foreground">
+            Метрики обновляются на чтении. KPI и тренды — за выбранный период.
+          </p>
+        </div>
+        <PeriodPicker />
       </div>
 
+      {/* KPI */}
+      <div className="grid grid-cols-4 gap-3">
+        {isLoading || !summary ? (
+          Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24" />)
+        ) : (
+          <>
+            <KpiCard
+              label="Открытых вакансий"
+              value={summary.openVacancies}
+              goodDirection="neutral"
+            />
+            <KpiCard
+              label="Активных кандидатов"
+              value={summary.activeCandidates}
+              goodDirection="neutral"
+            />
+            <KpiCard
+              label="Закрыто за период"
+              value={summary.closedThisMonth}
+              delta={summary.delta.closedThisMonth}
+              deltaCaption={deltaCaption}
+              goodDirection="up"
+            />
+            <KpiCard
+              label="Трудоустроено"
+              value={summary.hiredThisMonth}
+              delta={summary.delta.hiredThisMonth}
+              deltaCaption={deltaCaption}
+              goodDirection="up"
+            />
+          </>
+        )}
+      </div>
+
+      {/* Тренды */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <CardTitle>Динамика за период</CardTitle>
+          {trends && (
+            <span className="text-[11px] uppercase tracking-wide text-muted-foreground/70">
+              шаг: {trends.granularity === 'day' ? 'день' : trends.granularity === 'week' ? 'неделя' : 'месяц'}
+            </span>
+          )}
+        </CardHeader>
+        <CardContent>
+          <TrendsChart data={trends} isLoading={trendsLoading} />
+        </CardContent>
+      </Card>
+
+      {/* Воронка + Time-to-hire */}
       <div className="grid grid-cols-[1.4fr_1fr] gap-3">
         <Card>
-          <CardHeader><CardTitle>Воронка вакансий</CardTitle></CardHeader>
-          <CardContent className="space-y-2">
-            {vacancyStatuses.map((s) => {
-              const count = funnel?.find((f) => f.status === s.id)?.count ?? 0;
-              return (
-                <div key={s.id} className="grid grid-cols-[180px_1fr_28px] items-center gap-3 text-xs">
-                  <div className="flex items-center gap-1.5 text-slate-600">
-                    <span className="h-1.5 w-1.5 rounded-full" style={{ background: s.color }} />
-                    {s.label}
-                  </div>
-                  <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-                    <div className="h-full transition-all" style={{ background: s.color, width: `${(count / maxFunnel) * 100}%` }} />
-                  </div>
-                  <div className="tnum text-right font-semibold">{count}</div>
-                </div>
-              );
-            })}
+          <CardHeader>
+            <CardTitle>Воронка matching</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <FunnelChart data={funnel} isLoading={funnelLoading} />
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader><CardTitle>Нагрузка рекрутеров</CardTitle></CardHeader>
-          <CardContent className="space-y-3">
-            {(users ?? [])
-              .filter((u) => u.role === 'recruiter')
-              .map((r) => {
-                const count = load?.find((l) => l.recruiterId === r.id)?.activeCount ?? 0;
-                const pct = Math.min(count / 6, 1);
-                return (
-                  <div key={r.id} className="flex items-center gap-2.5">
-                    <UserAvatar user={r} size={26} />
-                    <div className="flex-1">
-                      <div className="mb-1 flex justify-between">
-                        <span className="text-[12.5px] font-medium">{r.fullName}</span>
-                        <span className="tnum text-xs font-semibold text-muted-foreground">{count}</span>
-                      </div>
-                      <div className="h-1 overflow-hidden rounded-full bg-muted">
-                        <div className="h-full transition-all" style={{ background: r.color, width: `${pct * 100}%` }} />
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+          <CardHeader>
+            <CardTitle>Скорость найма</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <TimeToHireCard data={tth} isLoading={tthLoading} />
           </CardContent>
         </Card>
       </div>
 
+      {/* Требует внимания — полная ширина */}
       <Card>
-        <CardHeader><CardTitle>Топ-клиенты по вакансиям</CardTitle></CardHeader>
-        <CardContent className="divide-y">
-          {(clients?.items ?? []).slice(0, 5).map((c, i) => (
-            <div key={c.id} className="grid grid-cols-[24px_1fr_100px_80px] items-center gap-3 py-2 text-[13px]">
-              <div className="tnum text-xs font-semibold text-muted-foreground">{i + 1}</div>
-              <div className="font-medium">{c.name}</div>
-              <div className="text-xs text-muted-foreground">{c.industry}</div>
-              <div className="tnum text-right font-bold">{c.vacanciesCount}</div>
-            </div>
-          ))}
+        <CardHeader>
+          <CardTitle>Требует внимания</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <AttentionList data={attention} isLoading={attentionLoading} />
+        </CardContent>
+      </Card>
+
+      {/* Эффективность рекрутеров */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Эффективность рекрутеров</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <RecruitersTable data={recruiters} isLoading={recruitersLoading} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Аналитика по клиентам</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ClientsTable data={clientsPerf} isLoading={clientsPerfLoading} />
         </CardContent>
       </Card>
     </div>

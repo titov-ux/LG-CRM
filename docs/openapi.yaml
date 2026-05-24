@@ -39,6 +39,12 @@ tags:
   - name: analytics
   - name: permissions
   - name: files
+  - name: documents
+    description: |
+      База знаний и хранилище документов команды: разделы (клиенты, регламенты, компания,
+      сотрудники, исполнители, тендеры, общее), папки, теги, версии, комментарии,
+      избранное. Контент файлов хранится в `/files` (S3-presign), `Document.fileId`
+      ссылается на загруженный файл.
 
 paths:
   # ─────────────── AUTH ───────────────
@@ -950,7 +956,11 @@ paths:
   /analytics/summary:
     get:
       tags: [analytics]
-      summary: Сводка дашборда
+      summary: Сводка дашборда (KPI + дельты за период)
+      parameters:
+        - { in: query, name: from,    schema: { type: string, format: date-time }, description: "Начало периода (ISO-8601). По умолчанию — начало текущего месяца." }
+        - { in: query, name: to,      schema: { type: string, format: date-time }, description: "Конец периода (ISO-8601). По умолчанию — сейчас." }
+        - { in: query, name: compare, schema: { $ref: '#/components/schemas/CompareMode' }, description: "Окно для расчёта delta. По умолчанию prev." }
       responses:
         '200':
           description: DashboardSummary
@@ -981,6 +991,84 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/RecruiterLoad' }
+  /analytics/trends:
+    get:
+      tags: [analytics]
+      summary: Временные ряды за период (создано/закрыто вакансий, заведено кандидатов, наймы)
+      parameters:
+        - { in: query, name: from,        schema: { type: string, format: date-time } }
+        - { in: query, name: to,          schema: { type: string, format: date-time } }
+        - { in: query, name: granularity, schema: { $ref: '#/components/schemas/Granularity' } }
+      responses:
+        '200':
+          description: TrendsResponse
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TrendsResponse' }
+  /analytics/funnel-v2:
+    get:
+      tags: [analytics]
+      summary: Воронка с конверсиями и drop-off по VacancyCandidate
+      parameters:
+        - { in: query, name: from, schema: { type: string, format: date-time } }
+        - { in: query, name: to,   schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: FunnelResponse
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FunnelResponse' }
+  /analytics/time-to-hire:
+    get:
+      tags: [analytics]
+      summary: Скорость найма за период
+      parameters:
+        - { in: query, name: from, schema: { type: string, format: date-time } }
+        - { in: query, name: to,   schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: TimeToHireResponse
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TimeToHireResponse' }
+  /analytics/attention:
+    get:
+      tags: [analytics]
+      summary: Требует внимания (SLA, дедлайны, зависшие)
+      parameters:
+        - { in: query, name: top, schema: { type: integer, minimum: 1, maximum: 20, default: 5 } }
+      responses:
+        '200':
+          description: AttentionResponse
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AttentionResponse' }
+  /analytics/recruiter-performance:
+    get:
+      tags: [analytics]
+      summary: Эффективность рекрутеров за период
+      parameters:
+        - { in: query, name: from, schema: { type: string, format: date-time } }
+        - { in: query, name: to,   schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: RecruiterPerformanceResponse
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RecruiterPerformanceResponse' }
+  /analytics/client-performance:
+    get:
+      tags: [analytics]
+      summary: Аналитика по клиентам за период
+      parameters:
+        - { in: query, name: from, schema: { type: string, format: date-time } }
+        - { in: query, name: to,   schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: ClientPerformanceResponse
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClientPerformanceResponse' }
 
   # ─────────────── FILES ───────────────
   /files/presign:
@@ -1060,6 +1148,258 @@ paths:
       responses:
         '200': { $ref: '#/components/responses/Ok' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ─────────────── DOCUMENTS ───────────────
+  /documents:
+    get:
+      tags: [documents]
+      summary: Список документов с фильтрами
+      description: |
+        Возвращает плоский список документов с пагинацией. Папки идут как обычные
+        записи (`kind=folder`), вложенность определяется по `parentId`.
+        Фильтры комбинируются. Поле `q` ищет по `title`, `description`, `owner`,
+        `tags`.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - { in: query, name: section,    schema: { $ref: '#/components/schemas/DocumentSectionId' } }
+        - { in: query, name: parentId,   schema: { $ref: '#/components/schemas/UUID' }, description: 'Если задан — только дети этой папки. Null = корень раздела.' }
+        - { in: query, name: kind,       schema: { $ref: '#/components/schemas/DocumentKind' } }
+        - { in: query, name: tag,        schema: { type: string } }
+        - { in: query, name: favorite,   schema: { type: boolean } }
+        - { in: query, name: q,          schema: { type: string } }
+        - { in: query, name: ownerId,    schema: { $ref: '#/components/schemas/UUID' } }
+        - { in: query, name: sortBy,     schema: { type: string, enum: [updated, oldest, title, owner, kind], default: updated } }
+        - { in: query, name: sortDir,    schema: { type: string, enum: [asc, desc], default: desc } }
+      responses:
+        '200':
+          description: Страница документов
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DocumentPage' }
+    post:
+      tags: [documents]
+      summary: Создать документ или папку
+      description: |
+        Если передан `fileId` — документ считается прикреплённым к ранее загруженному
+        файлу (см. `/files/confirm`). Папка создаётся с `kind=folder` без `fileId`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateDocumentRequest' }
+      responses:
+        '201':
+          description: Document
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Document' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422':
+          description: Неверные данные (invalid_section / invalid_parent / parent_not_folder)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+  /documents/{id}:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    get:
+      tags: [documents]
+      summary: Получить документ
+      responses:
+        '200':
+          description: Document
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Document' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [documents]
+      summary: Обновить метаданные (title, emoji, tags, description, owner)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateDocumentRequest' }
+      responses:
+        '200':
+          description: Document
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Document' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [documents]
+      summary: Удалить документ или папку
+      description: |
+        Удаление папки рекурсивно удаляет всё её содержимое. Файлы в S3 не удаляются
+        автоматически — они остаются по `DELETE /files/{id}` отдельно.
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /documents/{id}/move:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [documents]
+      summary: Переместить документ в другой раздел/папку
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MoveDocumentRequest' }
+      responses:
+        '200':
+          description: Document
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Document' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: Целевая папка некорректна (parent_not_folder / cycle_detected)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+  /documents/bulk-move:
+    post:
+      tags: [documents]
+      summary: Массовое перемещение (для toolbar)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BulkMoveDocumentsRequest' }
+      responses:
+        '200':
+          description: Количество перемещённых
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [moved]
+                properties:
+                  moved: { type: integer, minimum: 0 }
+  /documents/bulk-delete:
+    post:
+      tags: [documents]
+      summary: Массовое удаление
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              properties:
+                ids: { type: array, items: { $ref: '#/components/schemas/UUID' } }
+      responses:
+        '200':
+          description: Количество удалённых
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deleted]
+                properties:
+                  deleted: { type: integer, minimum: 0 }
+  /documents/{id}/duplicate:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [documents]
+      summary: Дублировать документ (без копирования файла; ссылка на тот же fileId)
+      responses:
+        '201':
+          description: Document (копия)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Document' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /documents/{id}/favorite:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    put:
+      tags: [documents]
+      summary: Добавить/убрать из избранного текущего пользователя
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [favorite]
+              properties:
+                favorite: { type: boolean }
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /documents/{id}/versions:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    get:
+      tags: [documents]
+      summary: История версий документа
+      responses:
+        '200':
+          description: Список версий (новые сверху)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/DocumentVersion' }
+    post:
+      tags: [documents]
+      summary: Сохранить новую версию
+      description: |
+        Метка `label` обязательна (например, `v2`, `draft`). `fileId` опционален —
+        если передан, версия привязывается к новой загрузке файла.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateDocumentVersionRequest' }
+      responses:
+        '201':
+          description: DocumentVersion
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DocumentVersion' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /documents/{id}/comments:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    get:
+      tags: [documents]
+      summary: Комментарии к документу (старые сверху)
+      responses:
+        '200':
+          description: Список комментариев
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/DocumentComment' }
+    post:
+      tags: [documents]
+      summary: Добавить комментарий
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string, minLength: 1, maxLength: 4000 }
+      responses:
+        '201':
+          description: DocumentComment
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DocumentComment' }
         '404': { $ref: '#/components/responses/NotFound' }
 
   # ─────────────── PERMISSIONS MATRIX ───────────────
@@ -1788,9 +2128,28 @@ components:
         createdAt:  { type: string, format: date-time }
 
     # ─── Analytics ───
+    CompareMode:
+      type: string
+      enum: [prev, yoy, none]
+    Granularity:
+      type: string
+      enum: [auto, day, week, month]
+    PeriodWindow:
+      type: object
+      required: [from, to]
+      properties:
+        from: { type: string, format: date-time }
+        to:   { type: string, format: date-time }
+    CompareWindow:
+      type: object
+      required: [from, to, mode]
+      properties:
+        from: { type: string, format: date-time }
+        to:   { type: string, format: date-time }
+        mode: { $ref: '#/components/schemas/CompareMode' }
     DashboardSummary:
       type: object
-      required: [openVacancies, activeCandidates, closedThisMonth, hiredThisMonth, delta]
+      required: [openVacancies, activeCandidates, closedThisMonth, hiredThisMonth, delta, period]
       properties:
         openVacancies:    { type: integer }
         activeCandidates: { type: integer }
@@ -1804,6 +2163,8 @@ components:
             activeCandidates: { type: number }
             closedThisMonth:  { type: number }
             hiredThisMonth:   { type: number }
+        period:  { $ref: '#/components/schemas/PeriodWindow' }
+        compare: { $ref: '#/components/schemas/CompareWindow', nullable: true }
     FunnelBucket:
       type: object
       required: [status, count]
@@ -1816,11 +2177,208 @@ components:
       properties:
         recruiterId: { $ref: '#/components/schemas/UUID' }
         activeCount: { type: integer }
+    TrendsPoint:
+      type: object
+      required: [bucket, value]
+      properties:
+        bucket: { type: string, format: date-time }
+        value:  { type: integer }
+    TrendsSeries:
+      type: object
+      required: [vacanciesCreated, vacanciesClosed, candidatesCreated, hires]
+      properties:
+        vacanciesCreated:   { type: array, items: { $ref: '#/components/schemas/TrendsPoint' } }
+        vacanciesClosed:    { type: array, items: { $ref: '#/components/schemas/TrendsPoint' } }
+        candidatesCreated:  { type: array, items: { $ref: '#/components/schemas/TrendsPoint' } }
+        hires:              { type: array, items: { $ref: '#/components/schemas/TrendsPoint' } }
+    TrendsResponse:
+      type: object
+      required: [granularity, period, series]
+      properties:
+        granularity: { type: string, enum: [day, week, month] }
+        period:      { $ref: '#/components/schemas/PeriodWindow' }
+        series:      { $ref: '#/components/schemas/TrendsSeries' }
+    FunnelStage:
+      type: object
+      required: [status, count, conversionPct, dropOff]
+      properties:
+        status:         { $ref: '#/components/schemas/MatchStatus' }
+        count:          { type: integer }
+        conversionPct:  { type: number, description: "% к предыдущей стадии" }
+        dropOff:        { type: integer, description: "абсолютный отток к этой стадии" }
+    FunnelRejected:
+      type: object
+      required: [client, internal, total]
+      properties:
+        client:   { type: integer }
+        internal: { type: integer }
+        total:    { type: integer }
+    FunnelResponse:
+      type: object
+      required: [stages, rejected, total, overallConversionPct, period]
+      properties:
+        stages:               { type: array, items: { $ref: '#/components/schemas/FunnelStage' } }
+        rejected:             { $ref: '#/components/schemas/FunnelRejected' }
+        total:                { type: integer }
+        overallConversionPct: { type: number }
+        period:               { $ref: '#/components/schemas/PeriodWindow' }
+    TimeToHireBucket:
+      type: object
+      required: [label, count]
+      properties:
+        label:   { type: string }
+        maxDays: { type: integer, nullable: true }
+        count:   { type: integer }
+    TimeInStage:
+      type: object
+      required: [status, avgDays, medianDays, sample]
+      properties:
+        status:     { type: string }
+        avgDays:    { type: number }
+        medianDays: { type: number }
+        sample:     { type: integer }
+    TimeToHireResponse:
+      type: object
+      required: [sampleSize, avgDays, medianDays, p90Days, distribution, byStage, period]
+      properties:
+        sampleSize:   { type: integer }
+        avgDays:      { type: number }
+        medianDays:   { type: number }
+        p90Days:      { type: number }
+        distribution: { type: array, items: { $ref: '#/components/schemas/TimeToHireBucket' } }
+        byStage:      { type: array, items: { $ref: '#/components/schemas/TimeInStage' } }
+        period:       { $ref: '#/components/schemas/PeriodWindow' }
+    AttentionVacancyItem:
+      type: object
+      required: [id, title]
+      properties:
+        id:            { $ref: '#/components/schemas/UUID' }
+        title:         { type: string }
+        status:        { $ref: '#/components/schemas/VacancyStatus', nullable: true }
+        daysInStatus:  { type: integer, nullable: true }
+        daysOpen:      { type: integer, nullable: true }
+        deadline:      { type: string, format: date-time, nullable: true }
+        daysOverdue:   { type: integer, nullable: true }
+        daysLeft:      { type: integer, nullable: true }
+    AttentionCandidateItem:
+      type: object
+      required: [id, fullName, status, daysInStatus]
+      properties:
+        id:           { $ref: '#/components/schemas/UUID' }
+        fullName:     { type: string }
+        status:       { type: string }
+        daysInStatus: { type: integer }
+    AttentionVacancyBlock:
+      type: object
+      required: [total, items]
+      properties:
+        total:         { type: integer }
+        thresholdDays: { type: integer, nullable: true }
+        items:         { type: array, items: { $ref: '#/components/schemas/AttentionVacancyItem' } }
+    AttentionCandidateBlock:
+      type: object
+      required: [total, items]
+      properties:
+        total:         { type: integer }
+        thresholdDays: { type: integer, nullable: true }
+        items:         { type: array, items: { $ref: '#/components/schemas/AttentionCandidateItem' } }
+    AttentionCountOnly:
+      type: object
+      required: [total]
+      properties:
+        total: { type: integer }
+    AttentionResponse:
+      type: object
+      required:
+        - stuckVacancies
+        - stuckCandidates
+        - vacanciesWithoutCandidates
+        - overdueDeadlines
+        - deadlinesNext7Days
+        - deadlinesNext14Days
+      properties:
+        stuckVacancies:             { $ref: '#/components/schemas/AttentionVacancyBlock' }
+        stuckCandidates:            { $ref: '#/components/schemas/AttentionCandidateBlock' }
+        vacanciesWithoutCandidates: { $ref: '#/components/schemas/AttentionVacancyBlock' }
+        overdueDeadlines:           { $ref: '#/components/schemas/AttentionVacancyBlock' }
+        deadlinesNext7Days:         { $ref: '#/components/schemas/AttentionVacancyBlock' }
+        deadlinesNext14Days:        { $ref: '#/components/schemas/AttentionCountOnly' }
+    RecruiterMetric:
+      type: object
+      required:
+        - recruiterId
+        - fullName
+        - candidatesCreated
+        - presented
+        - hired
+        - hireRatePct
+        - avgTimeToHireDays
+        - totalMargin
+        - sparkline
+      properties:
+        recruiterId:        { $ref: '#/components/schemas/UUID' }
+        fullName:           { type: string }
+        candidatesCreated:  { type: integer }
+        presented:          { type: integer }
+        hired:              { type: integer }
+        hireRatePct:        { type: number, description: "hired / presented, %" }
+        avgTimeToHireDays:  { type: number }
+        totalMargin:        { type: number, description: "сумма (rate_client*160 − rate_month) по hired в ₽/мес" }
+        sparkline:          { type: array, items: { type: integer }, description: "Hires по 8 недельным бакетам" }
+    RecruiterPerformanceResponse:
+      type: object
+      required: [items, period]
+      properties:
+        items:  { type: array, items: { $ref: '#/components/schemas/RecruiterMetric' } }
+        period: { $ref: '#/components/schemas/PeriodWindow' }
+    ClientHealthFlag:
+      type: string
+      enum: [stale, no_open, high_rejection, no_vacancies_ever]
+    ClientMetric:
+      type: object
+      required:
+        - clientId
+        - name
+        - industry
+        - vacanciesTotal
+        - vacanciesOpen
+        - vacanciesClosedInPeriod
+        - hiresInPeriod
+        - avgTimeToFillDays
+        - monthlyMarginRunRate
+        - presentedToHiredPct
+        - rejectionRatePct
+        - healthFlags
+        - sparkline
+      properties:
+        clientId:                 { $ref: '#/components/schemas/UUID' }
+        name:                     { type: string }
+        industry:                 { type: string }
+        status:                   { $ref: '#/components/schemas/ClientStatus', nullable: true }
+        clientKind:               { $ref: '#/components/schemas/ClientKind', nullable: true }
+        vacanciesTotal:           { type: integer }
+        vacanciesOpen:            { type: integer }
+        vacanciesClosedInPeriod:  { type: integer }
+        hiresInPeriod:            { type: integer }
+        avgTimeToFillDays:        { type: number }
+        monthlyMarginRunRate:     { type: number }
+        presentedToHiredPct:      { type: number }
+        lastVacancyAt:            { type: string, format: date-time, nullable: true }
+        daysSinceLastVacancy:     { type: integer, nullable: true }
+        rejectionRatePct:         { type: number }
+        healthFlags:              { type: array, items: { $ref: '#/components/schemas/ClientHealthFlag' } }
+        sparkline:                { type: array, items: { type: integer } }
+    ClientPerformanceResponse:
+      type: object
+      required: [items, period]
+      properties:
+        items:  { type: array, items: { $ref: '#/components/schemas/ClientMetric' } }
+        period: { $ref: '#/components/schemas/PeriodWindow' }
 
     # ─── Files ───
     FileEntityType:
       type: string
-      enum: [candidate, vacancy, client, contact]
+      enum: [candidate, vacancy, client, contact, document]
     ScanStatus:
       type: string
       enum: [pending, clean, infected, error]
@@ -1874,6 +2432,140 @@ components:
       properties:
         url:       { type: string }
         expiresIn: { type: integer }
+
+    # ─── Documents ───
+    DocumentSectionId:
+      type: string
+      enum: [clients, regulations, company, employees, contractors, tender, general]
+      description: |
+        Логический раздел базы знаний:
+        - clients: документы по клиентам (договоры, NDA, спецификации)
+        - regulations: внутренние регламенты и SLA
+        - company: устав, реквизиты, учредительные
+        - employees: кадры
+        - contractors: внешние исполнители
+        - tender: тендерные заявки
+        - general: общие материалы команды
+    DocumentKind:
+      type: string
+      enum: [doc, pdf, xlsx, pptx, image, folder]
+    Document:
+      type: object
+      required: [id, title, emoji, kind, section, ownerUserId, updatedAt, createdAt]
+      properties:
+        id:           { $ref: '#/components/schemas/UUID' }
+        title:        { type: string, minLength: 1, maxLength: 512 }
+        emoji:        { type: string, description: 'Эмодзи-иконка документа/папки' }
+        kind:         { $ref: '#/components/schemas/DocumentKind' }
+        section:      { $ref: '#/components/schemas/DocumentSectionId' }
+        parentId:
+          oneOf:
+            - { $ref: '#/components/schemas/UUID' }
+            - { type: 'null' }
+          description: 'ID родительской папки. null/отсутствует = корень раздела.'
+        description:  { type: string, nullable: true, maxLength: 4000 }
+        tags:
+          type: array
+          items: { type: string, maxLength: 64 }
+        ownerUserId:  { $ref: '#/components/schemas/UUID' }
+        ownerName:    { type: string, description: 'Денормализованное ФИО владельца для списков' }
+        fileId:
+          allOf:
+            - $ref: '#/components/schemas/UUID'
+          nullable: true
+          description: 'Ссылка на загруженный файл из /files (если есть)'
+        fileMeta:
+          allOf:
+            - $ref: '#/components/schemas/DocumentFileMeta'
+          nullable: true
+        versionsCount:  { type: integer, minimum: 0 }
+        commentsCount:  { type: integer, minimum: 0 }
+        isFavorite:     { type: boolean, description: 'Избранное для текущего пользователя' }
+        createdAt:      { type: string, format: date-time }
+        updatedAt:      { type: string, format: date-time }
+    DocumentFileMeta:
+      type: object
+      required: [fileName, mime, size]
+      description: |
+        Облегчённые метаданные приложенного файла. Полную запись и presigned URL для
+        скачивания берём через `/files/{id}/download`.
+      properties:
+        fileName: { type: string }
+        mime:     { type: string }
+        size:     { type: integer, format: int64 }
+    CreateDocumentRequest:
+      type: object
+      required: [title, kind, section, emoji]
+      properties:
+        title:       { type: string, minLength: 1, maxLength: 512 }
+        emoji:       { type: string }
+        kind:        { $ref: '#/components/schemas/DocumentKind' }
+        section:     { $ref: '#/components/schemas/DocumentSectionId' }
+        parentId:    { $ref: '#/components/schemas/UUID', nullable: true }
+        description: { type: string, maxLength: 4000 }
+        tags:
+          type: array
+          items: { type: string, maxLength: 64 }
+        ownerUserId: { $ref: '#/components/schemas/UUID', nullable: true, description: 'По умолчанию — текущий пользователь' }
+        fileId:      { $ref: '#/components/schemas/UUID', nullable: true }
+    UpdateDocumentRequest:
+      type: object
+      properties:
+        title:       { type: string, minLength: 1, maxLength: 512 }
+        emoji:       { type: string }
+        description: { type: string, nullable: true, maxLength: 4000 }
+        tags:
+          type: array
+          items: { type: string, maxLength: 64 }
+        ownerUserId: { $ref: '#/components/schemas/UUID' }
+    MoveDocumentRequest:
+      type: object
+      required: [section]
+      properties:
+        section:  { $ref: '#/components/schemas/DocumentSectionId' }
+        parentId: { $ref: '#/components/schemas/UUID', nullable: true }
+    BulkMoveDocumentsRequest:
+      type: object
+      required: [ids, section]
+      properties:
+        ids:      { type: array, items: { $ref: '#/components/schemas/UUID' }, minItems: 1 }
+        section:  { $ref: '#/components/schemas/DocumentSectionId' }
+        parentId: { $ref: '#/components/schemas/UUID', nullable: true }
+    DocumentVersion:
+      type: object
+      required: [id, documentId, label, authorUserId, createdAt]
+      properties:
+        id:           { $ref: '#/components/schemas/UUID' }
+        documentId:   { $ref: '#/components/schemas/UUID' }
+        label:        { type: string, minLength: 1, maxLength: 64 }
+        note:         { type: string, nullable: true, maxLength: 1000 }
+        authorUserId: { $ref: '#/components/schemas/UUID' }
+        authorName:   { type: string }
+        fileId:       { $ref: '#/components/schemas/UUID', nullable: true }
+        createdAt:    { type: string, format: date-time }
+    CreateDocumentVersionRequest:
+      type: object
+      required: [label]
+      properties:
+        label:  { type: string, minLength: 1, maxLength: 64 }
+        note:   { type: string, maxLength: 1000 }
+        fileId: { $ref: '#/components/schemas/UUID', nullable: true }
+    DocumentComment:
+      type: object
+      required: [id, documentId, text, authorUserId, createdAt]
+      properties:
+        id:           { $ref: '#/components/schemas/UUID' }
+        documentId:   { $ref: '#/components/schemas/UUID' }
+        text:         { type: string, minLength: 1, maxLength: 4000 }
+        authorUserId: { $ref: '#/components/schemas/UUID' }
+        authorName:   { type: string }
+        createdAt:    { type: string, format: date-time }
+    DocumentPage:
+      allOf:
+        - $ref: '#/components/schemas/Page'
+        - type: object
+          properties:
+            items: { type: array, items: { $ref: '#/components/schemas/Document' } }
 
     # ─── Permissions Matrix ───
     MatrixPermission:

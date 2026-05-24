@@ -1,17 +1,24 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
+  ArrowDown,
+  ArrowUp,
   ArrowUpDown,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Copy,
+  CopyPlus,
   Download,
   FileSpreadsheet,
   FileText,
   FileType,
   FolderClosed,
+  FolderOpen,
   FolderPlus,
   Globe,
   Image as ImageIcon,
+  LayoutGrid,
+  List as ListIcon,
   Menu,
   MoreHorizontal,
   Pencil,
@@ -59,14 +66,17 @@ import { useDocumentsStore } from '@/stores/documents';
 import { SECTIONS } from './mocks';
 import type { DocumentItem, DocumentKind, DocumentSectionId, DocumentTemplate } from './types';
 import { DocumentFormDialog } from './DocumentFormDialog';
-import { UploadDialog } from './UploadDialog';
+import { UploadDialog, type UploadResult } from './UploadDialog';
 import { MoveDialog } from './MoveDialog';
 import { PreviewDialog } from './PreviewDialog';
 import { EmojiPicker } from './EmojiPicker';
 import { TemplatesDialog } from './TemplatesDialog';
+import { bindBlobToDoc, formatBytes, getCachedBlobUrl } from './fileBlob';
 
 type ScopeId = DocumentSectionId | 'all' | 'favorites';
-type SortBy = 'updated' | 'oldest' | 'title' | 'owner';
+type SortBy = 'updated' | 'oldest' | 'title' | 'owner' | 'kind';
+type SortDir = 'asc' | 'desc';
+type ViewMode = 'list' | 'grid';
 
 const KIND_ICON: Record<DocumentKind, LucideIcon> = {
   doc: FileText,
@@ -104,6 +114,36 @@ function formatRelative(iso: string): string {
   return new Date(iso).toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' });
 }
 
+const SORT_LABEL: Record<SortBy, string> = {
+  updated: 'Сначала свежие',
+  oldest: 'Сначала старые',
+  title: 'По названию',
+  owner: 'По владельцу',
+  kind: 'По типу',
+};
+
+const VIEW_KEY = 'crm-lg.documents.view';
+const SORT_KEY = 'crm-lg.documents.sort';
+
+function readPersistedView(): ViewMode {
+  try {
+    const v = localStorage.getItem(VIEW_KEY);
+    return v === 'grid' ? 'grid' : 'list';
+  } catch {
+    return 'list';
+  }
+}
+function readPersistedSort(): { by: SortBy; dir: SortDir } {
+  try {
+    const raw = localStorage.getItem(SORT_KEY);
+    if (!raw) return { by: 'updated', dir: 'desc' };
+    const v = JSON.parse(raw) as { by: SortBy; dir: SortDir };
+    return v;
+  } catch {
+    return { by: 'updated', dir: 'desc' };
+  }
+}
+
 export function DocumentsPage() {
   const documents = useDocumentsStore((s) => s.documents);
   const favorites = useDocumentsStore((s) => s.favorites);
@@ -115,14 +155,17 @@ export function DocumentsPage() {
   const setEmojiInStore = useDocumentsStore((s) => s.setEmoji);
   const bulkDelete = useDocumentsStore((s) => s.bulkDelete);
   const bulkMove = useDocumentsStore((s) => s.bulkMove);
+  const duplicateDocument = useDocumentsStore((s) => s.duplicateDocument);
 
   const [scope, setScope] = useState<ScopeId>('clients');
-  const [folderPath, setFolderPath] = useState<string[]>([]); // ids цепочки папок
+  const [folderPath, setFolderPath] = useState<string[]>([]);
   const [query, setQuery] = useState('');
-  const [sortBy, setSortBy] = useState<SortBy>('updated');
+  const [sort, setSort] = useState(() => readPersistedSort());
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [globalSearch, setGlobalSearch] = useState(false);
   const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>(() => readPersistedView());
+  const [expandedSections, setExpandedSections] = useState<Set<DocumentSectionId>>(new Set());
 
   // выделение
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -130,17 +173,31 @@ export function DocumentsPage() {
 
   // DnD
   const [dragOverTarget, setDragOverTarget] = useState<string | null>(null);
+  const [osDropOver, setOsDropOver] = useState(false);
 
   // Диалоги
   const [formOpen, setFormOpen] = useState(false);
   const [formEditDoc, setFormEditDoc] = useState<DocumentItem | undefined>(undefined);
   const [formPrefill, setFormPrefill] = useState<Partial<DocumentItem> | undefined>(undefined);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [uploadInitialFiles, setUploadInitialFiles] = useState<File[] | null>(null);
   const [moveDoc, setMoveDoc] = useState<DocumentItem | null>(null);
   const [previewDoc, setPreviewDoc] = useState<DocumentItem | null>(null);
   const [deleteDoc, setDeleteDoc] = useState<DocumentItem | null>(null);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
+
+  // persist UI prefs
+  useEffect(() => {
+    try {
+      localStorage.setItem(VIEW_KEY, viewMode);
+    } catch {/* noop */}
+  }, [viewMode]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(SORT_KEY, JSON.stringify(sort));
+    } catch {/* noop */}
+  }, [sort]);
 
   const isSection = (s: ScopeId): s is DocumentSectionId =>
     s !== 'all' && s !== 'favorites';
@@ -194,18 +251,27 @@ export function DocumentsPage() {
       );
     }
 
+    const mult = sort.dir === 'asc' ? 1 : -1;
     list = [...list].sort((a, b) => {
       // Папки всегда выше
       if (a.kind === 'folder' && b.kind !== 'folder') return -1;
       if (b.kind === 'folder' && a.kind !== 'folder') return 1;
-      if (sortBy === 'title') return a.title.localeCompare(b.title, 'ru');
-      if (sortBy === 'owner') return a.owner.localeCompare(b.owner, 'ru');
-      if (sortBy === 'oldest')
-        return new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime();
-      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+      switch (sort.by) {
+        case 'title':
+          return mult * a.title.localeCompare(b.title, 'ru');
+        case 'owner':
+          return mult * a.owner.localeCompare(b.owner, 'ru');
+        case 'kind':
+          return mult * a.kind.localeCompare(b.kind);
+        case 'oldest':
+          return new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime();
+        case 'updated':
+        default:
+          return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+      }
     });
     return list;
-  }, [documents, scope, favorites, activeTag, query, sortBy, globalSearch, currentFolderId]);
+  }, [documents, scope, favorites, activeTag, query, sort, globalSearch, currentFolderId]);
 
   const headerSection = isSection(scope) ? SECTIONS.find((s) => s.id === scope)! : null;
   const currentFolderDoc = inFolder
@@ -248,6 +314,14 @@ export function DocumentsPage() {
     setFolderPath((p) => p.slice(0, -1));
     setSelected(new Set());
   };
+  const toggleSectionExpanded = (id: DocumentSectionId) => {
+    setExpandedSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   // — действия —
   const handleCreate = (prefill?: Partial<DocumentItem>) => {
@@ -268,7 +342,17 @@ export function DocumentsPage() {
     setFormOpen(true);
   };
   const handleDownload = (d: DocumentItem) => {
-    toast.success(`«${d.title}» — загрузка началась`);
+    const url = getCachedBlobUrl(d.id) ?? d.file?.dataUrl;
+    if (!url || !d.file) {
+      toast.info(`«${d.title}» — файл ещё не прикреплён`);
+      return;
+    }
+    const a = window.document.createElement('a');
+    a.href = url;
+    a.download = d.file.fileName ?? d.title;
+    window.document.body.appendChild(a);
+    a.click();
+    a.remove();
   };
   const handleShare = async (d: DocumentItem) => {
     const url = `${window.location.origin}/documents#${d.id}`;
@@ -282,6 +366,10 @@ export function DocumentsPage() {
   const handleDelete = (d: DocumentItem) => {
     deleteDocument(d.id);
     toast.success(`«${d.title}» удалён`);
+  };
+  const handleDuplicate = (d: DocumentItem) => {
+    const copy = duplicateDocument(d.id);
+    if (copy) toast.success(`Создана копия: «${copy.title}»`);
   };
 
   // — bulk —
@@ -310,10 +398,21 @@ export function DocumentsPage() {
     setSelected(new Set());
     setBulkMoveOpen(false);
   };
+  const handleBulkDownload = () => {
+    let ok = 0;
+    selected.forEach((id) => {
+      const d = documents.find((x) => x.id === id);
+      if (!d) return;
+      if (d.file && (getCachedBlobUrl(id) || d.file.dataUrl)) {
+        handleDownload(d);
+        ok++;
+      }
+    });
+    if (ok === 0) toast.info('Нет файлов для скачивания');
+  };
 
-  // — drag&drop —
+  // — drag&drop внутренний —
   const handleDragStart = (e: React.DragEvent, doc: DocumentItem) => {
-    // Если есть выделение и тащим выделенный — тащим всё выделение
     const ids = selected.has(doc.id) && selected.size > 1 ? Array.from(selected) : [doc.id];
     e.dataTransfer.setData('application/x-doc-ids', JSON.stringify(ids));
     e.dataTransfer.effectAllowed = 'move';
@@ -351,6 +450,51 @@ export function DocumentsPage() {
     setSelected(new Set());
   };
 
+  // — OS-drop файлов на основной канвас —
+  const handleOsDragOver = (e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes('Files')) return;
+    e.preventDefault();
+    setOsDropOver(true);
+  };
+  const handleOsDragLeave = (e: React.DragEvent) => {
+    // если ушли за границу контейнера
+    if (e.currentTarget === e.target) setOsDropOver(false);
+  };
+  const handleOsDrop = (e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes('Files')) return;
+    e.preventDefault();
+    setOsDropOver(false);
+    const files = Array.from(e.dataTransfer.files ?? []);
+    if (files.length === 0) return;
+    setUploadInitialFiles(files);
+    setUploadOpen(true);
+  };
+
+  // — приём результата загрузки —
+  const handleUploadSubmit = (results: UploadResult[]) => {
+    let created = 0;
+    let switched = false;
+    for (const r of results) {
+      const doc = addDocument({
+        title: r.title,
+        emoji: r.emoji,
+        kind: r.kind,
+        section: r.section,
+        owner: r.owner,
+        file: r.file,
+        parentId: currentFolderId,
+      });
+      bindBlobToDoc(doc.id, r.blobUrl);
+      created++;
+      if (doc.section !== scope && !switched) {
+        setScope(doc.section);
+        switched = true;
+      }
+    }
+    if (created > 0) toast.success(`Загружено: ${created}`);
+    setUploadInitialFiles(null);
+  };
+
   // — шаблон —
   const handleApplyTemplate = (t: DocumentTemplate) => {
     setFormEditDoc(undefined);
@@ -366,7 +510,50 @@ export function DocumentsPage() {
     setFormOpen(true);
   };
 
-  // — содержимое левого рейла (используется и для desktop, и для Sheet) —
+  // — клики по сортировочным заголовкам —
+  const onSortClick = (by: SortBy) => {
+    setSort((prev) => {
+      if (prev.by === by) return { by, dir: prev.dir === 'asc' ? 'desc' : 'asc' };
+      return { by, dir: by === 'updated' ? 'desc' : 'asc' };
+    });
+  };
+
+  const SortHeader = ({ by, label, className }: { by: SortBy; label: string; className?: string }) => (
+    <button
+      type="button"
+      onClick={() => onSortClick(by)}
+      className={cn(
+        'group inline-flex items-center gap-1 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground',
+        className,
+      )}
+    >
+      {label}
+      {sort.by === by ? (
+        sort.dir === 'asc' ? (
+          <ArrowUp className="h-3 w-3" />
+        ) : (
+          <ArrowDown className="h-3 w-3" />
+        )
+      ) : (
+        <ArrowUpDown className="h-3 w-3 opacity-0 group-hover:opacity-50" />
+      )}
+    </button>
+  );
+
+  // — папки текущего раздела для дерева в рейле —
+  const foldersBySection = useMemo(() => {
+    const m = new Map<DocumentSectionId, DocumentItem[]>();
+    for (const d of documents) {
+      if (d.kind !== 'folder' || d.parentId) continue;
+      const arr = m.get(d.section) ?? [];
+      arr.push(d);
+      m.set(d.section, arr);
+    }
+    for (const arr of m.values()) arr.sort((a, b) => a.title.localeCompare(b.title, 'ru'));
+    return m;
+  }, [documents]);
+
+  // — содержимое левого рейла —
   const renderScopeRail = (onPick: (id: ScopeId) => void) => (
     <div className="space-y-4">
       <div>
@@ -395,26 +582,75 @@ export function DocumentsPage() {
           Разделы
         </div>
         <ul className="space-y-px">
-          {SECTIONS.map((s) => (
-            <ScopeRailItem
-              key={s.id}
-              label={s.title}
-              emoji={s.emoji}
-              count={counts[s.id] ?? 0}
-              active={scope === s.id && !inFolder}
-              onClick={() => onPick(s.id)}
-              withChevron
-              isDropTarget={dragOverTarget === `section:${s.id}`}
-              onDragOver={(e) => {
-                if (e.dataTransfer.types.includes('application/x-doc-ids')) {
-                  e.preventDefault();
-                  setDragOverTarget(`section:${s.id}`);
-                }
-              }}
-              onDragLeave={() => setDragOverTarget(null)}
-              onDrop={(e) => handleDropOnSection(e, s.id)}
-            />
-          ))}
+          {SECTIONS.map((s) => {
+            const expanded = expandedSections.has(s.id);
+            const folders = foldersBySection.get(s.id) ?? [];
+            return (
+              <li key={s.id}>
+                <ScopeRailItem
+                  label={s.title}
+                  emoji={s.emoji}
+                  count={counts[s.id] ?? 0}
+                  active={scope === s.id && !inFolder}
+                  onClick={() => onPick(s.id)}
+                  expanded={expanded}
+                  hasChildren={folders.length > 0}
+                  onToggleExpand={() => toggleSectionExpanded(s.id)}
+                  isDropTarget={dragOverTarget === `section:${s.id}`}
+                  onDragOver={(e) => {
+                    if (e.dataTransfer.types.includes('application/x-doc-ids')) {
+                      e.preventDefault();
+                      setDragOverTarget(`section:${s.id}`);
+                    }
+                  }}
+                  onDragLeave={() => setDragOverTarget(null)}
+                  onDrop={(e) => handleDropOnSection(e, s.id)}
+                />
+                {expanded && folders.length > 0 && (
+                  <ul className="ml-5 mt-px space-y-px border-l pl-2">
+                    {folders.map((f) => {
+                      const isActive =
+                        scope === s.id && folderPath[folderPath.length - 1] === f.id;
+                      return (
+                        <li
+                          key={f.id}
+                          onDragOver={(e) => {
+                            if (e.dataTransfer.types.includes('application/x-doc-ids')) {
+                              e.preventDefault();
+                              setDragOverTarget(`folder:${f.id}`);
+                            }
+                          }}
+                          onDragLeave={() => setDragOverTarget(null)}
+                          onDrop={(e) => handleDropOnFolder(e, f)}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setScope(s.id);
+                              setFolderPath([f.id]);
+                              setSelected(new Set());
+                              setMobileSheetOpen(false);
+                            }}
+                            className={cn(
+                              'flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-[12.5px] transition-colors',
+                              isActive
+                                ? 'bg-background text-foreground shadow-sm'
+                                : 'text-muted-foreground hover:bg-background/70 hover:text-foreground',
+                              dragOverTarget === `folder:${f.id}` &&
+                                'ring-2 ring-blue-400 ring-offset-1',
+                            )}
+                          >
+                            <FolderOpen className="h-3 w-3 shrink-0 text-amber-500" />
+                            <span className="flex-1 truncate">{f.title}</span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </li>
+            );
+          })}
         </ul>
       </div>
       <div>
@@ -455,7 +691,10 @@ export function DocumentsPage() {
           <li>
             <button
               type="button"
-              onClick={() => setUploadOpen(true)}
+              onClick={() => {
+                setUploadInitialFiles(null);
+                setUploadOpen(true);
+              }}
               className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13.5px] text-muted-foreground transition-colors hover:bg-background/70 hover:text-foreground"
             >
               <Upload className="h-3.5 w-3.5" />
@@ -465,6 +704,68 @@ export function DocumentsPage() {
         </ul>
       </div>
     </div>
+  );
+
+  const renderItemActions = (d: DocumentItem, fav: boolean) => (
+    <>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          toggleFavorite(d.id);
+        }}
+        className={cn(
+          'flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground',
+          fav && 'text-yellow-500 opacity-100',
+        )}
+        aria-label="В избранное"
+      >
+        <Star className={cn('h-3.5 w-3.5', fav && 'fill-current')} />
+      </button>
+
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            onClick={(e) => e.stopPropagation()}
+            className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+            aria-label="Действия"
+          >
+            <MoreHorizontal className="h-3.5 w-3.5" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-44" onClick={(e) => e.stopPropagation()}>
+          <DropdownMenuItem onClick={() => handleEdit(d)}>
+            <Pencil className="mr-2 h-3.5 w-3.5" />
+            Переименовать
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => handleDuplicate(d)}>
+            <CopyPlus className="mr-2 h-3.5 w-3.5" />
+            Дублировать
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => setMoveDoc(d)}>
+            <Copy className="mr-2 h-3.5 w-3.5" />
+            Переместить
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => handleDownload(d)}>
+            <Download className="mr-2 h-3.5 w-3.5" />
+            Скачать
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => handleShare(d)}>
+            <Share2 className="mr-2 h-3.5 w-3.5" />
+            Поделиться
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onClick={() => setDeleteDoc(d)}
+            className="text-red-600 focus:text-red-700"
+          >
+            <Trash2 className="mr-2 h-3.5 w-3.5" />
+            Удалить
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </>
   );
 
   return (
@@ -485,7 +786,25 @@ export function DocumentsPage() {
       </Sheet>
 
       {/* Main canvas */}
-      <div className="flex min-w-0 flex-1 flex-col overflow-auto">
+      <div
+        className="relative flex min-w-0 flex-1 flex-col overflow-auto"
+        onDragOver={handleOsDragOver}
+        onDragLeave={handleOsDragLeave}
+        onDrop={handleOsDrop}
+      >
+        {/* OS-drop overlay */}
+        {osDropOver && (
+          <div className="pointer-events-none absolute inset-3 z-20 flex items-center justify-center rounded-xl border-2 border-dashed border-blue-400 bg-blue-50/80 text-blue-700 shadow-lg backdrop-blur-sm">
+            <div className="flex flex-col items-center gap-2">
+              <Upload className="h-7 w-7" />
+              <div className="text-[14px] font-semibold">Отпустите, чтобы загрузить файлы</div>
+              <div className="text-[12px] text-blue-600/80">
+                Они попадут в «{headerTitle}»
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="mx-auto w-full max-w-[1400px] px-8 pb-16 pt-10 2xl:px-12">
           {/* Breadcrumb + mobile menu */}
           <div className="flex items-center gap-2">
@@ -597,24 +916,85 @@ export function DocumentsPage() {
                   </>
                 )}
               </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setTemplatesOpen(true)}
-                className="h-8 gap-1.5 text-[13px]"
-              >
-                <Sparkles className="h-3.5 w-3.5" />
-                Шаблон
-              </Button>
-              <Button size="sm" onClick={() => handleCreate()} className="h-8 gap-1.5 text-[13px]">
-                <Plus className="h-3.5 w-3.5" />
-                Добавить
-              </Button>
+              <div className="inline-flex h-8 items-center rounded-md border bg-background p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setViewMode('list')}
+                  className={cn(
+                    'inline-flex h-7 items-center gap-1 rounded px-2 text-[12px]',
+                    viewMode === 'list' ? 'bg-muted text-foreground' : 'text-muted-foreground',
+                  )}
+                  aria-pressed={viewMode === 'list'}
+                  title="Список"
+                >
+                  <ListIcon className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode('grid')}
+                  className={cn(
+                    'inline-flex h-7 items-center gap-1 rounded px-2 text-[12px]',
+                    viewMode === 'grid' ? 'bg-muted text-foreground' : 'text-muted-foreground',
+                  )}
+                  aria-pressed={viewMode === 'grid'}
+                  title="Сетка"
+                >
+                  <LayoutGrid className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="sm" className="h-8 gap-1.5 text-[13px]">
+                    <Plus className="h-3.5 w-3.5" />
+                    Создать
+                    <ChevronDown className="h-3 w-3 opacity-70" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuItem onClick={() => handleCreate()}>
+                    <FileText className="mr-2 h-3.5 w-3.5" />
+                    <div className="flex min-w-0 flex-1 flex-col">
+                      <span>Новый документ</span>
+                      <span className="text-[11px] text-muted-foreground">Карточка без файла</span>
+                    </div>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleCreateFolder}>
+                    <FolderPlus className="mr-2 h-3.5 w-3.5" />
+                    <div className="flex min-w-0 flex-1 flex-col">
+                      <span>Новая папка</span>
+                      <span className="text-[11px] text-muted-foreground">Для группировки</span>
+                    </div>
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onClick={() => {
+                      setUploadInitialFiles(null);
+                      setUploadOpen(true);
+                    }}
+                  >
+                    <Upload className="mr-2 h-3.5 w-3.5" />
+                    <div className="flex min-w-0 flex-1 flex-col">
+                      <span>Загрузить файл</span>
+                      <span className="text-[11px] text-muted-foreground">PDF, DOCX, XLSX и др.</span>
+                    </div>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setTemplatesOpen(true)}>
+                    <Sparkles className="mr-2 h-3.5 w-3.5" />
+                    <div className="flex min-w-0 flex-1 flex-col">
+                      <span>Из шаблона</span>
+                      <span className="text-[11px] text-muted-foreground">Типовые документы</span>
+                    </div>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
 
             {/* Sort + tags row */}
             <div className="flex flex-wrap items-center gap-2">
-              <Select value={sortBy} onValueChange={(v) => setSortBy(v as SortBy)}>
+              <Select
+                value={sort.by}
+                onValueChange={(v) => setSort((p) => ({ ...p, by: v as SortBy }))}
+              >
                 <SelectTrigger className="h-7 w-[180px] text-[12px]">
                   <div className="flex items-center gap-1.5">
                     <ArrowUpDown className="h-3 w-3 text-muted-foreground" />
@@ -622,12 +1002,26 @@ export function DocumentsPage() {
                   </div>
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="updated">Сначала свежие</SelectItem>
-                  <SelectItem value="oldest">Сначала старые</SelectItem>
-                  <SelectItem value="title">По названию</SelectItem>
-                  <SelectItem value="owner">По владельцу</SelectItem>
+                  {(Object.keys(SORT_LABEL) as SortBy[]).map((k) => (
+                    <SelectItem key={k} value={k}>
+                      {SORT_LABEL[k]}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
+              <button
+                type="button"
+                onClick={() => setSort((p) => ({ ...p, dir: p.dir === 'asc' ? 'desc' : 'asc' }))}
+                className="inline-flex h-7 items-center gap-1 rounded-md border bg-background px-2 text-[11.5px] text-muted-foreground hover:text-foreground"
+                title={sort.dir === 'asc' ? 'По возрастанию' : 'По убыванию'}
+              >
+                {sort.dir === 'asc' ? (
+                  <ArrowUp className="h-3 w-3" />
+                ) : (
+                  <ArrowDown className="h-3 w-3" />
+                )}
+                {sort.dir === 'asc' ? 'A→Я' : 'Я→A'}
+              </button>
 
               {tagsInScope.length > 0 && (
                 <>
@@ -689,12 +1083,7 @@ export function DocumentsPage() {
                   size="sm"
                   variant="ghost"
                   className="h-7 gap-1.5 text-background hover:bg-background/10 hover:text-background"
-                  onClick={() => {
-                    selected.forEach((id) => {
-                      const d = documents.find((x) => x.id === id);
-                      if (d) handleDownload(d);
-                    });
-                  }}
+                  onClick={handleBulkDownload}
                 >
                   <Download className="h-3.5 w-3.5" />
                   Скачать
@@ -721,7 +1110,7 @@ export function DocumentsPage() {
             </div>
           )}
 
-          {/* Documents list */}
+          {/* Empty */}
           {items.length === 0 ? (
             <div className="mt-12">
               <EmptyState
@@ -730,13 +1119,33 @@ export function DocumentsPage() {
                   query
                     ? 'Попробуйте изменить запрос или включить поиск «Везде».'
                     : inFolder
-                      ? 'Папка пуста. Перетащите документы сюда или создайте новый.'
-                      : 'В этом разделе пока нет документов. Добавьте первый.'
+                      ? 'Папка пуста. Перетащите файлы сюда или создайте новый документ.'
+                      : 'В этом разделе пока нет документов. Перетащите файлы или добавьте первый.'
                 }
               />
             </div>
-          ) : (
+          ) : viewMode === 'list' ? (
+            // — list view —
             <div className="mt-3">
+              {/* sortable header */}
+              <div className="hidden items-center gap-3 px-2 pb-1.5 md:flex">
+                <div className="h-5 w-5 shrink-0" />
+                <div className="h-8 w-8 shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <SortHeader by="title" label="Название" />
+                </div>
+                <div className="hidden w-24 md:block">
+                  <SortHeader by="kind" label="Тип" />
+                </div>
+                <div className="hidden w-32 md:block">
+                  <SortHeader by="owner" label="Владелец" />
+                </div>
+                <div className="hidden w-20 text-right md:block">
+                  <SortHeader by="updated" label="Изменён" className="ml-auto" />
+                </div>
+                <div className="w-[68px] shrink-0" />
+              </div>
+
               {items.map((d) => {
                 const Icon = KIND_ICON[d.kind];
                 const fav = favorites.includes(d.id);
@@ -802,6 +1211,11 @@ export function DocumentsPage() {
                     >
                       <div className="flex items-center gap-2">
                         <span className="truncate text-[13.5px] font-medium">{d.title}</span>
+                        {d.file && (
+                          <span className="tnum text-[10.5px] text-muted-foreground">
+                            {formatBytes(d.file.size)}
+                          </span>
+                        )}
                         {d.tags?.map((t) => (
                           <span
                             key={t}
@@ -835,7 +1249,7 @@ export function DocumentsPage() {
 
                     <span
                       className={cn(
-                        'hidden items-center gap-1 rounded px-1.5 py-0.5 text-[10.5px] font-medium md:inline-flex',
+                        'hidden w-24 items-center gap-1 rounded px-1.5 py-0.5 text-[10.5px] font-medium md:inline-flex',
                         KIND_COLOR[d.kind],
                       )}
                     >
@@ -852,55 +1266,99 @@ export function DocumentsPage() {
                     </div>
 
                     <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-                      <button
-                        type="button"
-                        onClick={() => toggleFavorite(d.id)}
+                      {renderItemActions(d, fav)}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            // — grid view —
+            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+              {items.map((d) => {
+                const fav = favorites.includes(d.id);
+                const sel = selected.has(d.id);
+                const isFolder = d.kind === 'folder';
+                const isFolderDropOver = dragOverTarget === `folder:${d.id}`;
+                const section = SECTIONS.find((s) => s.id === d.section);
+                const previewUrl = d.kind === 'image' ? getCachedBlobUrl(d.id) ?? d.file?.dataUrl : undefined;
+                return (
+                  <div
+                    key={d.id}
+                    draggable
+                    onDragStart={(e) => handleDragStart(e, d)}
+                    onDragOver={(e) => {
+                      if (!isFolder) return;
+                      if (e.dataTransfer.types.includes('application/x-doc-ids')) {
+                        e.preventDefault();
+                        setDragOverTarget(`folder:${d.id}`);
+                      }
+                    }}
+                    onDragLeave={() => isFolder && setDragOverTarget(null)}
+                    onDrop={(e) => isFolder && handleDropOnFolder(e, d)}
+                    className={cn(
+                      'group relative flex flex-col rounded-lg border bg-background p-2 transition-all hover:shadow-sm',
+                      sel && 'ring-2 ring-blue-400',
+                      isFolderDropOver && 'ring-2 ring-blue-400 ring-offset-1',
+                    )}
+                  >
+                    {/* checkbox + actions */}
+                    <div className="absolute left-1.5 top-1.5 z-10 opacity-0 transition-opacity group-hover:opacity-100">
+                      <div
                         className={cn(
-                          'flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground',
-                          fav && 'text-yellow-500 opacity-100',
+                          'rounded bg-background/90 p-0.5 shadow-sm',
+                          (sel || selected.size > 0) && 'opacity-100',
                         )}
-                        aria-label="В избранное"
                       >
-                        <Star className={cn('h-3.5 w-3.5', fav && 'fill-current')} />
-                      </button>
+                        <Checkbox
+                          checked={sel}
+                          onCheckedChange={() => toggleSelect(d.id)}
+                          aria-label="Выбрать"
+                        />
+                      </div>
+                    </div>
+                    <div className="absolute right-1 top-1 z-10 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                      {renderItemActions(d, fav)}
+                    </div>
 
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <button
-                            type="button"
-                            className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
-                            aria-label="Действия"
-                          >
-                            <MoreHorizontal className="h-3.5 w-3.5" />
-                          </button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-44">
-                          <DropdownMenuItem onClick={() => handleEdit(d)}>
-                            <Pencil className="mr-2 h-3.5 w-3.5" />
-                            Переименовать
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => setMoveDoc(d)}>
-                            <Copy className="mr-2 h-3.5 w-3.5" />
-                            Переместить
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => handleDownload(d)}>
-                            <Download className="mr-2 h-3.5 w-3.5" />
-                            Скачать
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => handleShare(d)}>
-                            <Share2 className="mr-2 h-3.5 w-3.5" />
-                            Поделиться
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            onClick={() => setDeleteDoc(d)}
-                            className="text-red-600 focus:text-red-700"
-                          >
-                            <Trash2 className="mr-2 h-3.5 w-3.5" />
-                            Удалить
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                    {/* preview area */}
+                    <button
+                      type="button"
+                      onClick={() => (isFolder ? enterFolder(d.id) : setPreviewDoc(d))}
+                      onDoubleClick={() => !isFolder && setPreviewDoc(d)}
+                      className={cn(
+                        'flex h-28 items-center justify-center overflow-hidden rounded-md bg-muted/40',
+                        KIND_COLOR[d.kind],
+                      )}
+                    >
+                      {previewUrl ? (
+                        <img
+                          src={previewUrl}
+                          alt={d.title}
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <span className="text-4xl leading-none">{d.emoji}</span>
+                      )}
+                    </button>
+
+                    <div className="mt-2 min-w-0">
+                      <div className="flex items-center gap-1">
+                        <span className="truncate text-[13px] font-medium">{d.title}</span>
+                        {fav && (
+                          <Star className="h-3 w-3 shrink-0 fill-yellow-400 text-yellow-500" />
+                        )}
+                      </div>
+                      <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                        <span>{KIND_LABEL[d.kind]}</span>
+                        <span>·</span>
+                        <span className="truncate">{formatRelative(d.updatedAt)}</span>
+                      </div>
+                      {(globalSearch || scope === 'all' || scope === 'favorites') && section && (
+                        <div className="mt-0.5 truncate text-[10.5px] text-muted-foreground">
+                          {section.emoji} {section.title}
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
@@ -932,13 +1390,13 @@ export function DocumentsPage() {
 
       <UploadDialog
         open={uploadOpen}
-        onOpenChange={setUploadOpen}
-        initialSection={isSection(scope) ? scope : 'general'}
-        onSubmit={(values) => {
-          const created = addDocument({ ...values, parentId: currentFolderId });
-          toast.success(`Файл «${created.title}» загружен`);
-          if (created.section !== scope) setScope(created.section);
+        onOpenChange={(v) => {
+          setUploadOpen(v);
+          if (!v) setUploadInitialFiles(null);
         }}
+        initialSection={isSection(scope) ? scope : 'general'}
+        initialFiles={uploadInitialFiles}
+        onSubmit={handleUploadSubmit}
       />
 
       <MoveDialog
@@ -1038,7 +1496,9 @@ function ScopeRailItem({
   count,
   active,
   onClick,
-  withChevron,
+  expanded,
+  hasChildren,
+  onToggleExpand,
   isDropTarget,
   onDragOver,
   onDragLeave,
@@ -1049,39 +1509,57 @@ function ScopeRailItem({
   count: number;
   active: boolean;
   onClick: () => void;
-  withChevron?: boolean;
+  expanded?: boolean;
+  hasChildren?: boolean;
+  onToggleExpand?: () => void;
   isDropTarget?: boolean;
   onDragOver?: (e: React.DragEvent) => void;
   onDragLeave?: () => void;
   onDrop?: (e: React.DragEvent) => void;
 }) {
   return (
-    <li onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
+    <div
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      className={cn(
+        'group flex w-full items-center gap-1 rounded-md transition-colors',
+        active
+          ? 'bg-background text-foreground shadow-sm'
+          : 'text-muted-foreground hover:bg-background/70 hover:text-foreground',
+        isDropTarget && 'ring-2 ring-blue-400 ring-offset-1',
+      )}
+    >
+      {onToggleExpand ? (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleExpand();
+          }}
+          className="flex h-7 w-5 shrink-0 items-center justify-center"
+          aria-label={expanded ? 'Свернуть' : 'Развернуть'}
+        >
+          <ChevronRight
+            className={cn(
+              'h-3 w-3 transition-transform',
+              expanded && 'rotate-90',
+              !hasChildren && 'opacity-30',
+            )}
+          />
+        </button>
+      ) : (
+        <span className="w-5" />
+      )}
       <button
         type="button"
         onClick={onClick}
-        className={cn(
-          'group flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13.5px] transition-colors',
-          active
-            ? 'bg-background text-foreground shadow-sm'
-            : 'text-muted-foreground hover:bg-background/70 hover:text-foreground',
-          isDropTarget && 'ring-2 ring-blue-400 ring-offset-1',
-        )}
+        className="flex flex-1 items-center gap-2 rounded-md px-1 py-1.5 text-left text-[13.5px]"
       >
-        {withChevron ? (
-          <ChevronRight
-            className={cn(
-              'h-3 w-3 shrink-0 text-muted-foreground/60 transition-transform',
-              active && 'rotate-90 text-foreground',
-            )}
-          />
-        ) : (
-          <span className="w-3" />
-        )}
         <span className="text-base leading-none">{emoji}</span>
         <span className="flex-1 truncate font-medium">{label}</span>
         <span className="tnum text-[11px] text-muted-foreground">{count}</span>
       </button>
-    </li>
+    </div>
   );
 }

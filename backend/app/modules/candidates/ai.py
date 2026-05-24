@@ -68,7 +68,9 @@ _SKILL_CATEGORY_SCHEMA: dict[str, Any] = {
             "description": (
                 "Название блока навыков из резюме: 'Языки программирования', "
                 "'Технологии', 'DevOps и автоматизация' и т.п. Если категорий "
-                "явных нет — используй 'Ключевые навыки'."
+                "явных нет — используй 'Ключевые навыки'. ЯВНОЕ ИСКЛЮЧЕНИЕ: "
+                "НЕ создавай категорию для естественных языков (Русский, "
+                "Английский, ...) — они идут отдельно в `languages`."
             ),
         },
         "items": {
@@ -76,7 +78,9 @@ _SKILL_CATEGORY_SCHEMA: dict[str, Any] = {
             "items": {"type": "string"},
             "description": (
                 "Конкретные технологии/навыки этой категории, каждый отдельной "
-                "строкой. Сохраняй каноничные имена ('PostgreSQL', не 'postgres')."
+                "строкой. Сохраняй каноничные имена ('PostgreSQL', не 'postgres'). "
+                "НЕ включай естественные языки (Русский, Английский, ...) — "
+                "владение языками парсится отдельно в поле `languages`."
             ),
         },
     },
@@ -255,7 +259,9 @@ PARSED_CANDIDATE_SCHEMA: dict[str, Any] = {
             "description": (
                 "Сводный CSV-список ключевых технологий через запятую с пробелом, "
                 "например 'Java, Spring, Kafka, PostgreSQL'. Это плоский список "
-                "для поиска и канбана — НЕ дублирует skillCategories, а агрегирует их."
+                "для поиска и канбана — НЕ дублирует skillCategories, а агрегирует их. "
+                "НЕ включай сюда естественные языки (Русский, Английский, Немецкий и т.п.) — "
+                "они хранятся отдельно в `languages`."
             ),
         },
         "summary": {
@@ -331,6 +337,13 @@ _SYSTEM_PROMPT = """\
 СОГЛАСОВАНЫ: всё, что в skillCategories, должно отражаться в stack.
 8. Если в резюме нет явных категорий навыков — собери все теги в одну \
 категорию 'Ключевые навыки'.
+9. ВЛАДЕНИЕ ИНОСТРАННЫМИ/ЕСТЕСТВЕННЫМИ ЯЗЫКАМИ (Русский, Английский, \
+Немецкий, Французский, Испанский, Китайский и т.д.) — это ОТДЕЛЬНОЕ поле \
+`languages`. Никогда не клади их в `stack` и в `skillCategories[].items`. \
+Технологии «языки программирования» (Python, Java, Go, ...) — это `stack`/`skillCategories`. \
+Если сомневаешься: умеет говорить = languages; умеет программировать = stack. \
+Также не клади в `stack` уровни (A1/B2/C1, Intermediate, Fluent) и слова \
+«разговорный», «технический», «со словарём» — это атрибуты языка из `languages`.
 
 Сегодняшняя дата: {today}.
 """
@@ -572,6 +585,134 @@ def _coerce_languages(value: Any) -> list[dict[str, Any]]:
     return out
 
 
+# ─── Защита от попадания естественных языков в стек технологий ──────────────
+# Несмотря на явное правило в промпте, модель иногда всё равно тащит
+# «Английский», «B2», «Разговорный» в `stack` / `skillCategories[].items`.
+# Поэтому делаем пост-фильтр: drop в стеке любых токенов, похожих на
+# естественный язык или уровень владения им.
+
+# Распространённые названия (русский и английский варианты, нижний регистр).
+_NATURAL_LANGUAGES: frozenset[str] = frozenset(
+    {
+        # русский
+        "русский", "английский", "немецкий", "французский", "испанский",
+        "итальянский", "португальский", "китайский", "японский", "корейский",
+        "арабский", "турецкий", "польский", "украинский", "белорусский",
+        "армянский", "грузинский", "узбекский", "казахский", "татарский",
+        "иврит", "финский", "шведский", "норвежский", "датский", "голландский",
+        "нидерландский", "греческий", "чешский", "словацкий", "венгерский",
+        "румынский", "болгарский", "сербский", "хорватский", "вьетнамский",
+        "тайский", "хинди", "урду", "фарси", "персидский",
+        # english
+        "russian", "english", "german", "french", "spanish", "italian",
+        "portuguese", "chinese", "mandarin", "cantonese", "japanese", "korean",
+        "arabic", "turkish", "polish", "ukrainian", "belarusian", "armenian",
+        "georgian", "uzbek", "kazakh", "tatar", "hebrew", "finnish", "swedish",
+        "norwegian", "danish", "dutch", "greek", "czech", "slovak", "hungarian",
+        "romanian", "bulgarian", "serbian", "croatian", "vietnamese", "thai",
+        "hindi", "urdu", "persian", "farsi",
+    }
+)
+
+# Уровни и слова-маркеры владения. Совпадают целиком (case-insensitive).
+_LANGUAGE_LEVEL_TOKENS: frozenset[str] = frozenset(
+    {
+        # CEFR
+        "a1", "a2", "b1", "b2", "c1", "c2",
+        # русские словесные уровни
+        "родной", "свободный", "свободно", "в совершенстве",
+        "разговорный", "технический", "со словарём", "со словарем",
+        "начальный", "элементарный", "средний", "средне-продвинутый",
+        "продвинутый", "базовый", "базовое владение", "чтение и перевод",
+        # английские словесные уровни
+        "native", "fluent", "advanced", "upper-intermediate", "upper intermediate",
+        "intermediate", "pre-intermediate", "pre intermediate", "elementary",
+        "beginner", "basic", "proficient", "proficiency", "conversational",
+    }
+)
+
+
+def _is_language_token(token: str, languages: set[str]) -> bool:
+    """Похоже ли значение на естественный язык / уровень владения им."""
+    t = token.strip().lower()
+    if not t:
+        return False
+    if t in _NATURAL_LANGUAGES or t in _LANGUAGE_LEVEL_TOKENS:
+        return True
+    if t in languages:
+        return True
+    # «Английский — B2», «Русский B2», «English: C1» одним токеном —
+    # отрежем по разделителю (тире/двоеточие/пробел) и проверим первое слово.
+    head = re.split(r"[\s—–\-:]+", t, maxsplit=1)[0].strip()
+    if head and (head in _NATURAL_LANGUAGES or head in languages):
+        return True
+    return False
+
+
+def _filter_language_tokens(out: dict[str, Any]) -> None:
+    """Мутирует `out`: убирает естественные языки/уровни из stack и skillCategories.
+
+    Питон-side стена против ситуации, когда модель проигнорировала правило
+    промпта и положила 'Английский B2' в плоский стек. Это бьёт по UX:
+    в канбане в чипах появлялся «Английский», что путало рекрутеров.
+    """
+    # Множество названий уже распознанных естественных языков.
+    spoken: set[str] = set()
+    for lang in out.get("languages", []) or []:
+        if isinstance(lang, dict):
+            name = _clean_string(lang.get("language"))
+            if name:
+                spoken.add(name.lower())
+
+    # 1) `stack` — CSV-строка, разрезаем, фильтруем, склеиваем обратно.
+    stack_raw = out.get("stack")
+    if isinstance(stack_raw, str) and stack_raw:
+        parts = [p.strip() for p in stack_raw.split(",")]
+        kept = [p for p in parts if p and not _is_language_token(p, spoken)]
+        if kept:
+            out["stack"] = ", ".join(kept)
+        else:
+            out.pop("stack", None)
+
+    # 2) `skillCategories[].items` — фильтруем; пустые категории — выкидываем;
+    #    категория с «языковым» именем тоже отбрасывается целиком.
+    cats = out.get("skillCategories")
+    if isinstance(cats, list):
+        cleaned_cats: list[dict[str, Any]] = []
+        for cat in cats:
+            if not isinstance(cat, dict):
+                continue
+            name = cat.get("name") or ""
+            if isinstance(name, str) and _is_language_token(name, spoken):
+                continue  # категория «Иностранные языки» / «Знание языков» — целиком в /dev/null
+            items = cat.get("items")
+            if not isinstance(items, list):
+                continue
+            kept_items = [
+                it for it in items
+                if isinstance(it, str) and not _is_language_token(it, spoken)
+            ]
+            if kept_items:
+                cleaned_cats.append({"name": name, "items": kept_items})
+        if cleaned_cats:
+            out["skillCategories"] = cleaned_cats
+        else:
+            out.pop("skillCategories", None)
+
+    # 3) experience[].stack — тот же фильтр.
+    exp = out.get("experience")
+    if isinstance(exp, list):
+        for e in exp:
+            if not isinstance(e, dict):
+                continue
+            es = e.get("stack")
+            if isinstance(es, list):
+                e["stack"] = [
+                    s for s in es
+                    if isinstance(s, str) and not _is_language_token(s, spoken)
+                ]
+
+
 def _coerce_parsed(raw: dict[str, Any]) -> dict[str, Any]:
     """Нормализация ответа LLM в финальный ParsedCandidate-friendly dict.
 
@@ -626,6 +767,10 @@ def _coerce_parsed(raw: dict[str, Any]) -> dict[str, Any]:
     langs = _coerce_languages(raw.get("languages"))
     if langs:
         out["languages"] = langs
+
+    # Защитный фильтр: выкидываем естественные языки/уровни из stack и
+    # skillCategories, если модель проигнорировала правило промпта.
+    _filter_language_tokens(out)
 
     return out
 

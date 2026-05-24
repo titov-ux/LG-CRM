@@ -1,5 +1,17 @@
-import { useState } from 'react';
-import { Download, ExternalLink, History, MessageSquare, Pencil, Plus, Send, Share2 } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Download,
+  ExternalLink,
+  FileText,
+  History,
+  MessageSquare,
+  Paperclip,
+  Pencil,
+  Plus,
+  Send,
+  Share2,
+  Upload,
+} from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -14,6 +26,13 @@ import { Textarea } from '@/components/ui/textarea';
 import { useDocumentsStore } from '@/stores/documents';
 import { SECTIONS } from './mocks';
 import type { DocumentItem } from './types';
+import {
+  fileMetaFromFile,
+  formatBytes,
+  getCachedBlobUrl,
+  readAsDataUrl,
+  rememberBlobUrl,
+} from './fileBlob';
 
 const KIND_LABEL: Record<string, string> = {
   doc: 'Документ',
@@ -33,20 +52,62 @@ interface Props {
   onShare: () => void;
 }
 
-export function PreviewDialog({ open, onOpenChange, document, onEdit, onDownload, onShare }: Props) {
+/** Выбираем URL для просмотра: blob из памяти > dataURL из persist */
+function resolvePreviewUrl(doc: DocumentItem): string | undefined {
+  return getCachedBlobUrl(doc.id) ?? doc.file?.dataUrl ?? undefined;
+}
+
+function isTextLike(mime?: string, fileName?: string): boolean {
+  if (mime?.startsWith('text/')) return true;
+  const ext = fileName?.toLowerCase().split('.').pop();
+  return ext === 'md' || ext === 'csv' || ext === 'txt' || ext === 'log';
+}
+
+export function PreviewDialog({
+  open,
+  onOpenChange,
+  document,
+  onEdit,
+  onDownload,
+  onShare,
+}: Props) {
   const addVersion = useDocumentsStore((s) => s.addVersion);
   const addComment = useDocumentsStore((s) => s.addComment);
+  const attachFile = useDocumentsStore((s) => s.attachFile);
   const documents = useDocumentsStore((s) => s.documents);
 
   const [tab, setTab] = useState('overview');
   const [versionLabel, setVersionLabel] = useState('');
   const [versionNote, setVersionNote] = useState('');
   const [commentText, setCommentText] = useState('');
+  const [textPreview, setTextPreview] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  if (!document) return null;
-  // подхватываем последние данные из стора (на случай новых комментариев/версий)
-  const fresh = documents.find((d) => d.id === document.id) ?? document;
-  const section = SECTIONS.find((s) => s.id === fresh.section);
+  // подхватываем последние данные из стора (на случай новых комментариев/версий/файла)
+  const fresh = document ? documents.find((d) => d.id === document.id) ?? document : null;
+  const section = fresh ? SECTIONS.find((s) => s.id === fresh.section) : undefined;
+  const previewUrl = useMemo(() => (fresh ? resolvePreviewUrl(fresh) : undefined), [fresh]);
+
+  // подгружаем текстовые форматы
+  useEffect(() => {
+    setTextPreview(null);
+    if (!open || !fresh || !previewUrl) return;
+    if (!isTextLike(fresh.file?.mime, fresh.file?.fileName)) return;
+    let cancelled = false;
+    fetch(previewUrl)
+      .then((r) => r.text())
+      .then((text) => {
+        if (!cancelled) setTextPreview(text.slice(0, 50_000)); // защитный лимит
+      })
+      .catch(() => {
+        if (!cancelled) setTextPreview(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, previewUrl, fresh]);
+
+  if (!document || !fresh) return null;
 
   const handleAddVersion = () => {
     if (!versionLabel.trim()) return;
@@ -65,15 +126,120 @@ export function PreviewDialog({ open, onOpenChange, document, onEdit, onDownload
     setCommentText('');
   };
 
+  const handleAttach = async (file: File) => {
+    const blobUrl = URL.createObjectURL(file);
+    rememberBlobUrl(fresh.id, blobUrl);
+    const meta = fileMetaFromFile(file);
+    // для маленьких файлов сразу сохраняем dataURL, чтобы пережил reload
+    const PERSIST_LIMIT = 2 * 1024 * 1024;
+    if (file.size <= PERSIST_LIMIT) {
+      const dataUrl = await readAsDataUrl(file);
+      attachFile(fresh.id, { ...meta, dataUrl });
+    } else {
+      attachFile(fresh.id, meta);
+    }
+  };
+
+  const renderPreviewBody = () => {
+    if (!fresh.file || !previewUrl) {
+      return (
+        <div className="flex h-64 flex-col items-center justify-center gap-3 rounded-md border border-dashed bg-muted/20 text-center">
+          <Paperclip className="h-5 w-5 text-muted-foreground" />
+          <div className="text-[12.5px] text-muted-foreground">
+            {fresh.file
+              ? 'Файл не доступен в текущей сессии. Перезагрузите его, чтобы открыть превью.'
+              : 'Файл ещё не прикреплён. Загрузите его, чтобы появился предпросмотр.'}
+          </div>
+          <Button size="sm" variant="outline" onClick={() => fileInputRef.current?.click()}>
+            <Upload className="mr-1.5 h-3.5 w-3.5" />
+            {fresh.file ? 'Загрузить заново' : 'Прикрепить файл'}
+          </Button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) handleAttach(f);
+              e.target.value = '';
+            }}
+          />
+        </div>
+      );
+    }
+
+    const { mime, fileName } = fresh.file;
+    // изображения
+    if (mime.startsWith('image/') || fresh.kind === 'image') {
+      return (
+        <div className="flex h-[420px] items-center justify-center overflow-hidden rounded-md border bg-muted/10">
+          <img
+            src={previewUrl}
+            alt={fresh.title}
+            className="max-h-full max-w-full object-contain"
+          />
+        </div>
+      );
+    }
+    // PDF
+    if (mime === 'application/pdf' || fileName.toLowerCase().endsWith('.pdf')) {
+      return (
+        <iframe
+          src={previewUrl}
+          title={fresh.title}
+          className="h-[480px] w-full rounded-md border bg-white"
+        />
+      );
+    }
+    // текст / md / csv
+    if (textPreview !== null) {
+      return (
+        <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap rounded-md border bg-muted/10 p-3 font-mono text-[12px] leading-relaxed">
+          {textPreview || '(пустой файл)'}
+        </pre>
+      );
+    }
+    // офисные форматы — пока нет нативного рендера в браузере
+    return (
+      <div className="flex h-64 flex-col items-center justify-center gap-3 rounded-md border bg-muted/10 text-center">
+        <FileText className="h-6 w-6 text-muted-foreground" />
+        <div className="text-[12.5px] text-foreground/80">
+          {fileName}
+          <span className="ml-2 text-muted-foreground">· {formatBytes(fresh.file.size)}</span>
+        </div>
+        <div className="max-w-sm text-[12px] text-muted-foreground">
+          Просмотр {KIND_LABEL[fresh.kind] ?? 'этого формата'} в браузере недоступен — откройте в
+          новой вкладке или скачайте.
+        </div>
+        <div className="flex gap-2">
+          <Button size="sm" variant="outline" asChild>
+            <a href={previewUrl} target="_blank" rel="noreferrer">
+              <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
+              Открыть
+            </a>
+          </Button>
+          <Button size="sm" variant="outline" asChild>
+            <a href={previewUrl} download={fileName}>
+              <Download className="mr-1.5 h-3.5 w-3.5" />
+              Скачать
+            </a>
+          </Button>
+        </div>
+      </div>
+    );
+  };
+
+  const hasFile = !!fresh.file && !!previewUrl;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-3xl">
         <DialogHeader>
           <div className="flex items-center gap-3">
             <span className="text-3xl leading-none">{fresh.emoji}</span>
             <div className="min-w-0 flex-1">
               <DialogTitle className="truncate text-[22px]">{fresh.title}</DialogTitle>
-              <DialogDescription className="mt-1 flex items-center gap-2 text-[12px]">
+              <DialogDescription className="mt-1 flex flex-wrap items-center gap-2 text-[12px]">
                 {section && (
                   <>
                     <span>
@@ -85,6 +251,12 @@ export function PreviewDialog({ open, onOpenChange, document, onEdit, onDownload
                 <span>{KIND_LABEL[fresh.kind] ?? fresh.kind}</span>
                 <span>·</span>
                 <span>Владелец: {fresh.owner}</span>
+                {fresh.file && (
+                  <>
+                    <span>·</span>
+                    <span className="tnum">{formatBytes(fresh.file.size)}</span>
+                  </>
+                )}
               </DialogDescription>
             </div>
           </div>
@@ -133,9 +305,7 @@ export function PreviewDialog({ open, onOpenChange, document, onEdit, onDownload
               </div>
             )}
 
-            <div className="flex h-44 items-center justify-center rounded-md border border-dashed bg-muted/20 text-[12px] text-muted-foreground">
-              Предпросмотр содержимого появится после подключения файлового хранилища.
-            </div>
+            {renderPreviewBody()}
           </TabsContent>
 
           <TabsContent value="versions" className="space-y-3">
@@ -269,14 +439,39 @@ export function PreviewDialog({ open, onOpenChange, document, onEdit, onDownload
               <Pencil className="h-3.5 w-3.5" />
               Изменить
             </Button>
-            <Button variant="outline" size="sm" onClick={onDownload} className="gap-1.5">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onDownload}
+              className="gap-1.5"
+              disabled={!hasFile}
+            >
               <Download className="h-3.5 w-3.5" />
               Скачать
             </Button>
-            <Button size="sm" className="gap-1.5">
-              <ExternalLink className="h-3.5 w-3.5" />
-              Открыть
-            </Button>
+            {hasFile ? (
+              <Button size="sm" className="gap-1.5" asChild>
+                <a href={previewUrl} target="_blank" rel="noreferrer">
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  Открыть
+                </a>
+              </Button>
+            ) : (
+              <Button size="sm" className="gap-1.5" onClick={() => fileInputRef.current?.click()}>
+                <Upload className="h-3.5 w-3.5" />
+                Прикрепить
+              </Button>
+            )}
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handleAttach(f);
+                e.target.value = '';
+              }}
+            />
           </div>
         </div>
       </DialogContent>

@@ -51,3 +51,8 @@ class ConfirmRequest(CamelModel):
 class DownloadResponse(CamelModel):
     url: str
     expires_in: int
+
+
+class RenderPdfRequest(CamelModel):
+    html: str = Field(min_length=1, max_length=2_000_000)
+    filename: str = Field(min_length=1, max_length=255)

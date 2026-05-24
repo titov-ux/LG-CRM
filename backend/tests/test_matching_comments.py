@@ -170,3 +170,35 @@ def test_comments_crud_and_author_only_edit(
     # автор удаляет свой коммент
     r = client.delete(f"/api/v1/comments/{comment_id}", headers=h_rec)
     assert r.status_code == 200
+
+
+def test_comment_mentions_create_notification(
+    client: TestClient, admin_user, account_manager_user, recruiter_user
+) -> None:
+    h_admin = auth_headers(client, admin_user.email)
+    cid = client.post("/api/v1/clients", headers=h_admin, json=_client_payload(account_manager_user.id)).json()["id"]
+    vid = client.post("/api/v1/vacancies", headers=h_admin, json=_vac_payload(cid, account_manager_user.id)).json()["id"]
+
+    h_rec = auth_headers(client, recruiter_user.email)
+    r = client.post(
+        "/api/v1/comments",
+        headers=h_rec,
+        json={
+            "entityType": "vacancy",
+            "entityId": vid,
+            "text": "Нужен фидбек от @AM",
+            "mentions": [str(account_manager_user.id)],
+        },
+    )
+    assert r.status_code == 201
+
+    h_am = auth_headers(client, account_manager_user.email)
+    notifications = client.get("/api/v1/notifications", headers=h_am)
+    assert notifications.status_code == 200
+    items = notifications.json()
+    assert any(
+        n["kind"] == "mention"
+        and n["entityType"] == "vacancy"
+        and n["entityId"] == vid
+        for n in items
+    )

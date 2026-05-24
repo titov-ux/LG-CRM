@@ -19,6 +19,7 @@ dependencies = [
     "python-multipart>=0.0.17",
     "httpx>=0.27",
     "structlog>=24.4",
+    "playwright>=1.54",
 ]
 
 [project.optional-dependencies]

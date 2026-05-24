@@ -54,6 +54,11 @@ export interface DownloadResponse {
   expiresIn: number;
 }
 
+export interface RenderPdfRequest {
+  html: string;
+  filename: string;
+}
+
 export const filesApi = {
   presign: (payload: PresignRequest) =>
     api.post('files/presign', { json: payload }).json<PresignResponse>(),
@@ -64,6 +69,7 @@ export const filesApi = {
       .get('files', { searchParams: { entityType, entityId } })
       .json<FileResponse[]>(),
   download: (id: UUID) => api.get(`files/${id}/download`).json<DownloadResponse>(),
+  renderPdf: (payload: RenderPdfRequest) => api.post('files/render-pdf', { json: payload }).blob(),
   remove: (id: UUID) => api.delete(`files/${id}`).json<{ ok: true }>(),
 };
 

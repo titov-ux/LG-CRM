@@ -8,14 +8,17 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, status
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import ApiError
 from app.db.session import get_db
 from app.integrations.s3 import S3Adapter, get_s3_adapter
 from app.modules.auth.dependencies import get_current_user
 from app.modules.auth.schemas import OkResponse
 from app.modules.files import service
+from app.modules.files.pdf_service import render_pdf_from_html
 from app.modules.files.models import File, FileEntityType
 from app.modules.files.schemas import (
     ConfirmRequest,
@@ -23,6 +26,7 @@ from app.modules.files.schemas import (
     FileResponse,
     PresignRequest,
     PresignResponse,
+    RenderPdfRequest,
 )
 from app.modules.users.models import User
 
@@ -93,3 +97,29 @@ async def delete_file(
 ) -> OkResponse:
     await service.delete_file(db, s3, user, file_id)
     return OkResponse()
+
+
+@router.post(
+    "/render-pdf",
+    summary="Собрать PDF из HTML",
+)
+async def render_pdf(
+    payload: RenderPdfRequest,
+    _: User = Depends(get_current_user),
+) -> Response:
+    try:
+        pdf_bytes = await render_pdf_from_html(payload.html)
+    except Exception as exc:
+        raise ApiError(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "pdf_render_failed",
+            "Не удалось сформировать PDF на сервере",
+            details={"errorType": exc.__class__.__name__},
+        ) from exc
+
+    safe_name = payload.filename.replace('"', "").replace("\n", "").replace("\r", "")
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
+    )

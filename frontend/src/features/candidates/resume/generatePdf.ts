@@ -1,4 +1,5 @@
 import type { Candidate } from '@/api/types';
+import { filesApi } from '@/api/files';
 import { buildResumeModel, calcExperienceLabel, type ResumeModel } from './buildResumeModel';
 import { resumeFileName } from './generateDocx';
 import { LACHEVSKY_LOGO_DATA_URL } from './lachevskyLogo';
@@ -231,14 +232,6 @@ function buildResumeHtml(candidate: Candidate, model: ResumeModel, view: Derived
 </head>
 <body>
   ${pages}
-  <script>
-    window.addEventListener('load', () => {
-      setTimeout(() => {
-        window.focus();
-        window.print();
-      }, 450);
-    });
-  </script>
 </body>
 </html>`;
 }
@@ -247,12 +240,14 @@ export async function downloadResumePdf(candidate: Candidate): Promise<void> {
   const model = buildResumeModel(candidate);
   const view = deriveView(candidate, model);
   const html = buildResumeHtml(candidate, model, view);
-
-  const win = window.open('', '_blank');
-  if (!win) {
-    throw new Error('Popup blocked');
-  }
-  win.document.open();
-  win.document.write(html);
-  win.document.close();
+  const filename = resumeFileName(candidate, 'pdf');
+  const blob = await filesApi.renderPdf({ html, filename });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

@@ -41,6 +41,19 @@ def _to_dto(f: File) -> FileResponse:
     return FileResponse.model_validate(f)
 
 
+def _pdf_error_details(exc: Exception) -> dict[str, str]:
+    raw_message = str(exc).strip()
+    first_line = raw_message.splitlines()[0] if raw_message else exc.__class__.__name__
+    details: dict[str, str] = {
+        "errorType": exc.__class__.__name__,
+        "errorMessage": first_line[:300],
+    }
+    lower = raw_message.lower()
+    if "playwright" in lower and ("executable doesn't exist" in lower or "playwright install" in lower):
+        details["hint"] = "Run `python -m playwright install chromium` on backend host."
+    return details
+
+
 @router.post("/presign", response_model=PresignResponse, summary="Получить presigned URL для загрузки")
 async def presign(
     payload: PresignRequest,
@@ -114,7 +127,7 @@ async def render_pdf(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
             "pdf_render_failed",
             "Не удалось сформировать PDF на сервере",
-            details={"errorType": exc.__class__.__name__},
+            details=_pdf_error_details(exc),
         ) from exc
 
     safe_name = payload.filename.replace('"', "").replace("\n", "").replace("\r", "")

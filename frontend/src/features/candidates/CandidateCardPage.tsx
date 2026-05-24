@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useParams, useRouterState } from '@tanstack/react-router';
+import { HTTPError } from 'ky';
 import { toast } from 'sonner';
 import {
   ArchiveRestore,
@@ -90,6 +91,23 @@ function splitLines(value: string | undefined): string[] {
     .split(/\r?\n/)
     .map((s) => s.replace(/^[-•*]\s*/, '').trim())
     .filter(Boolean);
+}
+
+async function getPdfErrorDescription(error: unknown): Promise<string | null> {
+  if (!(error instanceof HTTPError)) return null;
+  try {
+    const body = (await error.response.clone().json()) as
+      | { detail?: { message?: string; details?: { hint?: string; errorMessage?: string } } }
+      | undefined;
+    const detail = body?.detail;
+    const hint = detail?.details?.hint?.trim();
+    if (hint) return hint;
+    const message = detail?.details?.errorMessage?.trim() || detail?.message?.trim();
+    if (message) return message;
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 const MONTH_NAMES_RU = [
@@ -380,7 +398,8 @@ export function CandidateCardPage({ source: sourceProp }: CandidateCardPageProps
       toast.success('Резюме PDF сформировано');
     } catch (e) {
       console.error(e);
-      toast.error('Не удалось сформировать PDF');
+      const description = await getPdfErrorDescription(e);
+      toast.error('Не удалось сформировать PDF', description ? { description } : undefined);
     } finally {
       setPdfPending(false);
     }

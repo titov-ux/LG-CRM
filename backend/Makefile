@@ -1,7 +1,8 @@
-.PHONY: help install dev lint typecheck test fmt migrate revision seed run
+.PHONY: help install install-pdf-runtime dev lint typecheck test fmt migrate revision seed run
 
 help:
 	@echo "make install     — установить зависимости (dev + prod)"
+	@echo "make install-pdf-runtime — установить Chromium для PDF-рендера"
 	@echo "make run         — запустить uvicorn на :8000"
 	@echo "make dev         — uvicorn с --reload"
 	@echo "make lint        — ruff check"
@@ -14,6 +15,9 @@ help:
 
 install:
 	pip install -e ".[dev]"
+
+install-pdf-runtime:
+	python -m playwright install chromium
 
 run:
 	uvicorn app.main:app --host 0.0.0.0 --port 8000

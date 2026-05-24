@@ -12,6 +12,7 @@ docker compose -f ../infra/docker-compose.dev.yml up -d
 
 # установить зависимости и запустить
 make install
+make install-pdf-runtime # один раз: Chromium для /files/render-pdf
 make migrate     # alembic upgrade head (пока миграций нет)
 make dev         # uvicorn --reload на :8000
 ```

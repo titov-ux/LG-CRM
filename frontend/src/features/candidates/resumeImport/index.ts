@@ -1,3 +1,11 @@
 export { extractPdfText } from './extractPdfText';
-export { parseResumeText } from './parseResume';
-export type { ParseResult } from './parseResume';
+export { parsedToFormValues } from './parsedToForm';
+export type { ParsedToFormResult } from './parsedToForm';
+export type {
+  ParsedCandidate,
+  ParsedCertificationItem,
+  ParsedEducationItem,
+  ParsedExperienceItem,
+  ParsedLanguageItem,
+  ParsedSkillCategory,
+} from './types';

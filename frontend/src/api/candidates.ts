@@ -7,6 +7,7 @@ import type {
   Page,
   UUID,
 } from './types';
+import type { ParsedCandidate } from '@/features/candidates/resumeImport/types';
 
 export interface CandidatesListParams {
   search?: string;
@@ -59,4 +60,9 @@ export const candidatesApi = {
     api.patch(`candidates/${id}/status`, { json: { status, comment } }).json<Candidate>(),
   reorderKanban: (updates: { id: UUID; status: CandidateStatus; kanbanOrder: number }[]) =>
     api.put('candidates/kanban-order', { json: { updates } }).json<Candidate[]>(),
+  /** AI-распознавание сплошного текста резюме → структурированные поля формы. */
+  parseResumeText: (text: string) =>
+    api
+      .post('candidates/parse-resume-text', { json: { text } })
+      .json<{ parsed: ParsedCandidate }>(),
 };

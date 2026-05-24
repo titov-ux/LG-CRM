@@ -168,3 +168,81 @@ class CandidatePage(CamelModel):
     total: int
     page: int
     page_size: int
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# AI-распознавание резюме
+# ────────────────────────────────────────────────────────────────────────────
+
+
+class ParseResumeTextRequest(CamelModel):
+    text: str = Field(min_length=1, max_length=50_000)
+
+
+# Резюме-блоки для распознавания. ВНИМАНИЕ: эти схемы похожи на
+# CandidateExperience/CandidateEducation/CandidateCertification/CandidateLanguage,
+# но без поля `id` — фронт сам сгенерирует id при подстановке в форму.
+class ParsedSkillCategory(CamelModel):
+    name: str
+    items: list[str] = Field(default_factory=list)
+
+
+class ParsedExperience(CamelModel):
+    company: str = ""
+    position: str = ""
+    start_month: str = ""  # YYYY-MM
+    end_month: str = ""  # YYYY-MM или "" = «по настоящее время»
+    project: str = ""
+    achievements: list[str] = Field(default_factory=list)
+    stack: list[str] = Field(default_factory=list)
+
+
+class ParsedEducation(CamelModel):
+    degree: str = "Высшее"
+    institution: str
+    city: str = ""
+    graduation_year: int
+    specialty: str = ""
+
+
+class ParsedCertification(CamelModel):
+    title: str
+    issuer: str
+    period: str = ""
+
+
+class ParsedLanguage(CamelModel):
+    language: str
+    level: LanguageLevel
+
+
+class ParsedCandidate(CamelModel):
+    """Структурированный результат распознавания (все поля опциональны).
+
+    Используется только как ответ AI-эндпоинта; фронт мержит непустые значения
+    поверх формы. employmentType / engagementType / recruiterId не парсятся
+    из резюме — их выставляет рекрутер.
+    """
+
+    full_name: str | None = None
+    role: str | None = None
+    grade: Grade | None = None
+    experience_years: float | None = None
+    format: WorkFormat | None = None
+    rate_month: float | None = None
+    location: str | None = None
+    birthday: date | None = None
+    telegram: str | None = None
+    phone: str | None = None
+    email: str | None = None  # НЕ EmailStr: LLM может прислать «грязный» email — пусть фронт покажет
+    stack: str | None = None  # CSV
+    summary: str | None = None
+    skill_categories: list[ParsedSkillCategory] | None = None
+    experience: list[ParsedExperience] | None = None
+    education: list[ParsedEducation] | None = None
+    certifications: list[ParsedCertification] | None = None
+    languages: list[ParsedLanguage] | None = None
+
+
+class ParseResumeTextResponse(CamelModel):
+    parsed: ParsedCandidate

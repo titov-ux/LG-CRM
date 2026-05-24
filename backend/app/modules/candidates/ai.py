@@ -1,0 +1,660 @@
+"""AI-распознавание резюме (сплошной текст из PDF) → структурированные поля формы кандидата.
+
+Используем YandexGPT через `app.integrations.yandex_gpt`. Модель вызывается с
+`response_format=json_schema` — она ОБЯЗАНА вернуть JSON по нашей схеме.
+
+Контракт ответа (см. фронт `frontend/src/api/types.ts:Candidate`):
+
+    interface ParsedCandidate {
+      fullName?:        string
+      role?:            string                    // желаемая должность
+      grade?:           'Junior'|'Middle'|'Senior'|'Lead'
+      experienceYears?: number
+      format?:          'Удалённо'|'Гибрид'|'Офис'
+      rateMonth?:       number                   // ожидаемая ставка ₽/мес
+      location?:        string
+      birthday?:        string                   // YYYY-MM-DD
+      telegram?:        string
+      phone?:           string
+      email?:           string
+      stack?:           string                   // CSV-список технологий
+      summary?:         string                   // 'Обо мне'
+      skillCategories?: { name: string; items: string[] }[]
+      experience?:      { company; position; startMonth; endMonth?; project?; achievements[]; stack[] }[]
+      education?:       { degree; institution; city?; graduationYear; specialty? }[]
+      certifications?:  { title; issuer; period? }[]
+      languages?:       { language; level: LanguageLevel }[]
+    }
+
+Все поля опциональны: модель должна возвращать только то, что явно есть в тексте.
+Если ничего не распозналось — пустой объект.
+"""
+from __future__ import annotations
+
+import logging
+import re
+from datetime import date
+from typing import Any
+
+from app.core.config import get_settings
+from app.integrations.yandex_gpt import (
+    AiBadRequestError,
+    AiUnavailableError,
+    YandexGptClient,
+)
+from app.modules.vacancies.models import Grade, WorkFormat
+
+logger = logging.getLogger(__name__)
+
+# Регэксп для извлечения первой ISO-даты из произвольной строки.
+_ISO_DATE_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
+# YYYY-MM (для startMonth/endMonth).
+_ISO_MONTH_RE = re.compile(r"(\d{4})-(\d{1,2})$")
+
+_GRADE_VALUES: set[str] = {g.value for g in Grade}
+_FORMAT_VALUES: set[str] = {f.value for f in WorkFormat}
+_LANGUAGE_LEVELS: tuple[str, ...] = ("A1", "A2", "B1", "B2", "C1", "C2", "родной")
+_LANGUAGE_LEVELS_SET: set[str] = set(_LANGUAGE_LEVELS)
+
+
+# ─── JSON schema для structured output ──────────────────────────────────────
+# Описания важны — модель смотрит на них, чтобы понять, какие значения «правильные».
+
+_SKILL_CATEGORY_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "name": {
+            "type": "string",
+            "description": (
+                "Название блока навыков из резюме: 'Языки программирования', "
+                "'Технологии', 'DevOps и автоматизация' и т.п. Если категорий "
+                "явных нет — используй 'Ключевые навыки'."
+            ),
+        },
+        "items": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "Конкретные технологии/навыки этой категории, каждый отдельной "
+                "строкой. Сохраняй каноничные имена ('PostgreSQL', не 'postgres')."
+            ),
+        },
+    },
+    "additionalProperties": False,
+}
+
+_EXPERIENCE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "company": {"type": "string", "description": "Название компании."},
+        "position": {"type": "string", "description": "Должность в этой компании."},
+        "startMonth": {
+            "type": "string",
+            "description": (
+                "Дата начала работы в формате YYYY-MM (например, '2022-05'). "
+                "День не указывается."
+            ),
+        },
+        "endMonth": {
+            "type": "string",
+            "description": (
+                "Дата окончания работы в формате YYYY-MM. Если в резюме указано "
+                "'по настоящее время' / 'till now' / 'present' — оставь пустую строку."
+            ),
+        },
+        "project": {
+            "type": "string",
+            "description": "Краткое описание проекта/продукта, если упомянуто.",
+        },
+        "achievements": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "Ключевые задачи и достижения отдельными буллетами. Сохраняй язык "
+                "оригинала. Без префиксов '—', '•' — просто текст пункта."
+            ),
+        },
+        "stack": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "Технологии, использовавшиеся на этом месте работы. Если в резюме "
+                "выделен 'Стек' — берёшь оттуда; иначе — пусто."
+            ),
+        },
+    },
+    "additionalProperties": False,
+}
+
+_EDUCATION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "degree": {
+            "type": "string",
+            "description": "Уровень: 'Высшее', 'Магистр', 'Бакалавр', 'Специалист', 'Среднее' и т.п.",
+        },
+        "institution": {"type": "string", "description": "Название вуза/учебного заведения."},
+        "city": {"type": "string", "description": "Город учебного заведения, если указан."},
+        "graduationYear": {
+            "type": "integer",
+            "description": "Год окончания (4 цифры). Если интервал — берём год окончания.",
+        },
+        "specialty": {"type": "string", "description": "Факультет / специальность."},
+    },
+    "additionalProperties": False,
+}
+
+_CERTIFICATION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string", "description": "Название курса/сертификата."},
+        "issuer": {"type": "string", "description": "Кто провёл/выдал (организация, школа)."},
+        "period": {
+            "type": "string",
+            "description": "Свободный период: '2023', '2017-2025', 'Январь 2024'.",
+        },
+    },
+    "additionalProperties": False,
+}
+
+_LANGUAGE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "language": {
+            "type": "string",
+            "description": "Название языка: 'Русский', 'Английский', 'Немецкий', ...",
+        },
+        "level": {
+            "type": "string",
+            "enum": list(_LANGUAGE_LEVELS),
+            "description": (
+                "Уровень: A1/A2/B1/B2/C1/C2 или 'родной'. "
+                "Соответствие словесных уровней HH: 'Начальный'→A1, "
+                "'Элементарный'→A2, 'Средний'→B1, 'Средне-продвинутый'→B2, "
+                "'Продвинутый'→C1, 'В совершенстве/Свободный'→C2, "
+                "'Родной'→'родной'."
+            ),
+        },
+    },
+    "additionalProperties": False,
+}
+
+PARSED_CANDIDATE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "fullName": {
+            "type": "string",
+            "description": (
+                "Полное ФИО кандидата (Фамилия Имя Отчество, если есть). "
+                "Резюме HH часто прячет ФИО в шапке — посмотри также в блоке "
+                "'Комментарии к резюме' (там рекрутер обычно его указывает)."
+            ),
+        },
+        "role": {
+            "type": "string",
+            "description": (
+                "Желаемая должность (специализация). Берётся из секции "
+                "'Желаемая должность и зарплата' / 'Desired position and salary'. "
+                "Без названия компании и без пояснений."
+            ),
+        },
+        "grade": {
+            "type": "string",
+            "enum": [g.value for g in Grade],
+            "description": (
+                "Грейд кандидата. Выводи по опыту/названию должности: Junior <2 лет, "
+                "Middle 2-5 лет, Senior 5+ лет / 'Senior' в названии, Lead — Tech/Team Lead."
+            ),
+        },
+        "experienceYears": {
+            "type": "number",
+            "description": (
+                "Общий опыт в годах (число). Берётся из заголовка секции опыта: "
+                "'Опыт работы — 13 лет 11 месяцев' → 13. Если только месяцы — округли до 1."
+            ),
+        },
+        "format": {
+            "type": "string",
+            "enum": [f.value for f in WorkFormat],
+            "description": (
+                "Желаемый формат работы. 'Удалённо' для remote/удалёнки, "
+                "'Гибрид' для hybrid, 'Офис' для on-site."
+            ),
+        },
+        "rateMonth": {
+            "type": "number",
+            "description": (
+                "Ожидаемая зарплата кандидата в рублях в месяц (число, без 'на руки'/'₽'). "
+                "Если указано в долларах — НЕ заполняй (рекрутер сам пересчитает)."
+            ),
+        },
+        "location": {
+            "type": "string",
+            "description": (
+                "Город проживания. Берётся из 'Проживает: <город>' / 'Reside in: <city>'."
+            ),
+        },
+        "birthday": {
+            "type": "string",
+            "description": (
+                "Дата рождения в формате YYYY-MM-DD. Берётся из шапки резюме "
+                "('родился 17 июля 1991', 'born on 24 March 1998')."
+            ),
+        },
+        "telegram": {
+            "type": "string",
+            "description": "Telegram-контакт (@username или t.me/...), если есть.",
+        },
+        "phone": {
+            "type": "string",
+            "description": "Номер телефона как есть (с +7 / +XX, скобками, дефисами).",
+        },
+        "email": {"type": "string", "description": "Email-адрес кандидата."},
+        "stack": {
+            "type": "string",
+            "description": (
+                "Сводный CSV-список ключевых технологий через запятую с пробелом, "
+                "например 'Java, Spring, Kafka, PostgreSQL'. Это плоский список "
+                "для поиска и канбана — НЕ дублирует skillCategories, а агрегирует их."
+            ),
+        },
+        "summary": {
+            "type": "string",
+            "description": (
+                "Текст из секции 'Обо мне' / 'About me' — самопрезентация кандидата "
+                "целиком, без обрезки. Сохраняй переносы строк."
+            ),
+        },
+        "skillCategories": {
+            "type": "array",
+            "items": _SKILL_CATEGORY_SCHEMA,
+            "description": (
+                "Категоризованные навыки из резюме. Если в резюме есть блоки "
+                "('Языки программирования', 'Технологии', 'DevOps' и т.п.) — "
+                "разложи по категориям; иначе верни одну категорию 'Ключевые навыки' "
+                "со всеми тегами из секции 'Навыки'."
+            ),
+        },
+        "experience": {
+            "type": "array",
+            "items": _EXPERIENCE_SCHEMA,
+            "description": (
+                "Места работы, от самого свежего к самому старому (как в HH). "
+                "Каждое — отдельный объект."
+            ),
+        },
+        "education": {
+            "type": "array",
+            "items": _EDUCATION_SCHEMA,
+            "description": "Образование (вуз, ссуз, дополнительное высшее) — список.",
+        },
+        "certifications": {
+            "type": "array",
+            "items": _CERTIFICATION_SCHEMA,
+            "description": (
+                "Курсы и сертификаты. Брать из секции 'Повышение квалификации, "
+                "курсы' / 'Сертификаты' / 'Дополнительная информация'."
+            ),
+        },
+        "languages": {
+            "type": "array",
+            "items": _LANGUAGE_SCHEMA,
+            "description": "Знание языков и уровень владения.",
+        },
+    },
+    "additionalProperties": False,
+}
+
+
+_SYSTEM_PROMPT = """\
+Ты — помощник CRM рекрутингового агентства. Твоя задача — разобрать сплошной \
+текст резюме (как правило, выгруженный из PDF с hh.ru) и разложить его по \
+структурированным полям карточки кандидата.
+
+Правила:
+1. Возвращай ТОЛЬКО ту информацию, которая явно есть в тексте. Если поле не \
+упомянуто — НЕ включай его в ответ. НИЧЕГО НЕ ВЫДУМЫВАЙ.
+2. Сохраняй язык оригинала (обычно русский). Не переводи названия технологий, \
+вузов, компаний.
+3. Если текст вообще не похож на резюме — верни пустой объект.
+4. Даты:
+   • `birthday` — формат YYYY-MM-DD.
+   • `experience[].startMonth` / `endMonth` — формат YYYY-MM (без числа).
+   • Для текущей работы ('по настоящее время', 'till now', 'present') — \
+     `endMonth` оставь пустой строкой.
+5. ФИО кандидата в HH-резюме часто скрыто в шапке. Если в шапке нет — посмотри \
+блок 'Комментарии к резюме' (там рекрутер обычно его прописывает).
+6. `experienceYears` — единое число общего опыта из заголовка секции опыта \
+('Опыт работы — 13 лет' → 13).
+7. `stack` — это плоский CSV-список ключевых технологий для канбана; \
+`skillCategories` — те же навыки, но сгруппированные по категориям. Они \
+СОГЛАСОВАНЫ: всё, что в skillCategories, должно отражаться в stack.
+8. Если в резюме нет явных категорий навыков — собери все теги в одну \
+категорию 'Ключевые навыки'.
+
+Сегодняшняя дата: {today}.
+"""
+
+
+# ─── Нормализация ответа ────────────────────────────────────────────────────
+
+
+def _clean_string(value: Any) -> str | None:
+    """Привести значение к непустой строке или вернуть None."""
+    if not isinstance(value, str):
+        return None
+    v = value.strip()
+    if not v or v.lower() in {"null", "none", "n/a", "не указано", "не указан"}:
+        return None
+    return v
+
+
+def _coerce_enum(value: Any, allowed: set[str]) -> str | None:
+    """Вернуть значение, если оно в списке допустимых (case-insensitive), иначе None."""
+    s = _clean_string(value)
+    if s is None:
+        return None
+    if s in allowed:
+        return s
+    s_lower = s.lower()
+    for v in allowed:
+        if v.lower() == s_lower:
+            return v
+    return None
+
+
+def _coerce_positive_number(value: Any) -> float | None:
+    """Извлечь положительное число из числа/строки. None — если невалидно."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        num = float(value)
+        return num if num > 0 else None
+    if isinstance(value, str):
+        # Берём первое число в строке.
+        m = re.search(r"\d+(?:[.,]\d+)?", value.replace(" ", "").replace(" ", ""))
+        if not m:
+            return None
+        try:
+            num = float(m.group(0).replace(",", "."))
+        except ValueError:
+            return None
+        return num if num > 0 else None
+    return None
+
+
+def _coerce_non_negative_number(value: Any) -> float | None:
+    """Как `_coerce_positive_number`, но допускает 0 (для experienceYears)."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        num = float(value)
+        return num if num >= 0 else None
+    if isinstance(value, str):
+        m = re.search(r"\d+(?:[.,]\d+)?", value.replace(" ", "").replace(" ", ""))
+        if not m:
+            return None
+        try:
+            num = float(m.group(0).replace(",", "."))
+        except ValueError:
+            return None
+        return num if num >= 0 else None
+    return None
+
+
+def _coerce_iso_date(value: Any) -> str | None:
+    """Извлечь YYYY-MM-DD из произвольной строки. None — если невалидно."""
+    s = _clean_string(value)
+    if not s:
+        return None
+    m = _ISO_DATE_RE.search(s)
+    if m:
+        y, mo, d = m.group(1), m.group(2), m.group(3)
+    else:
+        m2 = re.search(r"(\d{4})-(\d{1,2})-(\d{1,2})", s)
+        if not m2:
+            return None
+        y, mo, d = m2.group(1), m2.group(2).zfill(2), m2.group(3).zfill(2)
+    try:
+        date(int(y), int(mo), int(d))
+    except ValueError:
+        return None
+    return f"{y}-{mo}-{d}"
+
+
+def _coerce_iso_month(value: Any) -> str:
+    """Извлечь YYYY-MM. Пустая строка — если невалидно (для endMonth='настоящее время')."""
+    s = _clean_string(value)
+    if not s:
+        return ""
+    m = _ISO_MONTH_RE.search(s)
+    if not m:
+        # Иногда модель пишет YYYY-MM-DD в startMonth — берём YYYY-MM.
+        m2 = _ISO_DATE_RE.search(s)
+        if not m2:
+            return ""
+        y, mo = m2.group(1), m2.group(2)
+    else:
+        y, mo = m.group(1), m.group(2).zfill(2)
+    try:
+        month_i = int(mo)
+        if not 1 <= month_i <= 12:
+            return ""
+    except ValueError:
+        return ""
+    return f"{y}-{mo}"
+
+
+def _coerce_str_list(value: Any) -> list[str]:
+    """Привести список строк, отфильтровав пустые/мусорные значения."""
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    for item in value:
+        s = _clean_string(item)
+        if s:
+            out.append(s)
+    return out
+
+
+def _coerce_skill_categories(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        name = _clean_string(item.get("name"))
+        items = _coerce_str_list(item.get("items"))
+        if not name or not items:
+            continue
+        out.append({"name": name, "items": items})
+    return out
+
+
+def _coerce_experience(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        company = _clean_string(item.get("company")) or ""
+        position = _clean_string(item.get("position")) or ""
+        if not company and not position:
+            continue
+        out.append(
+            {
+                "company": company,
+                "position": position,
+                "startMonth": _coerce_iso_month(item.get("startMonth")),
+                "endMonth": _coerce_iso_month(item.get("endMonth")),
+                "project": _clean_string(item.get("project")) or "",
+                "achievements": _coerce_str_list(item.get("achievements")),
+                "stack": _coerce_str_list(item.get("stack")),
+            }
+        )
+    return out
+
+
+def _coerce_education(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        institution = _clean_string(item.get("institution"))
+        if not institution:
+            continue
+        year_raw = item.get("graduationYear")
+        year_int: int | None = None
+        if isinstance(year_raw, bool):
+            year_int = None
+        elif isinstance(year_raw, (int, float)):
+            year_int = int(year_raw)
+        elif isinstance(year_raw, str):
+            m = re.search(r"(19|20)\d{2}", year_raw)
+            if m:
+                try:
+                    year_int = int(m.group(0))
+                except ValueError:
+                    year_int = None
+        if year_int is None or not 1950 <= year_int <= 2100:
+            continue
+        out.append(
+            {
+                "degree": _clean_string(item.get("degree")) or "Высшее",
+                "institution": institution,
+                "city": _clean_string(item.get("city")) or "",
+                "graduationYear": year_int,
+                "specialty": _clean_string(item.get("specialty")) or "",
+            }
+        )
+    return out
+
+
+def _coerce_certifications(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        title = _clean_string(item.get("title"))
+        issuer = _clean_string(item.get("issuer"))
+        if not title or not issuer:
+            continue
+        out.append(
+            {
+                "title": title,
+                "issuer": issuer,
+                "period": _clean_string(item.get("period")) or "",
+            }
+        )
+    return out
+
+
+def _coerce_languages(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        language = _clean_string(item.get("language"))
+        if not language:
+            continue
+        level = _coerce_enum(item.get("level"), _LANGUAGE_LEVELS_SET)
+        if not level:
+            continue
+        out.append({"language": language, "level": level})
+    return out
+
+
+def _coerce_parsed(raw: dict[str, Any]) -> dict[str, Any]:
+    """Нормализация ответа LLM в финальный ParsedCandidate-friendly dict.
+
+    Каждое поле валидируем отдельно. Если значение не пригодно — ТИХО отбрасываем
+    (с записью в лог на уровне debug). Лучше отдать частичный результат, чем 500.
+    """
+    out: dict[str, Any] = {}
+
+    for key in ("fullName", "role", "location", "telegram", "phone", "email", "stack", "summary"):
+        s = _clean_string(raw.get(key))
+        if s:
+            out[key] = s
+
+    grade = _coerce_enum(raw.get("grade"), _GRADE_VALUES)
+    if grade:
+        out["grade"] = grade
+
+    fmt = _coerce_enum(raw.get("format"), _FORMAT_VALUES)
+    if fmt:
+        out["format"] = fmt
+
+    rate = _coerce_positive_number(raw.get("rateMonth"))
+    if rate is not None:
+        out["rateMonth"] = rate
+
+    exp_years = _coerce_non_negative_number(raw.get("experienceYears"))
+    if exp_years is not None:
+        out["experienceYears"] = exp_years
+
+    birthday = _coerce_iso_date(raw.get("birthday"))
+    if birthday:
+        out["birthday"] = birthday
+    elif raw.get("birthday"):
+        logger.debug("candidates.ai dropped invalid birthday: %r", raw.get("birthday"))
+
+    sc = _coerce_skill_categories(raw.get("skillCategories"))
+    if sc:
+        out["skillCategories"] = sc
+
+    exp = _coerce_experience(raw.get("experience"))
+    if exp:
+        out["experience"] = exp
+
+    edu = _coerce_education(raw.get("education"))
+    if edu:
+        out["education"] = edu
+
+    certs = _coerce_certifications(raw.get("certifications"))
+    if certs:
+        out["certifications"] = certs
+
+    langs = _coerce_languages(raw.get("languages"))
+    if langs:
+        out["languages"] = langs
+
+    return out
+
+
+async def parse_resume_text(text: str, *, today: str) -> dict[str, Any]:
+    """Распарсить сплошной текст резюме.
+
+    Возвращает dict с camelCase-ключами, готовый к сериализации в ParsedCandidate.
+    Бросает `AiUnavailableError` / `AiBadRequestError` — обрабатывается в эндпоинте.
+    """
+    settings = get_settings()
+    max_chars = settings.yandex_ai_max_input_chars
+    snippet = text if len(text) <= max_chars else text[:max_chars]
+
+    client = YandexGptClient()
+    raw = await client.json_completion(
+        system=_SYSTEM_PROMPT.format(today=today),
+        user=snippet,
+        schema_name="parsed_candidate",
+        schema=PARSED_CANDIDATE_SCHEMA,
+        # Резюме большие; даём модели запас на выходной JSON с experience-блоками.
+        max_tokens=4096,
+    )
+    return _coerce_parsed(raw)
+
+
+__all__ = [
+    "PARSED_CANDIDATE_SCHEMA",
+    "AiBadRequestError",
+    "AiUnavailableError",
+    "parse_resume_text",
+]

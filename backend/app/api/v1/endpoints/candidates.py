@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import date
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query, status
@@ -13,6 +14,11 @@ from app.db.session import get_db
 from app.modules.auth.dependencies import get_current_user
 from app.modules.auth.schemas import OkResponse
 from app.modules.candidates import service
+from app.modules.candidates.ai import (
+    AiBadRequestError,
+    AiUnavailableError,
+    parse_resume_text,
+)
 from app.modules.candidates.models import Candidate, CandidateStatus, EmploymentType
 from app.modules.candidates.schemas import (
     ArchiveRequest,
@@ -21,6 +27,9 @@ from app.modules.candidates.schemas import (
     CandidateResponse,
     ChangeCandidateStatusRequest,
     CreateCandidateRequest,
+    ParsedCandidate,
+    ParseResumeTextRequest,
+    ParseResumeTextResponse,
     UpdateCandidateRequest,
 )
 from app.modules.users.models import Role, User
@@ -86,6 +95,58 @@ async def reorder_kanban(
 ) -> list[CandidateResponse]:
     rows, vmap = await service.reorder_kanban(db, user, payload.updates)
     return [_to_dto(c, vmap.get(c.id, []), user) for c in rows]
+
+
+@router.post(
+    "/parse-resume-text",
+    response_model=ParseResumeTextResponse,
+    summary="AI-распознавание сплошного текста резюме",
+)
+async def parse_resume(
+    payload: ParseResumeTextRequest,
+    _: User = Depends(get_current_user),
+) -> ParseResumeTextResponse:
+    """Разбирает текст резюме (выгруженный из PDF) в поля карточки кандидата.
+
+    Использует YandexGPT (см. `modules/candidates/ai.py`). Если ключ не
+    сконфигурирован или сервис недоступен — возвращает 503 ai_unavailable.
+    """
+    try:
+        parsed_raw = await parse_resume_text(
+            payload.text,
+            today=date.today().isoformat(),
+        )
+    except AiUnavailableError as exc:
+        logger.warning("candidates.parse_resume unavailable: %s", exc)
+        raise ApiError(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "ai_unavailable",
+            "Сервис AI-распознавания временно недоступен. Заполните карточку вручную.",
+        ) from exc
+    except AiBadRequestError as exc:
+        logger.error("candidates.parse_resume bad request: %s", exc)
+        raise ApiError(
+            status.HTTP_502_BAD_GATEWAY,
+            "ai_bad_request",
+            "Не удалось распознать резюме. Попробуйте другой PDF или заполните вручную.",
+        ) from exc
+
+    # На случай, если `_coerce_parsed` пропустил кривое поле — ловим ValidationError
+    # и тихо отбрасываем именно его, чтобы не падать 500 на пользователе.
+    from pydantic import ValidationError
+
+    try:
+        parsed = ParsedCandidate.model_validate(parsed_raw)
+    except ValidationError as exc:
+        bad_keys = {str(e["loc"][0]) for e in exc.errors() if e.get("loc")}
+        logger.warning(
+            "candidates.parse_resume validation error, dropping fields %s: raw=%r",
+            bad_keys,
+            parsed_raw,
+        )
+        cleaned = {k: v for k, v in parsed_raw.items() if k not in bad_keys}
+        parsed = ParsedCandidate.model_validate(cleaned)
+    return ParseResumeTextResponse(parsed=parsed)
 
 
 @router.get("", response_model=CandidatePage, summary="Список кандидатов с фильтрами")

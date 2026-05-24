@@ -661,6 +661,47 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/Candidate' }
+  /candidates/parse-resume-text:
+    post:
+      tags: [candidates]
+      summary: AI-распознавание сплошного текста резюме в поля карточки кандидата
+      description: |
+        Использует LLM (YandexGPT). Возвращает `ParsedCandidate` —
+        частично заполненный объект, фронт применяет его поверх формы.
+        Если AI недоступен (нет ключа/сетевая ошибка), эндпоинт возвращает
+        503 `ai_unavailable`; фронт показывает соответствующее сообщение.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text:
+                  type: string
+                  minLength: 1
+                  maxLength: 50000
+      responses:
+        '200':
+          description: Распознанные поля кандидата
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [parsed]
+                properties:
+                  parsed: { $ref: '#/components/schemas/ParsedCandidate' }
+        '502':
+          description: AI вернул ошибку формата (ai_bad_request)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '503':
+          description: AI-сервис недоступен (ai_unavailable)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
   /candidates/{id}:
     parameters:
       - $ref: '#/components/parameters/UuidPathId'
@@ -1572,6 +1613,70 @@ components:
         - $ref: '#/components/schemas/CreateCandidateRequest'
         - type: object
       description: Partial<Candidate>
+    # ─── Parsed candidate (AI-распознавание резюме) ───
+    # Похож на Candidate, но БЕЗ полей `id` во вложенных блоках (фронт сам
+    # выставит useFieldArray-id). Все поля опциональны: AI возвращает только
+    # то, что явно распознал.
+    ParsedSkillCategory:
+      type: object
+      required: [name, items]
+      properties:
+        name:  { type: string }
+        items: { type: array, items: { type: string } }
+    ParsedExperience:
+      type: object
+      required: [company, position, startMonth]
+      properties:
+        company:      { type: string }
+        position:     { type: string }
+        startMonth:   { type: string, description: 'YYYY-MM' }
+        endMonth:     { type: string, description: 'YYYY-MM или "" = «по настоящее время»' }
+        project:      { type: string }
+        achievements: { type: array, items: { type: string } }
+        stack:        { type: array, items: { type: string } }
+    ParsedEducation:
+      type: object
+      required: [degree, institution, graduationYear]
+      properties:
+        degree:         { type: string }
+        institution:    { type: string }
+        city:           { type: string }
+        graduationYear: { type: integer }
+        specialty:      { type: string }
+    ParsedCertification:
+      type: object
+      required: [title, issuer]
+      properties:
+        title:  { type: string }
+        issuer: { type: string }
+        period: { type: string }
+    ParsedLanguageItem:
+      type: object
+      required: [language, level]
+      properties:
+        language: { type: string }
+        level:    { $ref: '#/components/schemas/LanguageLevel' }
+    ParsedCandidate:
+      type: object
+      properties:
+        fullName:        { type: string }
+        role:            { type: string }
+        grade:           { $ref: '#/components/schemas/Grade' }
+        experienceYears: { type: number }
+        format:          { $ref: '#/components/schemas/WorkFormat' }
+        rateMonth:       { type: number }
+        location:        { type: string }
+        birthday:        { type: string, format: date }
+        telegram:        { type: string }
+        phone:           { type: string }
+        email:           { type: string }
+        stack:           { type: string, description: 'CSV-список технологий' }
+        summary:         { type: string }
+        skillCategories: { type: array, items: { $ref: '#/components/schemas/ParsedSkillCategory' } }
+        experience:      { type: array, items: { $ref: '#/components/schemas/ParsedExperience' } }
+        education:       { type: array, items: { $ref: '#/components/schemas/ParsedEducation' } }
+        certifications:  { type: array, items: { $ref: '#/components/schemas/ParsedCertification' } }
+        languages:       { type: array, items: { $ref: '#/components/schemas/ParsedLanguageItem' } }
 
     # ─── Matching ───
     MatchStatus:

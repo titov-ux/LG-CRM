@@ -2,12 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFieldArray, useForm, useWatch, type Control } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
+import { HTTPError } from 'ky';
 import { Loader2, Plus, Sparkles, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { extractPdfText, parseResumeText } from './resumeImport';
+import { extractPdfText, parsedToFormValues } from './resumeImport';
+import { candidatesApi } from '@/api/candidates';
 import {
   Form,
   FormControl,
@@ -46,6 +48,35 @@ const LANGUAGE_LEVELS: LanguageLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2', '�
  */
 function uid(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+/** Извлекает человекочитаемый текст ошибки из ApiError-конверта `{ code, message }`. */
+async function extractAiErrorMessage(e: unknown): Promise<string> {
+  if (e instanceof HTTPError) {
+    try {
+      const body = (await e.response.clone().json()) as
+        | { detail?: { code?: string; message?: string }; message?: string }
+        | undefined;
+      const detail = body?.detail;
+      if (detail?.code === 'ai_unavailable') {
+        return (
+          detail.message ??
+          'Сервис AI-распознавания временно недоступен. Заполните карточку вручную.'
+        );
+      }
+      if (detail?.message) return detail.message;
+      if (body?.message) return body.message;
+    } catch {
+      // не JSON — fallthrough
+    }
+    if (e.response.status === 503) {
+      return 'Сервис AI-распознавания временно недоступен. Заполните карточку вручную.';
+    }
+    if (e.response.status === 502) {
+      return 'Не удалось распознать резюме. Попробуйте другой PDF или заполните вручную.';
+    }
+  }
+  return 'Не удалось распознать резюме. Попробуйте другой PDF или заполните вручную.';
 }
 
 const skillCategorySchema = z.object({
@@ -196,6 +227,7 @@ export function CandidateForm({
   const handleResumeFile = async (file: File) => {
     setImporting(true);
     try {
+      // 1) PDF → сплошной текст (по-прежнему на фронте, pdfjs через CDN).
       const rawText = await extractPdfText(file);
       if (!rawText.trim()) {
         toast.warning('В PDF не найден текстовый слой', {
@@ -203,7 +235,19 @@ export function CandidateForm({
         });
         return;
       }
-      const { values, filledFields } = parseResumeText(rawText);
+
+      // 2) Текст → структурированные поля через AI-эндпоинт.
+      //    Ошибки 503 (нет ключа) / 502 (битый ответ) показываем дружелюбно.
+      let parsedResponse;
+      try {
+        parsedResponse = await candidatesApi.parseResumeText(rawText);
+      } catch (apiErr) {
+        const msg = await extractAiErrorMessage(apiErr);
+        toast.error('Не удалось распознать резюме', { description: msg });
+        return;
+      }
+
+      const { values, filledFields } = parsedToFormValues(parsedResponse.parsed);
 
       if (filledFields.length === 0) {
         toast.warning('Не удалось распознать данные из файла', {
@@ -212,9 +256,9 @@ export function CandidateForm({
         return;
       }
 
-      // Сливаем распознанные значения поверх текущих: то, что пользователь
-      // уже ввёл руками, не затираем (за исключением массивов — их перезаписываем,
-      // т.к. в исходной форме они пустые при «Создать»).
+      // 3) Сливаем распознанные значения поверх текущих: то, что пользователь
+      //    уже ввёл руками, не затираем (за исключением массивов — их перезаписываем,
+      //    т.к. в исходной форме они пустые при «Создать»).
       const current = form.getValues();
       const merged: CandidateFormValues = {
         ...current,

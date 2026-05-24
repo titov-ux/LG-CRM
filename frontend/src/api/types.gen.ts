@@ -812,7 +812,13 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** AI-парсинг сплошного текста брифа в структурированные поля */
+        /**
+         * AI-распознавание сплошного текста брифа в структурированные поля
+         * @description Использует LLM (Anthropic Claude). Возвращает `ParsedVacancy` —
+         *     частично заполненный объект, фронт применяет его поверх формы.
+         *     Если AI недоступен (нет ключа/сетевая ошибка), эндпоинт возвращает
+         *     503 `ai_unavailable`; фронт показывает соответствующее сообщение.
+         */
         post: {
             parameters: {
                 query?: never;
@@ -837,6 +843,24 @@ export interface paths {
                         "application/json": {
                             parsed: components["schemas"]["ParsedVacancy"];
                         };
+                    };
+                };
+                /** @description AI вернул ошибку формата (ai_bad_request) */
+                502: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description AI-сервис недоступен (ai_unavailable) */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
                     };
                 };
             };
@@ -1292,6 +1316,74 @@ export interface paths {
             };
         };
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/candidates/parse-resume-text": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * AI-распознавание сплошного текста резюме в поля карточки кандидата
+         * @description Использует LLM (YandexGPT). Возвращает `ParsedCandidate` —
+         *     частично заполненный объект, фронт применяет его поверх формы.
+         *     Если AI недоступен (нет ключа/сетевая ошибка), эндпоинт возвращает
+         *     503 `ai_unavailable`; фронт показывает соответствующее сообщение.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        text: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Распознанные поля кандидата */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            parsed: components["schemas"]["ParsedCandidate"];
+                        };
+                    };
+                };
+                /** @description AI вернул ошибку формата (ai_bad_request) */
+                502: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description AI-сервис недоступен (ai_unavailable) */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -2644,6 +2736,59 @@ export interface components {
         };
         /** @description Partial<Candidate> */
         UpdateCandidateRequest: components["schemas"]["CreateCandidateRequest"] & Record<string, never>;
+        ParsedSkillCategory: {
+            name: string;
+            items: string[];
+        };
+        ParsedExperience: {
+            company: string;
+            position: string;
+            /** @description YYYY-MM */
+            startMonth: string;
+            /** @description YYYY-MM или "" = «по настоящее время» */
+            endMonth?: string;
+            project?: string;
+            achievements?: string[];
+            stack?: string[];
+        };
+        ParsedEducation: {
+            degree: string;
+            institution: string;
+            city?: string;
+            graduationYear: number;
+            specialty?: string;
+        };
+        ParsedCertification: {
+            title: string;
+            issuer: string;
+            period?: string;
+        };
+        ParsedLanguageItem: {
+            language: string;
+            level: components["schemas"]["LanguageLevel"];
+        };
+        ParsedCandidate: {
+            fullName?: string;
+            role?: string;
+            grade?: components["schemas"]["Grade"];
+            experienceYears?: number;
+            format?: components["schemas"]["WorkFormat"];
+            rateMonth?: number;
+            location?: string;
+            /** Format: date */
+            birthday?: string;
+            telegram?: string;
+            phone?: string;
+            email?: string;
+            /** @description CSV-список технологий */
+            stack?: string;
+            summary?: string;
+            skillCategories?: components["schemas"]["ParsedSkillCategory"][];
+            experience?: components["schemas"]["ParsedExperience"][];
+            education?: components["schemas"]["ParsedEducation"][];
+            certifications?: components["schemas"]["ParsedCertification"][];
+            languages?: components["schemas"]["ParsedLanguageItem"][];
+        };
         /** @enum {string} */
         MatchStatus: "submitted" | "reviewed" | "interview" | "offered" | "accepted" | "rejected_client" | "rejected_internal";
         VacancyCandidate: {

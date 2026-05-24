@@ -15,6 +15,7 @@ COPY pyproject.toml ./
 # В прод-образе ставим dev+prod extras: dev нужен для миграций/тестов,
 # prod добавляет sentry-sdk.
 RUN pip install --upgrade pip && pip install ".[dev,prod]"
+RUN python -m playwright install --with-deps chromium
 
 COPY . .
 

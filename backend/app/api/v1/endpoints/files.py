@@ -7,6 +7,7 @@ Yandex Object Storage, минуя бэкенд. Бэк только подтве
 from __future__ import annotations
 
 import uuid
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import Response
@@ -39,6 +40,25 @@ def _s3_dep() -> S3Adapter:
 
 def _to_dto(f: File) -> FileResponse:
     return FileResponse.model_validate(f)
+
+
+def _content_disposition(filename: str) -> str:
+    """Заголовок Content-Disposition по RFC 5987/6266.
+
+    HTTP-заголовки в latin-1, поэтому имя с кириллицей в plain `filename="..."`
+    падает с UnicodeEncodeError. Стандартный обход: ASCII-fallback в `filename=`
+    плюс UTF-8 percent-encoded значение в `filename*=`. Современные браузеры
+    (включая Chrome/Firefox/Safari) предпочитают `filename*`.
+    """
+    # ASCII-fallback: оставляем только то, что точно влезет в latin-1.
+    ascii_fallback = filename.encode("ascii", errors="ignore").decode("ascii").strip()
+    if not ascii_fallback:
+        ascii_fallback = "document.pdf"
+    encoded = quote(filename, safe="")
+    return (
+        f'attachment; filename="{ascii_fallback}"; '
+        f"filename*=UTF-8''{encoded}"
+    )
 
 
 def _pdf_error_details(exc: Exception) -> dict[str, str]:
@@ -120,8 +140,22 @@ async def render_pdf(
     payload: RenderPdfRequest,
     _: User = Depends(get_current_user),
 ) -> Response:
+    # Оборачиваем эндпоинт целиком: помимо самого Playwright,
+    # упасть может и формирование Response (например, UnicodeEncodeError
+    # в Content-Disposition на кириллических именах файлов — пока не
+    # перешли на _content_disposition() ниже это было главной причиной 500).
     try:
         pdf_bytes = await render_pdf_from_html(payload.html)
+        safe_name = (
+            payload.filename.replace('"', "").replace("\n", "").replace("\r", "")
+        )
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": _content_disposition(safe_name)},
+        )
+    except ApiError:
+        raise
     except Exception as exc:
         raise ApiError(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -129,10 +163,3 @@ async def render_pdf(
             "Не удалось сформировать PDF на сервере",
             details=_pdf_error_details(exc),
         ) from exc
-
-    safe_name = payload.filename.replace('"', "").replace("\n", "").replace("\r", "")
-    return Response(
-        content=pdf_bytes,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
-    )

@@ -11,11 +11,20 @@ import {
   Handshake,
   Inbox,
   Layers,
+  Trash2,
   User as UserIcon,
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   Table,
   TableBody,
@@ -35,12 +44,14 @@ import { ENGAGEMENT_META, ENGAGEMENT_OPTIONS } from '@/lib/engagement';
 import { candidateStatuses } from '@/mocks/db/candidates';
 import { cn } from '@/lib/utils';
 import type {
+  Candidate,
   CandidateStatus,
   EmploymentType,
   EngagementType,
   Grade,
 } from '@/api/types';
-import { useCandidates, useRestoreCandidate } from './hooks';
+import { useCandidates, useDeleteCandidatePermanent, useRestoreCandidate } from './hooks';
+import { useCan } from '@/lib/permissions';
 
 const GRADE_OPTIONS: Grade[] = ['Junior', 'Middle', 'Senior', 'Lead'];
 const EMPLOYMENT_OPTIONS: EmploymentType[] = ['ИП', 'СМЗ', 'ТК РФ'];
@@ -117,6 +128,11 @@ export function CandidatesDatabasePage() {
   });
   const { data: usersData } = useUsers();
   const restoreCandidate = useRestoreCandidate();
+  const deleteCandidatePermanent = useDeleteCandidatePermanent();
+  const canDeletePermanent = useCan('candidate:delete_permanent');
+  // Кандидат под удаление держим в локальном state, чтобы диалог был один
+  // на всю страницу — без рендера N модалок в TableBody.
+  const [pendingDelete, setPendingDelete] = useState<Candidate | null>(null);
 
   // Если после удаления/архивирования текущая страница оказалась пустой,
   // а на предыдущих ещё что-то есть — мягко откатываемся назад.
@@ -450,27 +466,43 @@ export function CandidatesDatabasePage() {
                         className="py-2.5 text-right align-top"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        {c.archived && (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="ghost"
-                            className="h-7 gap-1 px-2 text-[11.5px] text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
-                            onClick={() =>
-                              restoreCandidate.mutate(c.id, {
-                                onSuccess: () =>
-                                  toast.success(`«${c.fullName}» возвращён на доску`),
-                                onError: () =>
-                                  toast.error('Не удалось восстановить кандидата'),
-                              })
-                            }
-                            disabled={restoreCandidate.isPending}
-                            title="Вернуть на канбан-доску"
-                          >
-                            <ArchiveRestore className="h-3 w-3" />
-                            Вернуть
-                          </Button>
-                        )}
+                        <div className="inline-flex items-center gap-1">
+                          {c.archived && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 gap-1 px-2 text-[11.5px] text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
+                              onClick={() =>
+                                restoreCandidate.mutate(c.id, {
+                                  onSuccess: () =>
+                                    toast.success(`«${c.fullName}» возвращён на доску`),
+                                  onError: () =>
+                                    toast.error('Не удалось восстановить кандидата'),
+                                })
+                              }
+                              disabled={restoreCandidate.isPending}
+                              title="Вернуть на канбан-доску"
+                            >
+                              <ArchiveRestore className="h-3 w-3" />
+                              Вернуть
+                            </Button>
+                          )}
+                          {canDeletePermanent && (
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="ghost"
+                              className="h-7 w-7 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100"
+                              onClick={() => setPendingDelete(c)}
+                              disabled={deleteCandidatePermanent.isPending}
+                              aria-label={`Удалить «${c.fullName}» из базы`}
+                              title="Удалить из базы"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                        </div>
                       </TableCell>
                     </TableRow>
                   );
@@ -515,6 +547,60 @@ export function CandidatesDatabasePage() {
             </div>
           </div>
         )}
+
+        {/* Подтверждение полного удаления. Один диалог на всю страницу —
+            конкретный кандидат хранится в `pendingDelete`. Закрытие во
+            время мутации блокируем, чтобы не было гонок. */}
+        <Dialog
+          open={pendingDelete !== null}
+          onOpenChange={(o) => {
+            if (deleteCandidatePermanent.isPending) return;
+            if (!o) setPendingDelete(null);
+          }}
+        >
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Удалить кандидата из базы?</DialogTitle>
+              <DialogDescription>
+                {pendingDelete && (
+                  <>
+                    Кандидат «
+                    <span className="font-medium text-foreground">{pendingDelete.fullName}</span>
+                    » будет удалён без возможности восстановления — вместе с историей
+                    смены статусов, комментариями и привязками к вакансиям.
+                  </>
+                )}
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="gap-2 sm:gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setPendingDelete(null)}
+                disabled={deleteCandidatePermanent.isPending}
+              >
+                Отмена
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  if (!pendingDelete) return;
+                  const target = pendingDelete;
+                  deleteCandidatePermanent.mutate(target.id, {
+                    onSuccess: () => {
+                      toast.success(`Кандидат «${target.fullName}» удалён из базы`);
+                      setPendingDelete(null);
+                    },
+                    onError: () => toast.error('Не удалось удалить кандидата из базы'),
+                  });
+                }}
+                disabled={deleteCandidatePermanent.isPending}
+              >
+                <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                {deleteCandidatePermanent.isPending ? 'Удаление…' : 'Удалить навсегда'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
     </div>
   );
 }

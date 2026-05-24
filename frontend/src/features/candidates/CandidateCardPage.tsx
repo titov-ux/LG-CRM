@@ -17,6 +17,7 @@ import {
   Phone,
   Plus,
   Share2,
+  Trash2,
   X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -28,6 +29,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
@@ -59,6 +61,7 @@ import {
   useCandidateActivity,
   useChangeCandidateStatus,
   useCreateCandidate,
+  useDeleteCandidatePermanent,
   useRestoreCandidate,
   useUpdateCandidate,
 } from './hooks';
@@ -261,11 +264,14 @@ export function CandidateCardPage({ source: sourceProp }: CandidateCardPageProps
   const updateCandidate = useUpdateCandidate();
   const archiveCandidate = useArchiveCandidate();
   const restoreCandidate = useRestoreCandidate();
+  const deleteCandidatePermanent = useDeleteCandidatePermanent();
   const detachCandidate = useDetachCandidate();
   const attachCandidate = useAttachCandidate();
   const canArchive = useCan('candidate:archive');
+  const canDeletePermanent = useCan('candidate:delete_permanent');
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [archiveReason, setArchiveReason] = useState('');
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
   const [activityExpanded, setActivityExpanded] = useState(fromDatabase);
 
@@ -326,6 +332,22 @@ export function CandidateCardPage({ source: sourceProp }: CandidateCardPageProps
         toast.success(`Кандидат «${candidate.fullName}» возвращён на доску`);
       },
       onError: () => toast.error('Не удалось восстановить кандидата'),
+    });
+  };
+
+  // Полное удаление кандидата из базы — необратимая операция, доступна
+  // только админу. После успеха закрываем диалог и карточку (возвращаемся
+  // в раздел, откуда её открыли).
+  const handleDeletePermanent = () => {
+    if (!candidate) return;
+    const name = candidate.fullName;
+    deleteCandidatePermanent.mutate(candidate.id, {
+      onSuccess: () => {
+        toast.success(`Кандидат «${name}» удалён из базы`);
+        setDeleteOpen(false);
+        close();
+      },
+      onError: () => toast.error('Не удалось удалить кандидата из базы'),
     });
   };
 
@@ -592,6 +614,24 @@ export function CandidateCardPage({ source: sourceProp }: CandidateCardPageProps
                       Убрать с доски
                     </DropdownMenuItem>
                   )
+                )}
+                {/* Полное удаление кандидата из базы — только для админа.
+                    Действие необратимое, отделяем сепаратором и подсвечиваем
+                    как destructive, чтобы случайно не нажать. */}
+                {canDeletePermanent && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onSelect={(e) => {
+                        e.preventDefault();
+                        setDeleteOpen(true);
+                      }}
+                      className="text-destructive focus:bg-destructive/10 focus:text-destructive"
+                    >
+                      <Trash2 className="mr-2 h-3.5 w-3.5" />
+                      Удалить из базы
+                    </DropdownMenuItem>
+                  </>
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
@@ -1039,6 +1079,50 @@ export function CandidateCardPage({ source: sourceProp }: CandidateCardPageProps
           <Button onClick={handleArchive} disabled={archiveCandidate.isPending}>
             <Inbox className="mr-1.5 h-3.5 w-3.5" />
             {archiveCandidate.isPending ? 'Убираем…' : 'Убрать с доски'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    {/* Полное удаление кандидата из базы — необратимая операция.
+        Гейтится правом `candidate:delete_permanent` (по умолчанию админ).
+        Бэкенд тоже проверит право (см. _ensure_can_permanent_delete). */}
+    <Dialog
+      open={deleteOpen}
+      onOpenChange={(o) => {
+        if (deleteCandidatePermanent.isPending) return;
+        setDeleteOpen(o);
+      }}
+    >
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Удалить кандидата из базы?</DialogTitle>
+          <DialogDescription>
+            {candidate && (
+              <>
+                Кандидат «<span className="font-medium text-foreground">{candidate.fullName}</span>»
+                будет удалён без возможности восстановления — вместе с историей
+                смены статусов, комментариями и привязками к вакансиям.
+                {' '}Если нужно временно убрать его с доски, используйте «Убрать с доски».
+              </>
+            )}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="gap-2 sm:gap-2">
+          <Button
+            variant="outline"
+            onClick={() => setDeleteOpen(false)}
+            disabled={deleteCandidatePermanent.isPending}
+          >
+            Отмена
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={handleDeletePermanent}
+            disabled={deleteCandidatePermanent.isPending}
+          >
+            <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+            {deleteCandidatePermanent.isPending ? 'Удаление…' : 'Удалить навсегда'}
           </Button>
         </DialogFooter>
       </DialogContent>

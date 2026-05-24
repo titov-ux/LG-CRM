@@ -107,3 +107,31 @@ class TransitionsResponse(CamelModel):
 
     transitions: dict[str, list[str]]
     final_statuses: list[str]
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# AI-распознавание брифа вакансии
+# ────────────────────────────────────────────────────────────────────────────
+
+
+class ParseVacancyTextRequest(CamelModel):
+    text: str = Field(min_length=1, max_length=50_000)
+
+
+class ParsedVacancy(CamelModel):
+    """Структурированный результат распознавания (все поля опциональны)."""
+
+    title: str | None = None
+    project: str | None = None
+    grade: Grade | None = None
+    format: WorkFormat | None = None
+    priority: Priority | None = None
+    rate_client: float | None = None
+    deadline: date | None = None
+    stack: str | None = None  # CSV
+    description: str | None = None
+    requirements: str | None = None
+
+
+class ParseVacancyTextResponse(CamelModel):
+    parsed: ParsedVacancy

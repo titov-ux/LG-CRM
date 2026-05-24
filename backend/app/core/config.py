@@ -53,6 +53,18 @@ class Settings(BaseSettings):
     sentry_environment: str = "dev"
     sentry_traces_sample_rate: float = 0.0
 
+    # ── YandexGPT (AI-распознавание брифа вакансии) ─────────
+    # Yandex Cloud AI Studio — OpenAI-совместимый API.
+    # Без ключа эндпоинт POST /vacancies/parse-text вернёт 503 ai_unavailable.
+    yandex_api_key: str = ""
+    yandex_folder_id: str = ""
+    yandex_ai_base_url: str = "https://ai.api.cloud.yandex.net/v1"
+    # `yandexgpt/rc` — последний release-candidate (YandexGPT 5 Pro, поддерживает
+    # response_format=json_schema). Для стабильной — `yandexgpt/latest`.
+    yandex_ai_model: str = "yandexgpt/rc"
+    yandex_ai_timeout_seconds: float = 30.0
+    yandex_ai_max_input_chars: int = 20000
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

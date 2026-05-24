@@ -396,7 +396,12 @@ paths:
   /vacancies/parse-text:
     post:
       tags: [vacancies]
-      summary: AI-парсинг сплошного текста брифа в структурированные поля
+      summary: AI-распознавание сплошного текста брифа в структурированные поля
+      description: |
+        Использует LLM (Anthropic Claude). Возвращает `ParsedVacancy` —
+        частично заполненный объект, фронт применяет его поверх формы.
+        Если AI недоступен (нет ключа/сетевая ошибка), эндпоинт возвращает
+        503 `ai_unavailable`; фронт показывает соответствующее сообщение.
       requestBody:
         required: true
         content:
@@ -405,7 +410,10 @@ paths:
               type: object
               required: [text]
               properties:
-                text: { type: string }
+                text:
+                  type: string
+                  minLength: 1
+                  maxLength: 50000
       responses:
         '200':
           description: Распознанные поля вакансии
@@ -416,6 +424,16 @@ paths:
                 required: [parsed]
                 properties:
                   parsed: { $ref: '#/components/schemas/ParsedVacancy' }
+        '502':
+          description: AI вернул ошибку формата (ai_bad_request)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '503':
+          description: AI-сервис недоступен (ai_unavailable)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
   /vacancies/{id}:
     parameters:
       - $ref: '#/components/parameters/UuidPathId'

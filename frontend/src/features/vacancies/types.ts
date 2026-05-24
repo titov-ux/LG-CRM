@@ -1,5 +1,5 @@
 // Контракт распознавателя вакансий — то, что возвращает эндпоинт POST /vacancies/parse-text.
-// ЭТОТ файл сохраняется при переходе на реальную LLM, в отличие от parseVacancyText.ts.
+// Backend (Anthropic Claude) возвращает только заполненные поля; всё опционально.
 
 import type { Grade, Priority, WorkFormat } from '@/api/types';
 

@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { HTTPError } from 'ky';
 import { Loader2, Sparkles, Wand2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -11,11 +12,37 @@ import {
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import type { ParsedVacancy } from './types';
-// [AI-MOCK] Локальный fallback-парсер. Удалить вместе с parseVacancyText.ts,
-// когда AI-эндпоинт станет надёжным и fallback больше не нужен.
-import { parseVacancyText } from './parseVacancyText';
 import { useParseVacancyText } from './hooks';
 import { formatDateRu } from '@/lib/utils';
+
+/** Извлекает текст ошибки из ApiError-конверта `{ code, message }`. */
+async function extractAiError(e: unknown): Promise<string> {
+  if (e instanceof HTTPError) {
+    try {
+      const body = (await e.response.clone().json()) as
+        | { detail?: { code?: string; message?: string }; message?: string }
+        | undefined;
+      const detail = body?.detail;
+      if (detail?.code === 'ai_unavailable') {
+        return (
+          detail.message ??
+          'Сервис AI-распознавания временно недоступен. Заполните поля вручную.'
+        );
+      }
+      if (detail?.message) return detail.message;
+      if (body?.message) return body.message;
+    } catch {
+      // не JSON — fallthrough
+    }
+    if (e.response.status === 503) {
+      return 'Сервис AI-распознавания временно недоступен. Заполните поля вручную.';
+    }
+    if (e.response.status === 502) {
+      return 'Не удалось распознать текст. Проверьте формат и попробуйте снова.';
+    }
+  }
+  return 'Не удалось распознать текст. Проверьте формат и попробуйте снова.';
+}
 
 interface Props {
   open: boolean;
@@ -68,17 +95,7 @@ export function VacancyImportDialog({ open, onOpenChange, onApply }: Props) {
       const { parsed } = await parseText.mutateAsync(text);
       setAnalyzed(parsed);
     } catch (e) {
-      // [AI-MOCK] BEGIN — fallback на локальный регэксп-парсер. Удалить весь catch-блок
-      // и оставить только setError(...), когда боевой AI-эндпоинт станет надёжным.
-      console.warn('AI parse failed, falling back to local parser', e);
-      try {
-        const parsed = parseVacancyText(text);
-        setAnalyzed(parsed);
-        setError('Сервис анализа недоступен — использовано локальное распознавание.');
-      } catch {
-        setError('Не удалось распознать текст. Проверьте формат и попробуйте снова.');
-      }
-      // [AI-MOCK] END
+      setError(await extractAiError(e));
     }
   };
 

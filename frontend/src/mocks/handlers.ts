@@ -518,26 +518,9 @@ export const handlers = [
     });
     return HttpResponse.json(withCandidatesCount(created), { status: 201 });
   }),
-  // ==========================================================================
-  // [AI-MOCK] МОК-ОБРАБОТЧИК AI-РАСПОЗНАВАНИЯ БРИФА.
-  // --------------------------------------------------------------------------
-  // Когда AI-эндпоинт переедет на боевой backend:
-  //   • УДАЛИТЬ этот handler целиком (msw больше не должен перехватывать запрос),
-  //   • УДАЛИТЬ файл src/features/vacancies/parseVacancyText.ts,
-  //   • в src/features/vacancies/VacancyImportDialog.tsx убрать fallback-блок [AI-MOCK].
-  // Контракт ответа { parsed: ParsedVacancy } должен сохраниться на боевом API.
-  // ==========================================================================
-  http.post(url('/vacancies/parse-text'), async ({ request }) => {
-    const { text } = (await request.json()) as { text?: string };
-    if (!text || !text.trim()) {
-      return HttpResponse.json({ error: 'empty_text' }, { status: 400 });
-    }
-    // Динамический импорт — парсер не тянется в основной бандл моков.
-    const { parseVacancyText } = await import('@/features/vacancies/parseVacancyText');
-    const parsed = parseVacancyText(text);
-    await new Promise((r) => setTimeout(r, 700 + Math.random() * 500)); // имитация задержки LLM
-    return HttpResponse.json({ parsed });
-  }),
+  // POST /vacancies/parse-text — AI-распознавание брифа. В MSW его НЕ мокаем:
+  // при VITE_USE_MOCKS=true фронт обращается к боевому backend напрямую, либо
+  // получает 503 ai_unavailable, если ключ Anthropic не сконфигурирован.
   http.get(url('/vacancies/:id'), ({ params }) => {
     const v = vacanciesDb.find((x) => x.id === params.id);
     return v ? HttpResponse.json(withCandidatesCount(v)) : new HttpResponse(null, { status: 404 });

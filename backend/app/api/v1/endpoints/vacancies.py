@@ -1,16 +1,24 @@
 """Эндпоинты /vacancies (+ kanban-операции + transitions)."""
 from __future__ import annotations
 
+import logging
 import uuid
+from datetime import date
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import ApiError
 from app.db.session import get_db
 from app.modules.auth.dependencies import get_current_user
 from app.modules.auth.schemas import OkResponse
 from app.modules.users.models import User
 from app.modules.vacancies import service, transitions
+from app.modules.vacancies.ai import (
+    AiBadRequestError,
+    AiUnavailableError,
+    parse_vacancy_text,
+)
 from app.modules.vacancies.models import (
     EngagementType,
     Grade,
@@ -22,11 +30,16 @@ from app.modules.vacancies.schemas import (
     ChangeStatusRequest,
     CreateVacancyRequest,
     KanbanOrderRequest,
+    ParsedVacancy,
+    ParseVacancyTextRequest,
+    ParseVacancyTextResponse,
     TransitionsResponse,
     UpdateVacancyRequest,
     VacancyPage,
     VacancyResponse,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/vacancies", tags=["vacancies"])
 
@@ -82,6 +95,44 @@ async def reorder_kanban(
 ) -> list[VacancyResponse]:
     rows = await service.reorder_kanban(db, user, payload.updates)
     return [_to_dto(v) for v in rows]
+
+
+@router.post(
+    "/parse-text",
+    response_model=ParseVacancyTextResponse,
+    summary="AI-распознавание сплошного текста брифа",
+)
+async def parse_text(
+    payload: ParseVacancyTextRequest,
+    _: User = Depends(get_current_user),
+) -> ParseVacancyTextResponse:
+    """Разбирает текст брифа от клиента в поля формы.
+
+    Использует Anthropic Claude (см. `modules/vacancies/ai.py`). Если ключ не
+    сконфигурирован или сервис недоступен — возвращает 503 ai_unavailable.
+    """
+    try:
+        parsed_raw = await parse_vacancy_text(
+            payload.text,
+            today=date.today().isoformat(),
+        )
+    except AiUnavailableError as exc:
+        logger.warning("vacancies.parse_text unavailable: %s", exc)
+        raise ApiError(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "ai_unavailable",
+            "Сервис AI-распознавания временно недоступен. Заполните поля вручную.",
+        ) from exc
+    except AiBadRequestError as exc:
+        logger.error("vacancies.parse_text bad request: %s", exc)
+        raise ApiError(
+            status.HTTP_502_BAD_GATEWAY,
+            "ai_bad_request",
+            "Не удалось распознать текст. Проверьте формат и попробуйте снова.",
+        ) from exc
+
+    # `parsed_raw` уже в camelCase — но Pydantic с alias_generator примет и snake/camel.
+    return ParseVacancyTextResponse(parsed=ParsedVacancy.model_validate(parsed_raw))
 
 
 @router.get("", response_model=VacancyPage, summary="Список вакансий с фильтрами")

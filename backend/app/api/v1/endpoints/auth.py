@@ -24,7 +24,12 @@ from app.modules.auth.schemas import (
 )
 from app.modules.users import service as users_service
 from app.modules.users.models import User
-from app.modules.users.schemas import UpdateProfileRequest, UserResponse
+from app.modules.users.schemas import (
+    ActivateInviteRequest,
+    InviteInfoResponse,
+    UpdateProfileRequest,
+    UserResponse,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -119,3 +124,55 @@ async def update_me(
 ) -> UserResponse:
     updated = await users_service.update_profile(db, user.id, payload)
     return UserResponse.model_validate(updated)
+
+
+# ── Invite activation (публичные эндпоинты, без auth-гарда) ───────────────
+
+
+@router.get(
+    "/invite/{token}",
+    response_model=InviteInfoResponse,
+    summary="Информация по invite-токену",
+)
+async def invite_info(
+    token: str,
+    db: AsyncSession = Depends(get_db),
+) -> InviteInfoResponse:
+    """Фронт зовёт этот эндпоинт при открытии страницы /invite/:token чтобы:
+    - убедиться, что токен валиден и не истёк (иначе показать ошибку),
+    - подтянуть email/имя для подсветки формы.
+    """
+    user, _ = await users_service.peek_invite(db, token)
+    return InviteInfoResponse(email=user.email, full_name=user.full_name)
+
+
+@router.post(
+    "/invite/{token}/activate",
+    response_model=TokenResponse,
+    summary="Активировать аккаунт и установить пароль",
+)
+async def invite_activate(
+    token: str,
+    payload: ActivateInviteRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(_redis_dep),
+) -> TokenResponse:
+    """Активируем аккаунт и сразу логиним пользователя — иначе ему пришлось бы
+    после установки пароля ещё раз вводить email/пароль на форме логина, что
+    бессмысленно ухудшает UX.
+    """
+    user = await users_service.activate_invite(db, token, new_password=payload.password)
+    # Логинимся без проверки lockout — мы только что верифицировали владение
+    # email через invite-ссылку, и rate-limit на /login тут не релевантен.
+    from app.core.security import create_access_token, create_refresh_token
+    from app.modules.auth import store as auth_store
+
+    access = create_access_token(str(user.id), extra={"role": user.role.value})
+    refresh = create_refresh_token(str(user.id))
+    await auth_store.remember_refresh(redis, str(user.id), refresh)
+    _set_refresh_cookie(response, refresh)
+    # request оставлен в сигнатуре, чтобы дальше можно было залогировать IP активации.
+    _ = request
+    return TokenResponse(access_token=access, refresh_token=refresh)

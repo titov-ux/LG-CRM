@@ -1,5 +1,11 @@
 import { api } from './client';
-import type { LoginRequest, TokenResponse, User } from './types';
+import type {
+  ActivateInviteRequest,
+  InviteInfo,
+  LoginRequest,
+  TokenResponse,
+  User,
+} from './types';
 
 export const authApi = {
   login: (payload: LoginRequest) => api.post('auth/login', { json: payload }).json<TokenResponse>(),
@@ -8,4 +14,8 @@ export const authApi = {
   updateMe: (payload: { fullName?: string; email?: string; telegram?: string | null }) =>
     api.patch('auth/me', { json: payload }).json<User>(),
   refresh: () => api.post('auth/refresh').json<{ accessToken: string }>(),
+  // ── Invite-flow (публичные эндпоинты, без auth) ─────────────────────────
+  inviteInfo: (token: string) => api.get(`auth/invite/${token}`).json<InviteInfo>(),
+  inviteActivate: (token: string, payload: ActivateInviteRequest) =>
+    api.post(`auth/invite/${token}/activate`, { json: payload }).json<TokenResponse>(),
 };

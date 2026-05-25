@@ -15,6 +15,7 @@ from app.db.base import Base
 # Import models so they get registered with Base.metadata.
 # Дописываем импорты по мере появления моделей.
 from app.modules.users.models import User  # noqa: F401
+from app.modules.users.invites import PasswordInvite  # noqa: F401
 from app.modules.permissions.models import PermissionRow  # noqa: F401
 from app.modules.clients.models import Client, Contact, LegalEntity  # noqa: F401
 from app.modules.vacancies.models import Vacancy, VacancyRecruiter  # noqa: F401

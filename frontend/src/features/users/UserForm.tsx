@@ -41,12 +41,18 @@ const schema = z.object({
   email: z.string().email('Введите корректный email'),
   telegram: z.string(),
   role: z.enum(['admin', 'account_manager', 'recruiter', 'viewer']),
+  // Пароль необязателен: пустая строка = invite-flow (письмо со ссылкой).
+  // Если введено хоть что-то — валидируем «нормальный» пароль.
   password: z
     .string()
-    .min(8, 'Минимум 8 символов')
-    .max(64, 'Максимум 64 символа')
-    .regex(/[A-Za-zА-Яа-я]/, 'Должна содержать буквы')
-    .regex(/\d/, 'Должна содержать цифры'),
+    .refine(
+      (v) =>
+        v === '' ||
+        (v.length >= 8 && v.length <= 64 && /[A-Za-zА-Яа-я]/.test(v) && /\d/.test(v)),
+      {
+        message: 'Минимум 8 символов с буквами и цифрами (или оставьте пустым для приглашения)',
+      },
+    ),
   isActive: z.boolean(),
 });
 
@@ -80,6 +86,8 @@ export function UserForm({ defaultValues, onSubmit, isPending, submitLabel = 'С
           onSubmit({
             ...v,
             ...(v.telegram.trim() ? { telegram: v.telegram.trim() } : {}),
+            // Пустой пароль → не отправляем поле вообще, бэк уйдёт в invite-flow.
+            ...(v.password && v.password.length > 0 ? { password: v.password } : { password: undefined }),
           }),
         )}
         className="space-y-4"
@@ -163,11 +171,19 @@ export function UserForm({ defaultValues, onSubmit, isPending, submitLabel = 'С
           name="password"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Временный пароль</FormLabel>
+              <FormLabel>Временный пароль (необязательно)</FormLabel>
               <FormControl>
-                <Input {...field} type="text" placeholder="Минимум 8 символов" autoComplete="new-password" />
+                <Input
+                  {...field}
+                  type="text"
+                  placeholder="Оставьте пустым — отправим приглашение на email"
+                  autoComplete="new-password"
+                />
               </FormControl>
-              <FormDescription>Пользователь сменит его при первом входе.</FormDescription>
+              <FormDescription>
+                Если оставить пустым — на email уйдёт письмо с приглашением, и сотрудник
+                задаст пароль сам.
+              </FormDescription>
               <FormMessage />
             </FormItem>
           )}

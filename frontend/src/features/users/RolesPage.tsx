@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Check, Minus, Plus, RotateCcw, Search, ShieldCheck, Trash2, UserPlus } from 'lucide-react';
+import { Check, Mail, Minus, Plus, RotateCcw, Search, ShieldCheck, Trash2, UserPlus } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -34,7 +34,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { UserAvatar } from '@/components/common/UserAvatar';
 import type { Role, User } from '@/api/types';
-import { useDeleteUser, useUpdateUser, useUsers } from './hooks';
+import { useDeleteUser, useResendInvite, useUpdateUser, useUsers } from './hooks';
 import { AddUserDialog } from './AddUserDialog';
 import { ROLE_DESCRIPTION, ROLE_LABEL } from './UserForm';
 import { useAuthStore } from '@/stores/auth';
@@ -65,6 +65,7 @@ export function RolesPage() {
   const { data: users, isLoading } = useUsers();
   const updateUser = useUpdateUser();
   const deleteUser = useDeleteUser();
+  const resendInvite = useResendInvite();
   const canManageRoles = currentUser?.role === 'admin';
 
   const { permissions, isFetching: isPermissionsFetching } = usePermissionsMatrix();
@@ -127,6 +128,22 @@ export function RolesPage() {
         onError: () => toast.error('Не удалось обновить пользователя'),
       },
     );
+  };
+
+  const handleResendInvite = (user: User) => {
+    resendInvite.mutate(user.id, {
+      onSuccess: (res) => {
+        if (res.emailSent) {
+          toast.success(`Приглашение отправлено на ${res.user.email}`);
+        } else if (res.inviteUrl) {
+          navigator.clipboard.writeText(res.inviteUrl);
+          toast.message('SMTP не настроен — ссылка скопирована в буфер', {
+            description: res.inviteUrl,
+          });
+        }
+      },
+      onError: () => toast.error('Не удалось переотправить приглашение'),
+    });
   };
 
   const handleDeleteConfirm = () => {
@@ -204,8 +221,8 @@ export function RolesPage() {
                   <TableHead>Сотрудник</TableHead>
                   <TableHead>Email</TableHead>
                   <TableHead className="w-[220px]">Роль</TableHead>
-                  <TableHead className="w-[130px] text-center">Активен</TableHead>
-                  <TableHead className="w-[80px] text-right">Действия</TableHead>
+                  <TableHead className="w-[170px] text-center">Статус</TableHead>
+                  <TableHead className="w-[110px] text-right">Действия</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -271,23 +288,51 @@ export function RolesPage() {
                       })()}
                     </TableCell>
                     <TableCell className="text-center">
-                      <Switch
-                        checked={u.isActive}
-                        onCheckedChange={(v) => handleActiveToggle(u, v)}
-                      />
+                      {u.isActive ? (
+                        <div className="flex items-center justify-center gap-2">
+                          <Badge variant="secondary" className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100">
+                            Активен
+                          </Badge>
+                          <Switch
+                            checked
+                            onCheckedChange={(v) => handleActiveToggle(u, v)}
+                            disabled={currentUser?.id === u.id}
+                          />
+                        </div>
+                      ) : (
+                        <Badge variant="secondary" className="bg-amber-100 text-amber-800 hover:bg-amber-100">
+                          Не активирован
+                        </Badge>
+                      )}
                     </TableCell>
                     <TableCell className="text-right">
-                      {currentUser?.id !== u.id && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-muted-foreground hover:text-rose-600"
-                          onClick={() => setUserToDelete(u)}
-                          title="Удалить пользователя"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      )}
+                      <div className="flex items-center justify-end gap-0.5">
+                        {!u.isActive && canManageRoles && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                            onClick={() => handleResendInvite(u)}
+                            disabled={
+                              resendInvite.isPending && resendInvite.variables === u.id
+                            }
+                            title="Переотправить приглашение на email"
+                          >
+                            <Mail className="h-4 w-4" />
+                          </Button>
+                        )}
+                        {currentUser?.id !== u.id && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-muted-foreground hover:text-rose-600"
+                            onClick={() => setUserToDelete(u)}
+                            title="Удалить пользователя"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}

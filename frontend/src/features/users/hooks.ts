@@ -45,3 +45,15 @@ export function useDeleteUser() {
     },
   });
 }
+
+export function useResendInvite() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: UUID) => usersApi.resendInvite(id),
+    onSuccess: () => {
+      // is_active не меняется при resend — но вдруг кто-то параллельно успел
+      // активироваться, на всякий случай инвалидируем список.
+      queryClient.invalidateQueries({ queryKey: userKeys.all });
+    },
+  });
+}

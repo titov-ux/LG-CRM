@@ -53,6 +53,27 @@ class Settings(BaseSettings):
     sentry_environment: str = "dev"
     sentry_traces_sample_rate: float = 0.0
 
+    # ── Frontend / приглашения ──────────────────────────────
+    # Базовый URL фронта — используется в письме-приглашении (`{app_base_url}/invite/{token}`).
+    # На проде = https://lachevsky.ru, на dev = http://localhost:5173.
+    app_base_url: str = "http://localhost:5173"
+    # Срок жизни invite-токена в днях. 7 дней — компромисс между UX и безопасностью.
+    invite_ttl_days: int = 7
+
+    # ── SMTP (Yandex 360 / любой SMTP) ──────────────────────
+    # Прод: smtp.yandex.ru:465 (SSL) + ящик noreply@lachevsky.group + «пароль приложения»
+    # из Яндекс ID. Без `smtp_host`/`smtp_user`/`smtp_password` отправка отключена,
+    # вместо реального письма логируем превью в stdout — удобно для dev.
+    smtp_host: str = ""
+    smtp_port: int = 465
+    smtp_use_ssl: bool = True  # порт 465 = implicit SSL; для 587 ставить False (STARTTLS)
+    smtp_user: str = ""
+    smtp_password: str = ""
+    # Адрес «от кого». Если пуст — используем smtp_user.
+    smtp_from: str = ""
+    smtp_from_name: str = "ЛГ Интеграция"
+    smtp_timeout_seconds: float = 15.0
+
     # ── YandexGPT (AI-распознавание брифа вакансии) ─────────
     # Yandex Cloud AI Studio — OpenAI-совместимый API.
     # Без ключа эндпоинт POST /vacancies/parse-text вернёт 503 ai_unavailable.

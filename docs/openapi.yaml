@@ -127,6 +127,10 @@ paths:
     post:
       tags: [users]
       summary: Создать пользователя
+      description: |
+        Если `password` не передан — пользователь создаётся с `isActive=false`,
+        ему уходит письмо со ссылкой на установку пароля. В этом случае при
+        отсутствии настроенного SMTP в ответе будет `inviteUrl`.
       requestBody:
         required: true
         content:
@@ -137,7 +141,7 @@ paths:
           description: Created
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/User' }
+              schema: { $ref: '#/components/schemas/CreateUserResponse' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '409':
           description: Email уже существует
@@ -168,6 +172,87 @@ paths:
       responses:
         '200': { $ref: '#/components/responses/Ok' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /users/{id}/invite:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [users]
+      summary: Переотправить invite-приглашение
+      description: |
+        Генерирует новый invite-токен и шлёт письмо повторно. Допустимо только
+        для пользователей с `isActive=false`. Возвращает обновлённый ответ
+        с флагом `emailSent` и при необходимости `inviteUrl` (если SMTP не
+        настроен или письмо не ушло).
+      responses:
+        '200':
+          description: Invite issued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InviteResendResponse' }
+        '400':
+          description: Пользователь уже активирован
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ─────────────── INVITE (публичные) ───────────────
+  /auth/invite/{token}:
+    parameters:
+      - in: path
+        name: token
+        required: true
+        schema: { type: string }
+    get:
+      tags: [auth]
+      summary: Информация по invite-токену
+      description: Возвращает email/имя для подсветки формы установки пароля.
+      responses:
+        '200':
+          description: InviteInfo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InviteInfo' }
+        '404':
+          description: Токен не найден
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '410':
+          description: Токен истёк или уже использован
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+  /auth/invite/{token}/activate:
+    parameters:
+      - in: path
+        name: token
+        required: true
+        schema: { type: string }
+    post:
+      tags: [auth]
+      summary: Активировать аккаунт и установить пароль
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ActivateInviteRequest' }
+      responses:
+        '200':
+          description: Аккаунт активирован, выданы токены
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenResponse' }
+        '404':
+          description: Токен не найден
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '410':
+          description: Токен истёк или уже использован
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
 
   # ─────────────── CLIENTS ───────────────
   /clients:
@@ -1580,6 +1665,37 @@ components:
         fullName: { type: string }
         role:     { $ref: '#/components/schemas/Role' }
         isActive: { type: boolean }
+    CreateUserResponse:
+      type: object
+      required: [user]
+      properties:
+        user: { $ref: '#/components/schemas/User' }
+        inviteUrl:
+          type: string
+          nullable: true
+          description: Заполняется только если SMTP не настроен и письмо не ушло.
+    InviteResendResponse:
+      type: object
+      required: [user, emailSent]
+      properties:
+        user: { $ref: '#/components/schemas/User' }
+        inviteUrl:
+          type: string
+          nullable: true
+        emailSent:
+          type: boolean
+          description: true — письмо реально ушло через SMTP; false — fallback на inviteUrl.
+    InviteInfo:
+      type: object
+      required: [email, fullName]
+      properties:
+        email:    { type: string, format: email }
+        fullName: { type: string }
+    ActivateInviteRequest:
+      type: object
+      required: [password]
+      properties:
+        password: { type: string, minLength: 8, maxLength: 128 }
 
     # ─── Clients ───
     ClientStatus:

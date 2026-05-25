@@ -22,8 +22,35 @@ export interface CreateUserRequest {
   telegram?: string;
   fullName: string;
   role: Role;
+  /** Если не указан — пользователь создаётся через invite-flow (письмо со ссылкой). */
   password?: string;
   isActive?: boolean;
+}
+
+/**
+ * Ответ POST /users. `inviteUrl` появляется только в invite-flow и только
+ * если SMTP не настроен / отправка письма не удалась. На проде с рабочим
+ * SMTP — всегда null, админ ссылку не видит.
+ */
+export interface CreateUserResponse {
+  user: User;
+  inviteUrl?: string | null;
+}
+
+export interface InviteResendResponse {
+  user: User;
+  inviteUrl?: string | null;
+  /** true — письмо реально ушло; false — fallback на inviteUrl. */
+  emailSent: boolean;
+}
+
+export interface InviteInfo {
+  email: string;
+  fullName: string;
+}
+
+export interface ActivateInviteRequest {
+  password: string;
 }
 
 // === Clients ===

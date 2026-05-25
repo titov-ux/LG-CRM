@@ -18,6 +18,8 @@ from app.modules.users import service
 from app.modules.users.models import Role, User
 from app.modules.users.schemas import (
     CreateUserRequest,
+    CreateUserResponse,
+    InviteResendResponse,
     UpdateUserRequest,
     UserResponse,
 )
@@ -36,7 +38,7 @@ async def list_users(
 
 @router.post(
     "",
-    response_model=UserResponse,
+    response_model=CreateUserResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Создать пользователя",
 )
@@ -44,9 +46,39 @@ async def create_user(
     payload: CreateUserRequest,
     _: User = Depends(require_roles(Role.admin.value)),
     db: AsyncSession = Depends(get_db),
-) -> UserResponse:
-    user = await service.create_user(db, payload)
-    return UserResponse.model_validate(user)
+) -> CreateUserResponse:
+    """Создать пользователя.
+
+    Если `password` не передан — пользователь создаётся с `isActive=false` и ему
+    уходит письмо-приглашение со ссылкой на установку пароля. В этом случае при
+    отсутствии SMTP (dev/staging без настроенной почты) в ответе будет поле
+    `inviteUrl` — админ может скопировать его вручную.
+    """
+    user, fallback_token = await service.create_user(db, payload)
+    invite_url = service._build_invite_url(fallback_token) if fallback_token else None
+    return CreateUserResponse(
+        user=UserResponse.model_validate(user),
+        invite_url=invite_url,
+    )
+
+
+@router.post(
+    "/{user_id}/invite",
+    response_model=InviteResendResponse,
+    summary="Переотправить приглашение",
+)
+async def resend_invite(
+    user_id: uuid.UUID,
+    _: User = Depends(require_roles(Role.admin.value)),
+    db: AsyncSession = Depends(get_db),
+) -> InviteResendResponse:
+    user, fallback_token = await service.reissue_invite(db, user_id)
+    invite_url = service._build_invite_url(fallback_token) if fallback_token else None
+    return InviteResendResponse(
+        user=UserResponse.model_validate(user),
+        invite_url=invite_url,
+        email_sent=fallback_token is None,
+    )
 
 
 @router.patch("/{user_id}", response_model=UserResponse, summary="Обновить пользователя")

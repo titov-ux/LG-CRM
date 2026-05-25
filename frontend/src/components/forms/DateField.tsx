@@ -188,7 +188,10 @@ export function DateField({
   const [text, setText] = React.useState<string>(() => valueToDisplay(value, granularity));
   const skipNextBlurCommitRef = React.useRef(false);
   const interactingWithPickerRef = React.useRef(false);
-  const selectedDate = valueToDate(value, granularity);
+  const selectedDate = React.useMemo(
+    () => valueToDate(value, granularity),
+    [value, granularity],
+  );
   const [pickerMonth, setPickerMonth] = React.useState<Date>(() =>
     clampByMaxDate(selectedDate ?? new Date(), maxDate),
   );
@@ -311,7 +314,12 @@ export function DateField({
             <CalendarIcon className="h-4 w-4" />
           </button>
         </PopoverTrigger>
-        <PopoverContent className="w-auto p-0" align="end" onPointerDownCapture={markPickerInteraction}>
+        <PopoverContent
+          portalled={false}
+          className="w-auto p-0"
+          align="end"
+          onPointerDownCapture={markPickerInteraction}
+        >
           {granularity === 'day' && pickerStep === 'day' && (
             <>
               <div className="flex items-center justify-between px-3 pt-3">

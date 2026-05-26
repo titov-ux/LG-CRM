@@ -368,7 +368,9 @@ async def post_message(
     # last_message_at трогаем только при сообщении в основную ленту — ответы
     # в треде не должны «выталкивать» диалог наверх.
     if parent_message_id is None:
-        conv.last_message_at = datetime.now(timezone.utc)
+        # Используем точное время самого сообщения, чтобы у автора
+        # `last_message_at` не оказывался позже `last_read_at` на миллисекунды.
+        conv.last_message_at = msg.created_at
 
     # Своё же сообщение по определению «прочитано» — фиксируем read-state
     # автора сразу, иначе у него самого зажжётся unread-точка пока не

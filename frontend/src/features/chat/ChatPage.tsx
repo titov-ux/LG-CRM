@@ -23,15 +23,18 @@ import {
   MoreHorizontal,
   Plus,
   Search,
+  Trash2,
   Users,
   Volume2,
   VolumeX,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { useChatSoundsEnabled } from './sound';
 import { useChatRealtime } from './useChatRealtime';
 import {
   useArchiveConversation,
   useConversations,
+  useDeleteConversation,
   useMarkRead,
   useMessages,
   useMuteConversation,
@@ -80,9 +83,14 @@ export function ChatPage() {
     return m;
   }, [usersData]);
 
-  // Авто-выбор первого диалога — иначе центр пустой.
+  // Авто-выбор первого доступного диалога и сброс «битого» activeId.
   useEffect(() => {
-    if (!activeId && conversations.length > 0) {
+    if (conversations.length === 0) {
+      if (activeId !== null) setActive(null);
+      return;
+    }
+    const hasActive = !!activeId && conversations.some((c) => c.id === activeId);
+    if (!hasActive) {
       setActive(conversations[0].id);
     }
   }, [activeId, conversations, setActive]);
@@ -167,6 +175,15 @@ export function ChatPage() {
                 onlineUserIds={onlineUserIds}
                 unread={isUnread(c)}
                 onClick={() => setActive(c.id)}
+                onDeleted={(deletedId) => {
+                  const idx = conversations.findIndex((it) => it.id === deletedId);
+                  if (idx === -1) return;
+                  const fallback =
+                    conversations[idx + 1] ?? conversations[idx - 1] ?? null;
+                  if (activeId === deletedId) {
+                    setActive(fallback?.id ?? null);
+                  }
+                }}
               />
             ))
           )}
@@ -268,6 +285,7 @@ function ConversationRow({
   onlineUserIds,
   unread,
   onClick,
+  onDeleted,
 }: {
   conversation: ChatConversation;
   active: boolean;
@@ -276,6 +294,7 @@ function ConversationRow({
   onlineUserIds: Set<UUID>;
   unread: boolean;
   onClick: () => void;
+  onDeleted?: (conversationId: UUID) => void;
 }) {
   const title = titleOf(conversation, meId, userMap);
   const initials = initialsOf(conversation, meId, userMap);
@@ -288,6 +307,7 @@ function ConversationRow({
   const mute = useMuteConversation();
   const archive = useArchiveConversation();
   const unarchive = useUnarchiveConversation();
+  const removeConversation = useDeleteConversation();
 
   const muteFor = (hours: number | null) => {
     const until =
@@ -391,6 +411,25 @@ function ConversationRow({
               Архивировать
             </DropdownMenuItem>
           )}
+          <DropdownMenuItem
+            className="text-destructive focus:text-destructive"
+            onClick={() => {
+              const ok = window.confirm(`Удалить диалог «${title}»?`);
+              if (!ok) return;
+              removeConversation.mutate(conversation.id, {
+                onSuccess: () => {
+                  onDeleted?.(conversation.id);
+                  toast.success('Диалог удален');
+                },
+                onError: () => {
+                  toast.error('Не удалось удалить диалог');
+                },
+              });
+            }}
+          >
+            <Trash2 className="mr-2 h-3.5 w-3.5" />
+            Удалить
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
@@ -583,12 +622,14 @@ function ConversationView({
             Сообщений пока нет — напишите первое.
           </div>
         ) : (
-          <MessageList
-            messages={messages}
-            meId={meId}
-            userMap={userMap}
-            onlineUserIds={onlineUserIds}
-          />
+          <div className="flex min-h-full flex-col justify-end">
+            <MessageList
+              messages={messages}
+              meId={meId}
+              userMap={userMap}
+              onlineUserIds={onlineUserIds}
+            />
+          </div>
         )}
       </div>
 

@@ -8,6 +8,7 @@ import {
   ContactRound,
   Database,
   FileText,
+  FileUp,
   Home,
   MessageSquare,
   Settings,
@@ -46,6 +47,7 @@ const GROUPS: NavGroup[] = [
       { to: '/contacts', label: 'Контакты', icon: ContactRound },
       { to: '/chat', label: 'Чат', icon: MessageSquare },
       { to: '/calendar', label: 'Календарь', icon: Calendar },
+      { to: '/resume-formatter', label: 'Форматтер резюме', icon: FileUp },
     ],
   },
   {

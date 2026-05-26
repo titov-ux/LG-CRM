@@ -1,4 +1,5 @@
 export { extractPdfText } from './extractPdfText';
+export { extractDocxText } from './extractDocxText';
 export { parsedToFormValues } from './parsedToForm';
 export type { ParsedToFormResult } from './parsedToForm';
 export type {

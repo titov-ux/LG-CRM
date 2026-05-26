@@ -99,15 +99,6 @@ async function extractAiErrorMessage(e: unknown): Promise<string> {
   return 'Не удалось адаптировать резюме. Скачайте в исходном виде.';
 }
 
-/**
- * Имя файла адаптированного резюме. Чтобы пользователь сразу видел,
- * что это «адаптированная» версия и не путал с оригиналом на диске.
- */
-function improvedResumeFileName(candidate: Candidate): string {
-  const safe = candidate.fullName.replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, '_');
-  return `${safe}_резюме_адаптировано.docx`;
-}
-
 function splitStack(value: string | undefined): string[] {
   return (value ?? '')
     .split(',')
@@ -354,7 +345,9 @@ export function VacancyCardPage() {
       );
       const adapted = applyImprovementToCandidate(candidate, improvement);
       const blob = await generateResumeDocxBlob(adapted);
-      downloadBlob(blob, improvedResumeFileName(candidate));
+      // Имя файла — то же, что и у оригинала (без пометки «адаптировано»),
+      // чтобы клиенту резюме приходило с привычным именем.
+      downloadBlob(blob, resumeFileName(candidate, 'docx'));
       toast.success('Адаптированное резюме готово', { id: toastId });
     } catch (e) {
       const message = await extractAiErrorMessage(e);

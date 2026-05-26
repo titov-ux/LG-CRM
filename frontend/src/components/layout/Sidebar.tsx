@@ -3,6 +3,7 @@ import {
   Bell,
   Briefcase,
   Building2,
+  Calculator,
   Calendar,
   ContactRound,
   Database,
@@ -59,6 +60,7 @@ const GROUPS: NavGroup[] = [
     items: [
       { to: '/notifications', label: 'Уведомления', icon: Bell },
       { to: '/analytics', label: 'Аналитика', icon: TrendingUp },
+      { to: '/calculator', label: 'Калькулятор', icon: Calculator },
       { to: '/audit', label: 'Журнал действий', icon: Activity },
     ],
   },

@@ -15,6 +15,7 @@ const TITLES: Record<string, string> = {
   '/notifications': 'Уведомления',
   '/chat': 'Чат',
   '/analytics': 'Аналитика',
+  '/calculator': 'Калькулятор ставок',
   '/audit': 'Журнал действий',
   '/roles': 'Роли и доступы',
   '/settings': 'Настройки',

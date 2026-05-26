@@ -41,14 +41,12 @@ const TYPE_ACCENT: Record<EmploymentType, string> = {
 
 interface InputsState {
   rateClient: number;
-  hoursPerMonth: number;
   /** Целевая маржа в % (0..100) по каждой форме оформления, переопределяет дефолты. */
   margins: Record<EmploymentType, number>;
 }
 
 const DEFAULT_INPUTS: InputsState = {
   rateClient: 4000,
-  hoursPerMonth: DEFAULT_HOURS_PER_MONTH,
   margins: {
     'ТК РФ': Math.round(TARGET_MARGIN_BY_EMPLOYMENT['ТК РФ'] * 100),
     'ИП': Math.round(TARGET_MARGIN_BY_EMPLOYMENT['ИП'] * 100),
@@ -59,9 +57,11 @@ const DEFAULT_INPUTS: InputsState = {
 export function CalculatorPage() {
   const [inputs, setInputs] = useState<InputsState>(DEFAULT_INPUTS);
 
+  // У нас всегда 160 часов в месяц — это стандарт для аутстаффа, отдельным полем
+  // в форме не выводим, берём из общего lib/compensation.ts.
   const revenue = useMemo(
-    () => monthlyClientRevenue(inputs.rateClient, inputs.hoursPerMonth),
-    [inputs.rateClient, inputs.hoursPerMonth],
+    () => monthlyClientRevenue(inputs.rateClient, DEFAULT_HOURS_PER_MONTH),
+    [inputs.rateClient],
   );
 
   const rows = useMemo(
@@ -116,73 +116,32 @@ export function CalculatorPage() {
           <CardTitle className="text-[13px]">Параметры</CardTitle>
         </CardHeader>
         <CardContent className="p-4 pt-2">
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            <div className="space-y-1.5">
-              <Label
-                htmlFor="rateClient"
-                className="text-[12px] font-medium text-muted-foreground"
-              >
-                Ставка заказчика, ₽/час
-              </Label>
-              <Input
-                id="rateClient"
-                type="number"
-                inputMode="numeric"
-                min={0}
-                step={50}
-                value={inputs.rateClient || ''}
-                placeholder="0"
-                onChange={(e) =>
-                  setInputs((s) => ({
-                    ...s,
-                    rateClient: numberFromInput(e.target.value),
-                  }))
-                }
-              />
-              <p className="text-[11px] text-muted-foreground">
-                Цена часа, по которой выставляем заказчику.
-              </p>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label
-                htmlFor="hoursPerMonth"
-                className="text-[12px] font-medium text-muted-foreground"
-              >
-                Часов в месяц
-              </Label>
-              <Input
-                id="hoursPerMonth"
-                type="number"
-                inputMode="numeric"
-                min={1}
-                max={744}
-                step={1}
-                value={inputs.hoursPerMonth || ''}
-                placeholder={String(DEFAULT_HOURS_PER_MONTH)}
-                onChange={(e) =>
-                  setInputs((s) => ({
-                    ...s,
-                    hoursPerMonth: numberFromInput(e.target.value),
-                  }))
-                }
-              />
-              <p className="text-[11px] text-muted-foreground">
-                По умолчанию {DEFAULT_HOURS_PER_MONTH} часов — стандарт для аутстаффа.
-              </p>
-            </div>
-
-            <div className="space-y-1.5 rounded-md bg-muted/40 p-3">
-              <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
-                Выручка от клиента
-              </div>
-              <div className="tnum text-[20px] font-semibold tracking-tight">
-                {formatMoneyRub(revenue)} ₽<span className="text-[12px] font-normal text-muted-foreground"> / мес</span>
-              </div>
-              <div className="text-[11px] text-muted-foreground">
-                {formatMoneyRub(inputs.rateClient)} ₽/ч × {inputs.hoursPerMonth || 0} ч
-              </div>
-            </div>
+          <div className="max-w-sm space-y-1.5">
+            <Label
+              htmlFor="rateClient"
+              className="text-[12px] font-medium text-muted-foreground"
+            >
+              Ставка заказчика, ₽/час
+            </Label>
+            <Input
+              id="rateClient"
+              type="number"
+              inputMode="numeric"
+              min={0}
+              step={50}
+              value={inputs.rateClient || ''}
+              placeholder="0"
+              onChange={(e) =>
+                setInputs((s) => ({
+                  ...s,
+                  rateClient: numberFromInput(e.target.value),
+                }))
+              }
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Цена часа, по которой выставляем заказчику. Месяц считаем как{' '}
+              {DEFAULT_HOURS_PER_MONTH} часов.
+            </p>
           </div>
         </CardContent>
       </Card>
@@ -259,9 +218,6 @@ export function CalculatorPage() {
                 </div>
                 <div className="tnum mt-1 text-[22px] font-semibold leading-none tracking-tight">
                   {formatMoneyRub(row.net)} ₽<span className="ml-1 text-[12px] font-normal text-muted-foreground">/мес</span>
-                </div>
-                <div className="mt-1 text-[11px] text-muted-foreground">
-                  ≈ {formatMoneyRub(row.net * 12)} ₽ в год
                 </div>
               </div>
 

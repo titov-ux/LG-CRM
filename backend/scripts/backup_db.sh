@@ -30,9 +30,16 @@ set -euo pipefail
 : "${S3_REGION:=ru-central1}"
 : "${BACKUP_RETENTION_DAYS:=30}"
 
-# DATABASE_URL у нас в asyncpg-формате: postgresql+asyncpg://user:pwd@host:port/db
-# Превратим в стандартный postgresql:// для pg_dump.
-PG_URL="${DATABASE_URL/postgresql+asyncpg/postgresql}"
+# pg_dump запускаем ВНУТРИ postgres-контейнера (`docker exec`):
+#  - не зависим от наличия pg_dump на хосте VM;
+#  - версия pg_dump гарантированно совпадает с версией сервера (postgres 16);
+#  - hostname `postgres` из DATABASE_URL разрешается только внутри docker-сети,
+#    с хоста VM он недоступен — поэтому прямой pg_dump падал с
+#    "could not translate host name "postgres" to address" (см. memory).
+
+: "${POSTGRES_USER:=crm}"
+: "${POSTGRES_DB:=crm_lg}"
+: "${POSTGRES_CONTAINER:=crm-lg-postgres}"
 
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 TMP_DIR="$(mktemp -d)"
@@ -41,7 +48,10 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 DUMP_PATH="${TMP_DIR}/crm-lg-${TS}.dump.gz"
 
 echo "[backup] dumping → ${DUMP_PATH}"
-pg_dump --format=custom --no-owner --no-acl "${PG_URL}" | gzip -9 > "${DUMP_PATH}"
+docker exec -i "${POSTGRES_CONTAINER}" \
+    pg_dump --format=custom --no-owner --no-acl \
+        -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" \
+    | gzip -9 > "${DUMP_PATH}"
 
 # Префикс без обрамляющих слешей, чтобы итоговый ключ был чистым.
 # Пустой префикс → пишем в legacy-путь daily/... (как до 2026-05-26).

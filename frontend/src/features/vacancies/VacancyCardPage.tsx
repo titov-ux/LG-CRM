@@ -551,7 +551,7 @@ export function VacancyCardPage() {
                 <>
                   <Field label="Ставка для клиента" value={`${formatMoneyRub(vacancy.rateClient)} ₽/час`} />
                   <Field
-                    label="Оклад до (на руки)"
+                    label="Оклад до"
                     value={
                       vacancy.rateClient > 0 ? (
                         <span className="flex flex-col gap-0.5 text-[13px] leading-tight">

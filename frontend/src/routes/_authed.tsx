@@ -17,7 +17,7 @@ const TITLES: Record<string, string> = {
   '/analytics': 'Аналитика',
   '/calculator': 'Калькулятор ставок',
   '/audit': 'Журнал действий',
-  '/resume-formatter': 'Форматтер резюме',
+  '/resume-formatter': 'Оформление резюме',
   '/roles': 'Роли и доступы',
   '/settings': 'Настройки',
 };

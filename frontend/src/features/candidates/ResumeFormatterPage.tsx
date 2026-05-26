@@ -287,7 +287,7 @@ export function ResumeFormatterPage() {
           <FileUp className="h-4.5 w-4.5" strokeWidth={1.8} />
         </div>
         <div>
-          <h1 className="text-[15px] font-semibold tracking-tight">Форматтер резюме</h1>
+          <h1 className="text-[15px] font-semibold tracking-tight">Оформление резюме</h1>
           <p className="text-[11.5px] text-muted-foreground">
             Загрузите исходное резюме в PDF или DOCX. Сервис распознает данные и подготовит выгрузку в
             корпоративном формате.

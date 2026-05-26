@@ -62,7 +62,7 @@ const GROUPS: NavGroup[] = [
       { to: '/notifications', label: 'Уведомления', icon: Bell },
       { to: '/analytics', label: 'Аналитика', icon: TrendingUp },
       { to: '/calculator', label: 'Калькулятор', icon: Calculator },
-      { to: '/resume-formatter', label: 'Форматтер резюме', icon: FileUp },
+      { to: '/resume-formatter', label: 'Оформление резюме', icon: FileUp },
       { to: '/audit', label: 'Журнал действий', icon: Activity },
     ],
   },

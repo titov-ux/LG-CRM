@@ -47,7 +47,6 @@ const GROUPS: NavGroup[] = [
       { to: '/contacts', label: 'Контакты', icon: ContactRound },
       { to: '/chat', label: 'Чат', icon: MessageSquare },
       { to: '/calendar', label: 'Календарь', icon: Calendar },
-      { to: '/resume-formatter', label: 'Форматтер резюме', icon: FileUp },
     ],
   },
   {
@@ -63,6 +62,7 @@ const GROUPS: NavGroup[] = [
       { to: '/notifications', label: 'Уведомления', icon: Bell },
       { to: '/analytics', label: 'Аналитика', icon: TrendingUp },
       { to: '/calculator', label: 'Калькулятор', icon: Calculator },
+      { to: '/resume-formatter', label: 'Форматтер резюме', icon: FileUp },
       { to: '/audit', label: 'Журнал действий', icon: Activity },
     ],
   },

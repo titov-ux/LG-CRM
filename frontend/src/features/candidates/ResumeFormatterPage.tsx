@@ -359,7 +359,7 @@ export function ResumeFormatterPage() {
         <CardContent className="flex flex-wrap gap-2 p-4 pt-2">
           <Button
             type="button"
-            variant="default"
+            variant="secondary"
             size="sm"
             disabled={!parsedCandidate}
             onClick={handleDownloadDocx}
@@ -369,7 +369,7 @@ export function ResumeFormatterPage() {
           </Button>
           <Button
             type="button"
-            variant="default"
+            variant="secondary"
             size="sm"
             disabled={!parsedCandidate || pdfPending}
             onClick={handleDownloadPdf}

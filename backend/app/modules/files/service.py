@@ -100,6 +100,32 @@ async def get_file(db: AsyncSession, file_id: uuid.UUID) -> File:
     return rec
 
 
+async def ensure_can_read_file(
+    db: AsyncSession, user: User, file: File
+) -> None:
+    """Проверка прав на чтение (download/просмотр) файла.
+
+    Для бизнес-сущностей (vacancy/candidate/client/contact) исторически
+    «любой авторизованный» — это устаревшая логика, оставленная как было.
+    Для вложений чата (entity_type=chat_message) проверяем, что юзер —
+    участник conversation сообщения. Если файл «осиротел» (сообщение или
+    его conversation_id отсутствуют) — отдаём 404, чтобы не палить
+    существование файла.
+    """
+    if file.entity_type != FileEntityType.chat_message:
+        return
+
+    # Lazy-import чтобы не словить круговую зависимость chat ↔ files.
+    from app.modules.chat.models import ChatMember, ChatMessage
+
+    msg = await db.get(ChatMessage, file.entity_id)
+    if msg is None:
+        raise ApiError(status.HTTP_404_NOT_FOUND, "not_found", "Файл не найден")
+    member = await db.get(ChatMember, (msg.conversation_id, user.id))
+    if member is None:
+        raise ApiError(status.HTTP_404_NOT_FOUND, "not_found", "Файл не найден")
+
+
 async def download_url(s3: S3Adapter, file: File, expires_in: int = 300) -> str:
     if file.scan_status == ScanStatus.infected:
         raise ApiError(

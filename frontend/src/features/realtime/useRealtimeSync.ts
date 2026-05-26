@@ -45,6 +45,11 @@ export function useRealtimeSync(): void {
   useEffect(() => {
     const unsubscribe = subscribeRealtime((event: RealtimeEvent) => {
       if (event.echo) return; // своё же действие — оптимистично уже применили
+      // Чат-события обрабатываются собственным хуком (useChatRealtime),
+      // здесь ловим только домен vacancy/candidate.
+      if (event.type !== 'vacancy.changed' && event.type !== 'candidate.changed') {
+        return;
+      }
       if (event.entity === 'vacancy') {
         queryClient.invalidateQueries({ queryKey: vacancyKeys.all });
         if (event.id) {

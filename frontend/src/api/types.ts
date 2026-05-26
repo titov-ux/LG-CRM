@@ -1,7 +1,12 @@
 // Серверные DTO. В боевой версии этот файл генерируется из OpenAPI (см. README → «Кодогенерация»).
 // Пока — ручной зеркальный набор, согласованный с архитектурой §6.
 
+import type { FileResponse } from './files';
+
 export type UUID = string;
+
+// Реэкспорт для удобства использования в фичах, которые тянут типы из @/api/types.
+export type { FileResponse };
 
 // === Users ===
 export type Role = 'admin' | 'account_manager' | 'recruiter' | 'viewer';
@@ -422,4 +427,114 @@ export interface LoginRequest {
 export interface TokenResponse {
   accessToken: string;
   refreshToken: string;
+}
+
+// === Chat ===
+export type ChatConversationKind = 'dm' | 'group';
+
+export interface ChatConversation {
+  id: UUID;
+  kind: ChatConversationKind;
+  title: string | null;
+  createdBy: UUID | null;
+  createdAt: string;
+  lastMessageAt: string | null;
+  memberIds: UUID[];
+  /** Read-state именно текущего пользователя — у других в DTO не отдаётся. */
+  myLastReadMessageId: UUID | null;
+  myLastReadAt: string | null;
+  /** Этап 6: персональные mute/archive. */
+  myMutedUntil: string | null;
+  myHiddenAt: string | null;
+}
+
+export interface ChatMuteRequest {
+  until: string | null;
+}
+
+export interface CreateDmRequest {
+  peerUserId: UUID;
+}
+
+export interface ChatReactionGroup {
+  emoji: string;
+  count: number;
+  userIds: UUID[];
+  mineReacted: boolean;
+}
+
+export interface ChatMessage {
+  id: UUID;
+  conversationId: UUID;
+  /** null = автор удалён. */
+  authorUserId: UUID | null;
+  /** NULL — корневое сообщение; задано — ответ в треде (треды глубиной 1). */
+  parentMessageId: UUID | null;
+  /** Для удалённого сообщения text='', mentions=[], reactions=[], attachments=[]; смотрите deletedAt. */
+  text: string;
+  /** UUID юзеров, упомянутых через токен `<@uuid>` в тексте. */
+  mentions: UUID[];
+  /** Эмодзи-реакции, сгруппированные по emoji. */
+  reactions: ChatReactionGroup[];
+  /** Файлы-вложения, прикреплённые к сообщению. */
+  attachments: FileResponse[];
+  /** Число ответов в треде (только для корневых сообщений, иначе 0). */
+  replyCount: number;
+  editedAt: string | null;
+  deletedAt: string | null;
+  createdAt: string;
+}
+
+export interface CreateChatMessageRequest {
+  text: string;
+  /** Если задано — это ответ в тред. Корневое сообщение того же диалога. */
+  parentMessageId?: UUID | null;
+  /** ID файлов, уже подтверждённых через /files/confirm с entity_type=chat_message. */
+  fileIds?: UUID[];
+}
+
+export interface UpdateChatMessageRequest {
+  text: string;
+}
+
+export interface MarkChatReadRequest {
+  lastReadMessageId: UUID;
+}
+
+export interface CreateChatGroupRequest {
+  title: string;
+  memberIds: UUID[];
+}
+
+export interface RenameChatGroupRequest {
+  title: string;
+}
+
+export interface AddChatMembersRequest {
+  userIds: UUID[];
+}
+
+export interface ToggleChatReactionRequest {
+  emoji: string;
+}
+
+export interface ChatMessagesPage {
+  items: ChatMessage[];
+  /** ISO created_at самого старого сообщения в странице — передавайте его
+   *  как `before` для следующей. null = больше нет. */
+  nextCursor: string | null;
+}
+
+export interface ChatSearchHit {
+  conversationId: UUID;
+  message: ChatMessage;
+  /** HTML-фрагмент с <mark>...</mark> — безопасно рендерить через
+   *  dangerouslySetInnerHTML (ts_headline экранирует всё, кроме своих тегов). */
+  snippet: string;
+  rank: number;
+}
+
+export interface ChatSearchResponse {
+  query: string;
+  items: ChatSearchHit[];
 }

@@ -74,10 +74,25 @@ async def events(
     await websocket.send_json({"type": "hello", "userId": str(user.id)})
 
     async def _pump_events() -> None:
+        # Фильтрация по audience: если в событии явно перечислена аудитория
+        # (приватные чат-события), отдаём его только тем, кто в этом списке.
+        # События без `audience` остаются как раньше — рассылаются всем (так
+        # ведут себя vacancy.changed / candidate.changed).
+        user_id_str = str(user.id)
         try:
             while True:
                 event: dict[str, Any] = await queue.get()
-                await websocket.send_json(event)
+                audience = event.get("audience")
+                if audience is not None and user_id_str not in audience:
+                    continue
+                # `audience` — служебное поле бэка, фронту его знать не нужно
+                # (плюс это user_id других людей — лишний leak). Шлём копию
+                # без него.
+                if audience is None:
+                    await websocket.send_json(event)
+                else:
+                    payload = {k: v for k, v in event.items() if k != "audience"}
+                    await websocket.send_json(payload)
         except WebSocketDisconnect:
             raise
         except Exception:

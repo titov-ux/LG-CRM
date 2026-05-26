@@ -15,6 +15,7 @@ from app.db.session import get_db
 from app.modules.analytics import service
 from app.modules.analytics.schemas import (
     AttentionResponse,
+    ChatStats,
     ClientPerformanceResponse,
     DashboardSummary,
     FunnelBucket,
@@ -24,6 +25,7 @@ from app.modules.analytics.schemas import (
     TimeToHireResponse,
     TrendsResponse,
 )
+from app.modules.chat.analytics import chat_stats
 from app.modules.auth.dependencies import get_current_user
 from app.modules.users.models import User
 
@@ -168,3 +170,16 @@ async def client_performance(
     period = service.resolve_period(from_dt, to_dt)
     data = await service.client_performance(db, period=period)
     return ClientPerformanceResponse.model_validate(data)
+
+
+@router.get(
+    "/chat",
+    response_model=ChatStats,
+    summary="Метрики чата (Этап 6 чата)",
+)
+async def chat_metrics(
+    _: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ChatStats:
+    data = await chat_stats(db)
+    return ChatStats.model_validate(data)

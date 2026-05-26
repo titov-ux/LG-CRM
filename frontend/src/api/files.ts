@@ -7,7 +7,12 @@
 import { api } from './client';
 import type { UUID } from './types';
 
-export type FileEntityType = 'candidate' | 'vacancy' | 'client' | 'contact';
+export type FileEntityType =
+  | 'candidate'
+  | 'vacancy'
+  | 'client'
+  | 'contact'
+  | 'chat_message';
 
 export type ScanStatus = 'pending' | 'clean' | 'infected' | 'error';
 

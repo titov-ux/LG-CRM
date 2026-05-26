@@ -1808,6 +1808,87 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/candidates/{id}/resume/improve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * AI-адаптация резюме кандидата под конкретную вакансию
+         * @description Просит LLM (YandexGPT) переписать сопроводительное, переставить
+         *     навыки/стек и переформулировать буллеты опыта с акцентом на
+         *     технологии и задачи из вакансии. **Не выдумывает фактов**:
+         *     компании/должности/даты остаются как у кандидата; список мест
+         *     работы возвращается той же длины и в том же порядке.
+         *
+         *     Фронт мерджит непустые поля поверх Candidate и сразу
+         *     отдаёт пользователю DOCX.
+         *
+         *     Если AI недоступен — 503 `ai_unavailable`; если AI вернул мусор —
+         *     502 `ai_bad_request`.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        vacancyId: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Адаптированное резюме */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            improvement: components["schemas"]["ImprovedResume"];
+                        };
+                    };
+                };
+                404: components["responses"]["NotFound"];
+                /** @description AI вернул ошибку формата (ai_bad_request) */
+                502: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description AI-сервис недоступен (ai_unavailable) */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/candidates/{id}/activity": {
         parameters: {
             query?: never;
@@ -2011,6 +2092,781 @@ export interface paths {
                 404: components["responses"]["NotFound"];
             };
         };
+        trace?: never;
+    };
+    "/chat/conversations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Список моих диалогов (DM/group) */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Если true — отдаёт также архивированные мной диалоги (myHiddenAt != null). */
+                    includeArchived?: boolean;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Сортировка по lastMessageAt DESC NULLS LAST. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChatConversation"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chat/conversations/dm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Открыть или создать DM с пользователем (идемпотентно) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CreateDmRequest"];
+                };
+            };
+            responses: {
+                /** @description ChatConversation */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChatConversation"];
+                    };
+                };
+                /** @description Себе писать нельзя (code=self_dm) */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chat/conversations/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        /** Карточка диалога (только для участников) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description ChatConversation */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChatConversation"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Переименовать групповой чат (owner) */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["RenameChatGroupRequest"];
+                };
+            };
+            responses: {
+                /** @description ChatConversation */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChatConversation"];
+                    };
+                };
+                /** @description Не группа (code=not_a_group) / пустое название */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        trace?: never;
+    };
+    "/chat/conversations/{id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        /** История сообщений (keyset, листаем вверх) */
+        get: {
+            parameters: {
+                query?: {
+                    limit?: number;
+                    /** @description Курсор — created_at сообщения, от которого продолжаем листать вверх. */
+                    before?: string;
+                    /**
+                     * @description Если задан — возвращает корень треда + все его ответы. Если не
+                     *     задан — возвращает только корневые сообщения (parent_message_id IS NULL).
+                     */
+                    threadRootId?: components["schemas"]["UUID"];
+                };
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Страница сообщений (старые → новые) */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChatMessagesPage"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+            };
+        };
+        put?: never;
+        /** Отправить сообщение в диалог */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CreateChatMessageRequest"];
+                };
+            };
+            responses: {
+                /** @description ChatMessage */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChatMessage"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chat/conversations/{id}/messages/{messageId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+                messageId: components["schemas"]["UUID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Soft-delete своего сообщения (admin может чужие) */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                    messageId: components["schemas"]["UUID"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: components["responses"]["Ok"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        options?: never;
+        head?: never;
+        /** Редактировать своё сообщение (метка edited_at) */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                    messageId: components["schemas"]["UUID"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["UpdateChatMessageRequest"];
+                };
+            };
+            responses: {
+                /** @description ChatMessage */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChatMessage"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                /** @description Удалённое сообщение редактировать нельзя (code=deleted) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/chat/conversations/{id}/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Отметить прочитанным до сообщения X */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["MarkChatReadRequest"];
+                };
+            };
+            responses: {
+                200: components["responses"]["Ok"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chat/conversations/group": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Создать групповой чат */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CreateChatGroupRequest"];
+                };
+            };
+            responses: {
+                /** @description ChatConversation */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChatConversation"];
+                    };
+                };
+                /** @description Невалидные данные (code=title_required / members_required / members_limit) */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description Часть участников не найдена (code=users_not_found) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chat/conversations/{id}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Добавить участников в группу (owner) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AddChatMembersRequest"];
+                };
+            };
+            responses: {
+                /** @description ChatConversation (обновлённый состав) */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChatConversation"];
+                    };
+                };
+                /** @description Лимит участников / не группа */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chat/conversations/{id}/members/{userId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+                userId: components["schemas"]["UUID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Убрать участника (owner; сам себя — любой) */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                    userId: components["schemas"]["UUID"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: components["responses"]["Ok"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chat/conversations/{id}/leave": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Выйти из группы (синоним DELETE /members/{me}) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: components["responses"]["Ok"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chat/conversations/{id}/mute": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mute/unmute диалога (until=null → снять) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ChatMuteRequest"];
+                };
+            };
+            responses: {
+                /** @description ChatConversation */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChatConversation"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chat/conversations/{id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Скрыть диалог из моего списка */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description ChatConversation (myHiddenAt установлен) */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChatConversation"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chat/conversations/{id}/unarchive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Вернуть диалог в мой список */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description ChatConversation (myHiddenAt = null) */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChatConversation"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chat/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Полнотекстовый поиск по доступным сообщениям
+         * @description Использует Postgres FTS с конфигом `russian` (словоформы:
+         *     «тестирую/тестировал/тестирование» матчатся по «тест»). Поиск идёт
+         *     только по сообщениям тех диалогов, где запрашивающий — участник.
+         *     Удалённые сообщения скрыты.
+         */
+        get: {
+            parameters: {
+                query: {
+                    q: string;
+                    /** @description Если задан — поиск ограничен этим диалогом. */
+                    conversationId?: components["schemas"]["UUID"];
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Найденные сообщения с HTML-сниппетами. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChatSearchResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chat/conversations/{id}/messages/{messageId}/reactions/toggle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+                messageId: components["schemas"]["UUID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Поставить / снять эмодзи-реакцию на сообщение */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                    messageId: components["schemas"]["UUID"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ToggleChatReactionRequest"];
+                };
+            };
+            responses: {
+                /** @description ChatMessage с обновлённой группой реакций */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChatMessage"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                /** @description Удалённое сообщение не реагируется (code=deleted) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/notifications": {
@@ -2499,6 +3355,42 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["ClientPerformanceResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/analytics/chat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Метрики чата (Этап 6 чата) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description ChatStats */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChatStats"];
                     };
                 };
             };
@@ -3775,6 +4667,17 @@ export interface components {
             certifications?: components["schemas"]["ParsedCertification"][];
             languages?: components["schemas"]["ParsedLanguageItem"][];
         };
+        ImprovedExperienceItem: {
+            project?: string;
+            achievements?: string[];
+        };
+        ImprovedResume: {
+            summary?: string;
+            experienceYears?: number;
+            stack?: string[];
+            skillCategories?: components["schemas"]["ParsedSkillCategory"][];
+            experience?: components["schemas"]["ImprovedExperienceItem"][];
+        };
         /** @enum {string} */
         MatchStatus: "submitted" | "reviewed" | "interview" | "offered" | "accepted" | "rejected_client" | "rejected_internal";
         VacancyCandidate: {
@@ -3813,6 +4716,112 @@ export interface components {
         UpdateCommentRequest: {
             text: string;
             mentions?: components["schemas"]["UUID"][];
+        };
+        /** @enum {string} */
+        ChatConversationKind: "dm" | "group";
+        ChatConversation: {
+            id: components["schemas"]["UUID"];
+            kind: components["schemas"]["ChatConversationKind"];
+            title?: string | null;
+            createdBy?: components["schemas"]["UUID"] | null;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            lastMessageAt?: string | null;
+            memberIds: components["schemas"]["UUID"][];
+            myLastReadMessageId?: components["schemas"]["UUID"] | null;
+            /** Format: date-time */
+            myLastReadAt?: string | null;
+            /** Format: date-time */
+            myMutedUntil?: string | null;
+            /** Format: date-time */
+            myHiddenAt?: string | null;
+        };
+        CreateDmRequest: {
+            peerUserId: components["schemas"]["UUID"];
+        };
+        ChatReactionGroup: {
+            emoji: string;
+            count: number;
+            userIds: components["schemas"]["UUID"][];
+            mineReacted: boolean;
+        };
+        ChatMessage: {
+            id: components["schemas"]["UUID"];
+            conversationId: components["schemas"]["UUID"];
+            authorUserId?: components["schemas"]["UUID"] | null;
+            parentMessageId?: components["schemas"]["UUID"] | null;
+            text: string;
+            /** @description UUID юзеров, упомянутых через токен `<@uuid>` в тексте. */
+            mentions: components["schemas"]["UUID"][];
+            /** @description Эмодзи-реакции, сгруппированные по emoji. */
+            reactions: components["schemas"]["ChatReactionGroup"][];
+            /** @description Файлы-вложения, прикреплённые к сообщению. */
+            attachments: components["schemas"]["FileResponse"][];
+            /** @description Число ответов в треде (только для корневых сообщений). */
+            replyCount: number;
+            /** Format: date-time */
+            editedAt?: string | null;
+            /** Format: date-time */
+            deletedAt?: string | null;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        CreateChatMessageRequest: {
+            text: string;
+            parentMessageId?: components["schemas"]["UUID"] | null;
+            fileIds?: components["schemas"]["UUID"][];
+        };
+        UpdateChatMessageRequest: {
+            text: string;
+        };
+        MarkChatReadRequest: {
+            lastReadMessageId: components["schemas"]["UUID"];
+        };
+        CreateChatGroupRequest: {
+            title: string;
+            memberIds: components["schemas"]["UUID"][];
+        };
+        RenameChatGroupRequest: {
+            title: string;
+        };
+        AddChatMembersRequest: {
+            userIds: components["schemas"]["UUID"][];
+        };
+        ToggleChatReactionRequest: {
+            emoji: string;
+        };
+        ChatMuteRequest: {
+            /**
+             * Format: date-time
+             * @description Время, до которого глушим уведомления. `null` снимает mute.
+             */
+            until?: string | null;
+        };
+        ChatStats: {
+            messagesToday: number;
+            messages7d: number;
+            activeUsers7d: number;
+            dmCount: number;
+            groupCount: number;
+            /** Format: float */
+            avgGroupSize: number;
+        };
+        ChatSearchHit: {
+            conversationId: components["schemas"]["UUID"];
+            message: components["schemas"]["ChatMessage"];
+            snippet: string;
+            /** Format: float */
+            rank: number;
+        };
+        ChatSearchResponse: {
+            query: string;
+            items: components["schemas"]["ChatSearchHit"][];
+        };
+        ChatMessagesPage: {
+            items: components["schemas"]["ChatMessage"][];
+            /** Format: date-time */
+            nextCursor?: string | null;
         };
         Notification: {
             id: components["schemas"]["UUID"];

@@ -1,15 +1,19 @@
 """Хелперы публикации realtime-событий.
 
 Каждое событие — словарь с полями:
-  - `type`: «vacancy.changed» / «candidate.changed»
+  - `type`: «vacancy.changed» / «candidate.changed» / «chat.*»
   - `kind`: «created» / «updated» / «deleted» / «status_changed» / «reordered»
-    / «archived» / «restored»
+    / «archived» / «restored» (для доменных событий — пусто или своё)
   - `id`: id затронутой сущности (если применимо)
   - `ids`: список id (для batch-операций типа reorder)
   - `actorId`: id пользователя, выполнившего действие
   - `clientId`: «X-Client-Id» из запроса, чтобы фронт мог отбрасывать
     собственные эхо-события
   - `ts`: ISO-время публикации
+  - `audience` *(опционально)*: список user_id, которым событие предназначено.
+    Если задан — `_pump_events` в `endpoints/realtime.py` отдаст событие
+    только тем клиентам, чей `user.id` входит в этот список. Если не задан —
+    событие летит всем (как было до §2.4 плана чата).
 
 `current_client_id_var` — contextvar, который ставит middleware на каждый
 запрос. Сервисы публикуют события, ничего не зная про request.
@@ -20,7 +24,7 @@ import logging
 import uuid
 from contextvars import ContextVar
 from datetime import datetime, timezone
-from typing import Iterable, Literal
+from typing import Any, Iterable, Literal
 
 from app.realtime.bus import get_bus
 
@@ -104,3 +108,45 @@ def publish_candidate_changed(
         get_bus().publish(event)
     except Exception:
         logger.exception("publish_candidate_changed failed (suppressed)")
+
+
+# === Чат =====================================================================
+# В отличие от vacancy/candidate, чат-события приватные: их видят только
+# участники конкретного диалога. Audience — список user_id (строк) — кладётся
+# в само событие, фильтрация на стороне `_pump_events`.
+ChatEventType = Literal[
+    "chat.message_created",
+    "chat.message_updated",
+    "chat.message_deleted",
+    "chat.conversation_changed",
+    "chat.read",
+    "chat.reaction_changed",
+]
+
+
+def publish_chat_event(
+    event_type: ChatEventType,
+    *,
+    audience: Iterable[uuid.UUID | str],
+    payload: dict[str, Any] | None = None,
+    actor_id: uuid.UUID | None = None,
+) -> None:
+    """Опубликовать чат-событие с приватной аудиторией.
+
+    `audience` — список user_id, которым событие предназначено (обычно члены
+    диалога). `payload` — произвольная JSON-safe нагрузка (см. §2.4 плана).
+    Безопасно для вызова из любого места — не бросает исключений.
+    """
+    try:
+        audience_list = [str(u) for u in audience]
+        event: dict[str, Any] = {
+            "type": event_type,
+            "audience": audience_list,
+            "actorId": _safe_uuid(actor_id),
+            "clientId": current_client_id_var.get(""),
+            "ts": _now_iso(),
+            **(payload or {}),
+        }
+        get_bus().publish(event)
+    except Exception:
+        logger.exception("publish_chat_event failed (suppressed)")

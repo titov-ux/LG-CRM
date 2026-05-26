@@ -112,11 +112,14 @@ async def list_files(
 )
 async def get_download_url(
     file_id: uuid.UUID,
-    _: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     s3: S3Adapter = Depends(_s3_dep),
 ) -> DownloadResponse:
     file = await service.get_file(db, file_id)
+    # Для вложений чата проверяем членство в conversation; для остальных
+    # entity-типов прав-логика прежняя («любой авторизованный»).
+    await service.ensure_can_read_file(db, user, file)
     url = await service.download_url(s3, file)
     return DownloadResponse(url=url, expires_in=300)
 

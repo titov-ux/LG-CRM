@@ -25,6 +25,9 @@ class FileEntityType(str, enum.Enum):
     vacancy = "vacancy"
     client = "client"
     contact = "contact"
+    # Добавлено миграцией 0015_chat_threads_attachments (Этап 4 чата) —
+    # вложения в сообщения чата; entity_id ссылается на chat_messages.id.
+    chat_message = "chat_message"
 
 
 class ScanStatus(str, enum.Enum):

@@ -34,6 +34,10 @@ tags:
   - name: candidates
   - name: matching
   - name: comments
+  - name: chat
+    description: |
+      Внутренний чат сотрудников: DM (личные) и группы. Сообщения, история,
+      keyset-пагинация. Этап 1 MVP без реакций, тредов, поиска.
   - name: notifications
   - name: audit
   - name: analytics
@@ -1032,6 +1036,348 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  # ─────────────── CHAT ───────────────
+  /chat/conversations:
+    get:
+      tags: [chat]
+      summary: Список моих диалогов (DM/group)
+      parameters:
+        - in: query
+          name: includeArchived
+          description: Если true — отдаёт также архивированные мной диалоги (myHiddenAt != null).
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Сортировка по lastMessageAt DESC NULLS LAST.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ChatConversation' }
+  /chat/conversations/dm:
+    post:
+      tags: [chat]
+      summary: Открыть или создать DM с пользователем (идемпотентно)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateDmRequest' }
+      responses:
+        '201':
+          description: ChatConversation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatConversation' }
+        '400':
+          description: Себе писать нельзя (code=self_dm)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /chat/conversations/{id}:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    get:
+      tags: [chat]
+      summary: Карточка диалога (только для участников)
+      responses:
+        '200':
+          description: ChatConversation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatConversation' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [chat]
+      summary: Переименовать групповой чат (owner)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RenameChatGroupRequest' }
+      responses:
+        '200':
+          description: ChatConversation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatConversation' }
+        '400':
+          description: Не группа (code=not_a_group) / пустое название
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /chat/conversations/{id}/messages:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    get:
+      tags: [chat]
+      summary: История сообщений (keyset, листаем вверх)
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - in: query
+          name: before
+          description: Курсор — created_at сообщения, от которого продолжаем листать вверх.
+          schema: { type: string, format: date-time }
+        - in: query
+          name: threadRootId
+          description: |
+            Если задан — возвращает корень треда + все его ответы. Если не
+            задан — возвращает только корневые сообщения (parent_message_id IS NULL).
+          schema: { $ref: '#/components/schemas/UUID' }
+      responses:
+        '200':
+          description: Страница сообщений (старые → новые)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatMessagesPage' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [chat]
+      summary: Отправить сообщение в диалог
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateChatMessageRequest' }
+      responses:
+        '201':
+          description: ChatMessage
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatMessage' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /chat/conversations/{id}/messages/{messageId}:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+      - in: path
+        name: messageId
+        required: true
+        schema: { $ref: '#/components/schemas/UUID' }
+    patch:
+      tags: [chat]
+      summary: Редактировать своё сообщение (метка edited_at)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateChatMessageRequest' }
+      responses:
+        '200':
+          description: ChatMessage
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatMessage' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Удалённое сообщение редактировать нельзя (code=deleted)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+    delete:
+      tags: [chat]
+      summary: Soft-delete своего сообщения (admin может чужие)
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /chat/conversations/{id}/read:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [chat]
+      summary: Отметить прочитанным до сообщения X
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MarkChatReadRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /chat/conversations/group:
+    post:
+      tags: [chat]
+      summary: Создать групповой чат
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateChatGroupRequest' }
+      responses:
+        '201':
+          description: ChatConversation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatConversation' }
+        '400':
+          description: Невалидные данные (code=title_required / members_required / members_limit)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '404':
+          description: Часть участников не найдена (code=users_not_found)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+  /chat/conversations/{id}/members:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [chat]
+      summary: Добавить участников в группу (owner)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AddChatMembersRequest' }
+      responses:
+        '200':
+          description: ChatConversation (обновлённый состав)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatConversation' }
+        '400':
+          description: Лимит участников / не группа
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /chat/conversations/{id}/members/{userId}:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+      - in: path
+        name: userId
+        required: true
+        schema: { $ref: '#/components/schemas/UUID' }
+    delete:
+      tags: [chat]
+      summary: Убрать участника (owner; сам себя — любой)
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /chat/conversations/{id}/leave:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [chat]
+      summary: Выйти из группы (синоним DELETE /members/{me})
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /chat/conversations/{id}/mute:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [chat]
+      summary: Mute/unmute диалога (until=null → снять)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChatMuteRequest' }
+      responses:
+        '200':
+          description: ChatConversation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatConversation' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /chat/conversations/{id}/archive:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [chat]
+      summary: Скрыть диалог из моего списка
+      responses:
+        '200':
+          description: ChatConversation (myHiddenAt установлен)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatConversation' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /chat/conversations/{id}/unarchive:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [chat]
+      summary: Вернуть диалог в мой список
+      responses:
+        '200':
+          description: ChatConversation (myHiddenAt = null)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatConversation' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /chat/search:
+    get:
+      tags: [chat]
+      summary: Полнотекстовый поиск по доступным сообщениям
+      description: |
+        Использует Postgres FTS с конфигом `russian` (словоформы:
+        «тестирую/тестировал/тестирование» матчатся по «тест»). Поиск идёт
+        только по сообщениям тех диалогов, где запрашивающий — участник.
+        Удалённые сообщения скрыты.
+      parameters:
+        - in: query
+          name: q
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 512 }
+        - in: query
+          name: conversationId
+          description: Если задан — поиск ограничен этим диалогом.
+          schema: { $ref: '#/components/schemas/UUID' }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        '200':
+          description: Найденные сообщения с HTML-сниппетами.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatSearchResponse' }
+  /chat/conversations/{id}/messages/{messageId}/reactions/toggle:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+      - in: path
+        name: messageId
+        required: true
+        schema: { $ref: '#/components/schemas/UUID' }
+    post:
+      tags: [chat]
+      summary: Поставить / снять эмодзи-реакцию на сообщение
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ToggleChatReactionRequest' }
+      responses:
+        '200':
+          description: ChatMessage с обновлённой группой реакций
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatMessage' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Удалённое сообщение не реагируется (code=deleted)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
   # ─────────────── NOTIFICATIONS ───────────────
   /notifications:
     get:
@@ -1204,6 +1550,16 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ClientPerformanceResponse' }
+  /analytics/chat:
+    get:
+      tags: [analytics]
+      summary: Метрики чата (Этап 6 чата)
+      responses:
+        '200':
+          description: ChatStats
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatStats' }
 
   # ─────────────── FILES ───────────────
   /files/presign:
@@ -2265,6 +2621,203 @@ components:
         mentions:
           type: array
           items: { $ref: '#/components/schemas/UUID' }
+
+    # ─── Chat ───
+    ChatConversationKind:
+      type: string
+      enum: [dm, group]
+    ChatConversation:
+      type: object
+      required: [id, kind, createdAt, memberIds]
+      properties:
+        id:             { $ref: '#/components/schemas/UUID' }
+        kind:           { $ref: '#/components/schemas/ChatConversationKind' }
+        title:          { type: string, nullable: true }
+        createdBy:
+          allOf: [{ $ref: '#/components/schemas/UUID' }]
+          nullable: true
+        createdAt:      { type: string, format: date-time }
+        lastMessageAt:  { type: string, format: date-time, nullable: true }
+        memberIds:
+          type: array
+          items: { $ref: '#/components/schemas/UUID' }
+        # Read-state именно текущего пользователя — у других в DTO не отдаётся.
+        myLastReadMessageId:
+          allOf: [{ $ref: '#/components/schemas/UUID' }]
+          nullable: true
+        myLastReadAt:
+          type: string
+          format: date-time
+          nullable: true
+        # Этап 6: персональные mute/archive текущего юзера.
+        # `myMutedUntil > now()` — уведомления (Notification) приглушены, но
+        # realtime-доставка сообщений работает.
+        # `myHiddenAt != null` — диалог скрыт из моего списка (архив).
+        myMutedUntil:
+          type: string
+          format: date-time
+          nullable: true
+        myHiddenAt:
+          type: string
+          format: date-time
+          nullable: true
+    CreateDmRequest:
+      type: object
+      required: [peerUserId]
+      properties:
+        peerUserId: { $ref: '#/components/schemas/UUID' }
+    ChatReactionGroup:
+      type: object
+      required: [emoji, count, userIds, mineReacted]
+      properties:
+        emoji:        { type: string }
+        count:        { type: integer, minimum: 1 }
+        userIds:
+          type: array
+          items: { $ref: '#/components/schemas/UUID' }
+        mineReacted:  { type: boolean }
+    ChatMessage:
+      type: object
+      required: [id, conversationId, text, mentions, reactions, attachments, replyCount, createdAt]
+      properties:
+        id:             { $ref: '#/components/schemas/UUID' }
+        conversationId: { $ref: '#/components/schemas/UUID' }
+        authorUserId:
+          allOf: [{ $ref: '#/components/schemas/UUID' }]
+          nullable: true
+        # NULL — корневое сообщение основной ленты; задано — ответ в треде,
+        # ссылка на корень (треды глубиной 1, см. §6 плана).
+        parentMessageId:
+          allOf: [{ $ref: '#/components/schemas/UUID' }]
+          nullable: true
+        # Для удалённых сообщений text='', mentions=[], reactions=[],
+        # attachments=[] — фронт сам подменит на плейсхолдер «Сообщение
+        # удалено». replyCount отдаётся всегда (видимые ответы у удалённого
+        # корня).
+        text:           { type: string }
+        mentions:
+          type: array
+          description: UUID юзеров, упомянутых через токен `<@uuid>` в тексте.
+          items: { $ref: '#/components/schemas/UUID' }
+        reactions:
+          type: array
+          description: Эмодзи-реакции, сгруппированные по emoji.
+          items: { $ref: '#/components/schemas/ChatReactionGroup' }
+        attachments:
+          type: array
+          description: Файлы-вложения, прикреплённые к сообщению.
+          items: { $ref: '#/components/schemas/FileResponse' }
+        replyCount:
+          type: integer
+          minimum: 0
+          description: Число ответов в треде (только для корневых сообщений).
+        editedAt:       { type: string, format: date-time, nullable: true }
+        deletedAt:      { type: string, format: date-time, nullable: true }
+        createdAt:      { type: string, format: date-time }
+    CreateChatMessageRequest:
+      type: object
+      required: [text]
+      properties:
+        text: { type: string, minLength: 1, maxLength: 10000 }
+        # Если задано — это ответ в тред. Корневое сообщение того же диалога.
+        parentMessageId:
+          allOf: [{ $ref: '#/components/schemas/UUID' }]
+          nullable: true
+        # ID файлов, уже подтверждённых через /files/confirm с
+        # entity_type='chat_message'. Сервис пересвяжет их к id сообщения.
+        fileIds:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/UUID' }
+    UpdateChatMessageRequest:
+      type: object
+      required: [text]
+      properties:
+        text: { type: string, minLength: 1, maxLength: 10000 }
+    MarkChatReadRequest:
+      type: object
+      required: [lastReadMessageId]
+      properties:
+        lastReadMessageId: { $ref: '#/components/schemas/UUID' }
+    CreateChatGroupRequest:
+      type: object
+      required: [title, memberIds]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 255 }
+        memberIds:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items: { $ref: '#/components/schemas/UUID' }
+    RenameChatGroupRequest:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 255 }
+    AddChatMembersRequest:
+      type: object
+      required: [userIds]
+      properties:
+        userIds:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items: { $ref: '#/components/schemas/UUID' }
+    ToggleChatReactionRequest:
+      type: object
+      required: [emoji]
+      properties:
+        emoji: { type: string, minLength: 1, maxLength: 64 }
+    ChatMuteRequest:
+      type: object
+      properties:
+        until:
+          type: string
+          format: date-time
+          nullable: true
+          description: Время, до которого глушим уведомления. `null` снимает mute.
+    ChatStats:
+      type: object
+      required: [messagesToday, messages7d, activeUsers7d, dmCount, groupCount, avgGroupSize]
+      properties:
+        messagesToday: { type: integer, minimum: 0 }
+        messages7d:    { type: integer, minimum: 0 }
+        activeUsers7d: { type: integer, minimum: 0 }
+        dmCount:       { type: integer, minimum: 0 }
+        groupCount:    { type: integer, minimum: 0 }
+        avgGroupSize:  { type: number, format: float, minimum: 0 }
+    ChatSearchHit:
+      type: object
+      required: [conversationId, message, snippet, rank]
+      properties:
+        conversationId: { $ref: '#/components/schemas/UUID' }
+        message:        { $ref: '#/components/schemas/ChatMessage' }
+        # HTML-фрагмент с <mark>...</mark> вокруг совпадений. Безопасно
+        # рендерится через dangerouslySetInnerHTML — ts_headline экранирует
+        # всё, кроме своих собственных тегов.
+        snippet:        { type: string }
+        rank:           { type: number, format: float }
+    ChatSearchResponse:
+      type: object
+      required: [query, items]
+      properties:
+        query: { type: string }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ChatSearchHit' }
+    ChatMessagesPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ChatMessage' }
+        # ISO-время самого старого сообщения в страницe — передавайте обратно
+        # как `?before=` для следующей страницы. null = больше нет.
+        nextCursor:
+          type: string
+          format: date-time
+          nullable: true
 
     # ─── Notifications ───
     Notification:

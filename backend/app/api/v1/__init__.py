@@ -6,6 +6,7 @@ from app.api.v1.endpoints import (
     audit,
     auth,
     candidates,
+    chat,
     clients,
     comments,
     contacts,
@@ -34,4 +35,5 @@ api_router.include_router(audit.router)
 api_router.include_router(audit.activity_router)
 api_router.include_router(analytics.router)
 api_router.include_router(permissions.router)
+api_router.include_router(chat.router)
 api_router.include_router(realtime.router)

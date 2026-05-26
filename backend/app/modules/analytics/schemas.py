@@ -219,3 +219,20 @@ class ClientMetric(CamelModel):
 class ClientPerformanceResponse(CamelModel):
     items: list[ClientMetric]
     period: PeriodWindow
+
+
+# === Chat metrics (Этап 6) =================================================
+
+
+class ChatStats(CamelModel):
+    """Простые метрики чата — для отображения в /analytics.
+
+    Считаются на лету без агрегирующей таблицы (объёмы маленькие).
+    """
+
+    messages_today: int
+    messages_7d: int
+    active_users_7d: int
+    dm_count: int
+    group_count: int
+    avg_group_size: float

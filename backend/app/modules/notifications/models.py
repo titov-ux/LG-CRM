@@ -34,6 +34,9 @@ class NotificationEntityType(str, enum.Enum):
     candidate = "candidate"
     client = "client"
     contact = "contact"
+    # Добавлено миграцией 0013_chat_read (Этап 2 чата) — для @-упоминаний
+    # в сообщениях; entity_id ссылается на chat_messages.id.
+    chat_message = "chat_message"
 
 
 def _enum_values(e):

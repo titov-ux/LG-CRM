@@ -369,6 +369,21 @@ async def post_message(
     # в треде не должны «выталкивать» диалог наверх.
     if parent_message_id is None:
         conv.last_message_at = datetime.now(timezone.utc)
+
+    # Своё же сообщение по определению «прочитано» — фиксируем read-state
+    # автора сразу, иначе у него самого зажжётся unread-точка пока не
+    # сработает auto-mark-read во фронте. Не уменьшаем значение (вдруг
+    # автор уже прочитал ещё более новое — теоретически невозможно, но
+    # симметрично с `mark_read`).
+    author_member = await db.get(
+        ChatMember, (conversation_id, current_user.id)
+    )
+    if author_member is not None and (
+        author_member.last_read_at is None
+        or msg.created_at > author_member.last_read_at
+    ):
+        author_member.last_read_message_id = msg.id
+        author_member.last_read_at = msg.created_at
         # Slack-конвенция: новое сообщение возвращает диалог из архива у
         # всех получателей. Себе тоже сбрасываем — если я был в архиве и
         # сам же пишу, диалог разумно показать снова.

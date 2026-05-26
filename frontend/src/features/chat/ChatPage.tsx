@@ -24,7 +24,10 @@ import {
   Plus,
   Search,
   Users,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
+import { useChatSoundsEnabled } from './sound';
 import { useChatRealtime } from './useChatRealtime';
 import {
   useArchiveConversation,
@@ -67,6 +70,7 @@ export function ChatPage() {
   const [showArchived, setShowArchived] = useState(false);
 
   const { data: conversations = [] } = useConversations(showArchived);
+  const [soundsOn, setSoundsOn] = useChatSoundsEnabled();
   const { data: usersData = [] } = useUsers();
   const userMap = useMemo(() => {
     const m = new Map<UUID, User>();
@@ -109,6 +113,21 @@ export function ChatPage() {
               className="h-8 pl-8 text-[13px]"
             />
           </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0"
+            onClick={() => setSoundsOn(!soundsOn)}
+            title={
+              soundsOn ? 'Выключить звуки' : 'Включить звуки уведомлений'
+            }
+          >
+            {soundsOn ? (
+              <Volume2 className="h-4 w-4" />
+            ) : (
+              <VolumeX className="h-4 w-4 text-muted-foreground" />
+            )}
+          </Button>
           <Button
             variant="ghost"
             size="icon"

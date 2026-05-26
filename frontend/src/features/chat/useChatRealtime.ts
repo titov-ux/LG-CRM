@@ -19,12 +19,17 @@
  */
 import { useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { subscribeRealtime, type RealtimeEvent } from '@/lib/realtime';
+import {
+  subscribeRealtime,
+  type ChatRealtimeEvent,
+  type RealtimeEvent,
+} from '@/lib/realtime';
 import { useAuthStore } from '@/stores/auth';
 import { notificationKeys } from '@/features/notifications/hooks';
 import { chatKeys } from './hooks';
 import { useChatStore } from './store';
-import type { UUID } from '@/api/types';
+import { playMentionSound, playMessageSound } from './sound';
+import type { ChatConversation, UUID } from '@/api/types';
 
 export function useChatRealtime(): void {
   const queryClient = useQueryClient();
@@ -33,8 +38,11 @@ export function useChatRealtime(): void {
   const setActive = useChatStore((s) => s.setActiveConversation);
 
   useEffect(() => {
-    const unsubscribe = subscribeRealtime((event: RealtimeEvent) => {
-      if (!event.type.startsWith('chat.')) return;
+    const isChat = (e: RealtimeEvent): e is ChatRealtimeEvent =>
+      e.type.startsWith('chat.');
+    const unsubscribe = subscribeRealtime((evt: RealtimeEvent) => {
+      if (!isChat(evt)) return;
+      const event: ChatRealtimeEvent = evt;
       if (event.echo) return;
 
       // Список диалогов: lastMessageAt + read-state + состав.
@@ -82,14 +90,48 @@ export function useChatRealtime(): void {
       }
 
       // Если меня упомянули — оживим nav-badge уведомлений.
+      const notified = event.payload['notifiedUserIds'];
+      const iWasMentioned =
+        !!meId && Array.isArray(notified) && notified.includes(meId);
       if (
         meId &&
         (event.type === 'chat.message_created' ||
           event.type === 'chat.message_updated')
       ) {
-        const notified = event.payload['notifiedUserIds'];
-        if (Array.isArray(notified) && notified.includes(meId)) {
+        if (iWasMentioned) {
           queryClient.invalidateQueries({ queryKey: notificationKeys.all });
+        }
+      }
+
+      // Звуковое уведомление на новое сообщение. Slack-конвенция:
+      //  • не звуким на своё же действие (echo);
+      //  • не звуким на правки и удаления — только новое;
+      //  • не звуким, если диалог открыт сейчас и вкладка в фокусе;
+      //  • не звуким, если диалог mute (myMutedUntil > now()).
+      if (event.type === 'chat.message_created' && !event.echo) {
+        const convId = event.conversationId;
+        const isActiveAndFocused =
+          !!convId &&
+          convId === activeId &&
+          typeof document !== 'undefined' &&
+          document.visibilityState === 'visible' &&
+          document.hasFocus();
+        if (!isActiveAndFocused) {
+          const conv = convId
+            ? queryClient
+                .getQueriesData<ChatConversation[]>({
+                  queryKey: chatKeys.conversations(),
+                })
+                .flatMap(([, data]) => data ?? [])
+                .find((c) => c.id === convId)
+            : undefined;
+          const muted =
+            !!conv?.myMutedUntil &&
+            +new Date(conv.myMutedUntil) > Date.now();
+          if (!muted) {
+            if (iWasMentioned) playMentionSound();
+            else playMessageSound();
+          }
         }
       }
     });

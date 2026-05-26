@@ -151,6 +151,8 @@ function readPersistedSort(): { by: SortBy; dir: SortDir } {
 export function DocumentsPage() {
   const documents = useDocumentsStore((s) => s.documents);
   const favorites = useDocumentsStore((s) => s.favorites);
+  const isLoaded = useDocumentsStore((s) => s.isLoaded);
+  const loadDocuments = useDocumentsStore((s) => s.loadDocuments);
   const addDocument = useDocumentsStore((s) => s.addDocument);
   const updateDocument = useDocumentsStore((s) => s.updateDocument);
   const deleteDocument = useDocumentsStore((s) => s.deleteDocument);
@@ -190,6 +192,11 @@ export function DocumentsPage() {
   const [deleteDoc, setDeleteDoc] = useState<DocumentItem | null>(null);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
+
+  useEffect(() => {
+    if (isLoaded) return;
+    void loadDocuments();
+  }, [isLoaded, loadDocuments]);
 
   // persist UI prefs
   useEffect(() => {
@@ -338,8 +345,8 @@ export function DocumentsPage() {
   const handleCreateFolder = () => {
     handleCreate({ kind: 'folder', emoji: '📁', title: 'Новая папка' });
   };
-  const handleCreateNote = () => {
-    const created = addDocument({
+  const handleCreateNote = async () => {
+    const created = await addDocument({
       title: 'Без названия',
       emoji: '📝',
       kind: 'note',
@@ -378,12 +385,12 @@ export function DocumentsPage() {
       toast.error('Не удалось скопировать ссылку');
     }
   };
-  const handleDelete = (d: DocumentItem) => {
-    deleteDocument(d.id);
+  const handleDelete = async (d: DocumentItem) => {
+    await deleteDocument(d.id);
     toast.success(`«${d.title}» удалён`);
   };
-  const handleDuplicate = (d: DocumentItem) => {
-    const copy = duplicateDocument(d.id);
+  const handleDuplicate = async (d: DocumentItem) => {
+    const copy = await duplicateDocument(d.id);
     if (copy) toast.success(`Создана копия: «${copy.title}»`);
   };
   const openDoc = (d: DocumentItem) => {
@@ -411,14 +418,14 @@ export function DocumentsPage() {
     if (selected.size === items.length) setSelected(new Set());
     else setSelected(new Set(items.map((d) => d.id)));
   };
-  const handleBulkDelete = () => {
-    bulkDelete(Array.from(selected));
+  const handleBulkDelete = async () => {
+    await bulkDelete(Array.from(selected));
     toast.success(`Удалено: ${selected.size}`);
     setSelected(new Set());
     setBulkDeleteOpen(false);
   };
-  const handleBulkMove = (target: DocumentSectionId) => {
-    bulkMove(Array.from(selected), target);
+  const handleBulkMove = async (target: DocumentSectionId) => {
+    await bulkMove(Array.from(selected), target);
     const sName = SECTIONS.find((s) => s.id === target)?.title ?? target;
     toast.success(`Перемещено в «${sName}»: ${selected.size}`);
     setSelected(new Set());
@@ -452,26 +459,27 @@ export function DocumentsPage() {
       return null;
     }
   };
-  const handleDropOnSection = (e: React.DragEvent, section: DocumentSectionId) => {
+  const handleDropOnSection = async (e: React.DragEvent, section: DocumentSectionId) => {
     e.preventDefault();
     const ids = acceptDrop(e);
     setDragOverTarget(null);
     if (!ids) return;
-    ids.forEach((id) => moveDocument(id, section, undefined));
+    await Promise.all(ids.map((id) => moveDocument(id, section, undefined)));
     const sName = SECTIONS.find((s) => s.id === section)?.title ?? section;
     toast.success(`Перемещено в «${sName}»: ${ids.length}`);
     setSelected(new Set());
   };
-  const handleDropOnFolder = (e: React.DragEvent, folder: DocumentItem) => {
+  const handleDropOnFolder = async (e: React.DragEvent, folder: DocumentItem) => {
     e.preventDefault();
     e.stopPropagation();
     const ids = acceptDrop(e);
     setDragOverTarget(null);
     if (!ids) return;
-    ids.forEach((id) => {
-      if (id === folder.id) return; // нельзя в саму себя
-      moveDocument(id, folder.section, folder.id);
-    });
+    await Promise.all(
+      ids
+        .filter((id) => id !== folder.id)
+        .map((id) => moveDocument(id, folder.section, folder.id)),
+    );
     toast.success(`Перемещено в «${folder.title}»: ${ids.length}`);
     setSelected(new Set());
   };
@@ -497,11 +505,11 @@ export function DocumentsPage() {
   };
 
   // — приём результата загрузки —
-  const handleUploadSubmit = (results: UploadResult[]) => {
+  const handleUploadSubmit = async (results: UploadResult[]) => {
     let created = 0;
     let switched = false;
     for (const r of results) {
-      const doc = addDocument({
+      const doc = await addDocument({
         title: r.title,
         emoji: r.emoji,
         kind: r.kind,
@@ -738,7 +746,7 @@ export function DocumentsPage() {
         type="button"
         onClick={(e) => {
           e.stopPropagation();
-          toggleFavorite(d.id);
+          void toggleFavorite(d.id);
         }}
         className={cn(
           'flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground',
@@ -1179,7 +1187,7 @@ export function DocumentsPage() {
 
                     <EmojiPicker
                       value={d.emoji}
-                      onSelect={(e) => setEmojiInStore(d.id, e)}
+                      onSelect={(e) => void setEmojiInStore(d.id, e)}
                     >
                       <button
                         type="button"
@@ -1366,12 +1374,14 @@ export function DocumentsPage() {
         prefill={formPrefill}
         onSubmit={(values) => {
           if (formEditDoc) {
-            updateDocument(formEditDoc.id, values);
-            toast.success(`«${values.title}» обновлён`);
+            void updateDocument(formEditDoc.id, values).then(() => {
+              toast.success(`«${values.title}» обновлён`);
+            });
           } else {
-            const created = addDocument({ ...values, parentId: formPrefill?.parentId });
-            toast.success(`«${created.title}» создан`);
-            if (created.section !== scope) setScope(created.section);
+            void addDocument({ ...values, parentId: formPrefill?.parentId }).then((created) => {
+              toast.success(`«${created.title}» создан`);
+              if (created.section !== scope) setScope(created.section);
+            });
           }
         }}
       />
@@ -1394,9 +1404,10 @@ export function DocumentsPage() {
         documentTitle={moveDoc?.title ?? ''}
         onSubmit={(target) => {
           if (moveDoc) {
-            moveDocument(moveDoc.id, target, undefined);
-            const targetName = SECTIONS.find((s) => s.id === target)?.title ?? target;
-            toast.success(`«${moveDoc.title}» → ${targetName}`);
+            void moveDocument(moveDoc.id, target, undefined).then(() => {
+              const targetName = SECTIONS.find((s) => s.id === target)?.title ?? target;
+              toast.success(`«${moveDoc.title}» → ${targetName}`);
+            });
           }
         }}
       />

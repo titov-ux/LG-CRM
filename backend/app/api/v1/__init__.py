@@ -10,6 +10,7 @@ from app.api.v1.endpoints import (
     clients,
     comments,
     contacts,
+    documents,
     files,
     matching,
     notifications,
@@ -24,6 +25,7 @@ api_router.include_router(auth.router)
 api_router.include_router(users.router)
 api_router.include_router(clients.router)
 api_router.include_router(contacts.router)
+api_router.include_router(documents.router)
 api_router.include_router(vacancies.router)
 api_router.include_router(candidates.router)
 api_router.include_router(matching.matches_router)

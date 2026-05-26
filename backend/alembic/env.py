@@ -25,6 +25,12 @@ from app.modules.comments.models import Comment  # noqa: F401
 from app.modules.audit.models import ActivityEntry, AuditEntry  # noqa: F401
 from app.modules.files.models import File  # noqa: F401
 from app.modules.notifications.models import Notification  # noqa: F401
+from app.modules.documents.models import (  # noqa: F401
+    Document,
+    DocumentComment,
+    DocumentFavorite,
+    DocumentVersion,
+)
 from app.modules.chat.models import (  # noqa: F401
     ChatConversation,
     ChatMember,

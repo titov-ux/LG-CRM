@@ -76,6 +76,7 @@ export function PreviewDialog({
   const addVersion = useDocumentsStore((s) => s.addVersion);
   const addComment = useDocumentsStore((s) => s.addComment);
   const attachFile = useDocumentsStore((s) => s.attachFile);
+  const loadDocumentExtras = useDocumentsStore((s) => s.loadDocumentExtras);
   const documents = useDocumentsStore((s) => s.documents);
 
   const [tab, setTab] = useState('overview');
@@ -89,6 +90,11 @@ export function PreviewDialog({
   const fresh = document ? documents.find((d) => d.id === document.id) ?? document : null;
   const section = fresh ? SECTIONS.find((s) => s.id === fresh.section) : undefined;
   const previewUrl = useMemo(() => (fresh ? resolvePreviewUrl(fresh) : undefined), [fresh]);
+
+  useEffect(() => {
+    if (!open || !fresh) return;
+    void loadDocumentExtras(fresh.id);
+  }, [open, fresh?.id, loadDocumentExtras]);
 
   // подгружаем текстовые форматы
   useEffect(() => {
@@ -111,9 +117,9 @@ export function PreviewDialog({
 
   if (!document || !fresh) return null;
 
-  const handleAddVersion = () => {
+  const handleAddVersion = async () => {
     if (!versionLabel.trim()) return;
-    addVersion(fresh.id, {
+    await addVersion(fresh.id, {
       label: versionLabel.trim(),
       author: 'Я',
       note: versionNote.trim() || undefined,
@@ -122,9 +128,9 @@ export function PreviewDialog({
     setVersionNote('');
   };
 
-  const handleAddComment = () => {
+  const handleAddComment = async () => {
     if (!commentText.trim()) return;
-    addComment(fresh.id, { author: 'Я', text: commentText.trim() });
+    await addComment(fresh.id, { author: 'Я', text: commentText.trim() });
     setCommentText('');
   };
 

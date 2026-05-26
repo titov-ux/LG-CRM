@@ -48,7 +48,7 @@ export function NoteDialog({ open, onOpenChange, document }: Props) {
     if (debounceRef.current) window.clearTimeout(debounceRef.current);
     debounceRef.current = window.setTimeout(() => {
       const trimmed = title.trim() || 'Без названия';
-      updateDocument(fresh.id, { title: trimmed, body });
+      void updateDocument(fresh.id, { title: trimmed, body });
       setSavedAt(Date.now());
       setDirty(false);
     }, 500);
@@ -62,7 +62,7 @@ export function NoteDialog({ open, onOpenChange, document }: Props) {
   useEffect(() => {
     if (open || !fresh || !dirty) return;
     const trimmed = title.trim() || 'Без названия';
-    updateDocument(fresh.id, { title: trimmed, body });
+    void updateDocument(fresh.id, { title: trimmed, body });
     setDirty(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -88,7 +88,7 @@ export function NoteDialog({ open, onOpenChange, document }: Props) {
 
         {/* Header */}
         <div className="flex items-center gap-2 border-b px-4 py-2">
-          <EmojiPicker value={fresh.emoji} onSelect={(e) => setEmojiInStore(fresh.id, e)}>
+          <EmojiPicker value={fresh.emoji} onSelect={(e) => void setEmojiInStore(fresh.id, e)}>
             <button
               type="button"
               className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-2xl leading-none transition-colors hover:bg-muted"

@@ -55,8 +55,9 @@ class Settings(BaseSettings):
 
     # ── Frontend / приглашения ──────────────────────────────
     # Базовый URL фронта — используется в письме-приглашении (`{app_base_url}/invite/{token}`).
-    # На staging = https://staging.lachevsky.ru, на dev = http://localhost:5173.
-    # (Прод lachevsky.ru ещё не поднят — пока всё на staging-поддомене.)
+    # dev     = http://localhost:5173
+    # staging = https://staging.lachevsky.ru
+    # prod    = https://crm.lachevsky.ru  (НЕ голый lachevsky.ru — прод живёт на поддомене)
     app_base_url: str = "http://localhost:5173"
     # Срок жизни invite-токена в днях. 7 дней — компромисс между UX и безопасностью.
     invite_ttl_days: int = 7

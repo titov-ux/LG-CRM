@@ -15,6 +15,7 @@ import type {
   UUID,
 } from '@/api/types';
 import { QUERY_DEFAULTS } from '@/lib/constants';
+import { useAuthStore } from '@/stores/auth';
 
 export const chatKeys = {
   all: ['chat'] as const,
@@ -85,6 +86,7 @@ interface PostMessageArgs {
 
 export function usePostMessage(conversationId: UUID | null) {
   const queryClient = useQueryClient();
+  const myUserId = useAuthStore((s) => s.user?.id ?? null);
   return useMutation({
     mutationFn: (args: PostMessageArgs | string) => {
       if (!conversationId) throw new Error('no conversation');
@@ -92,7 +94,7 @@ export function usePostMessage(conversationId: UUID | null) {
         typeof args === 'string' ? { text: args } : args;
       return chatApi.postMessage(conversationId, payload);
     },
-    onSuccess: (msg: ChatMessage) => {
+    onSuccess: async (msg: ChatMessage) => {
       // Инвалидируем историю — react-query сам refetch-нет первую страницу.
       if (msg.parentMessageId) {
         // Ответ в тред: обновляем тред + лента основная (replyCount++).
@@ -107,6 +109,17 @@ export function usePostMessage(conversationId: UUID | null) {
           queryKey: chatKeys.messages(msg.conversationId),
         });
         // Свежий lastMessageAt в списке диалогов.
+        queryClient.invalidateQueries({ queryKey: chatKeys.conversations() });
+      }
+
+      // Свои сообщения считаем прочитанными сразу после отправки:
+      // иначе в сайдбаре может кратко появляться "непрочитано у меня же".
+      if (myUserId && msg.authorUserId === myUserId) {
+        try {
+          await chatApi.markRead(msg.conversationId, { lastReadMessageId: msg.id });
+        } catch {
+          // Основная операция уже успешна; read-sync не должен ломать отправку.
+        }
         queryClient.invalidateQueries({ queryKey: chatKeys.conversations() });
       }
     },
@@ -341,6 +354,19 @@ export function useUnarchiveConversation() {
     mutationFn: (conversationId: UUID) => chatApi.unarchive(conversationId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: chatKeys.conversations() });
+    },
+  });
+}
+
+export function useDeleteConversation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (conversationId: UUID) => chatApi.deleteConversation(conversationId),
+    onSuccess: (_data, conversationId) => {
+      queryClient.invalidateQueries({ queryKey: chatKeys.conversations() });
+      queryClient.removeQueries({ queryKey: chatKeys.conversation(conversationId) });
+      queryClient.removeQueries({ queryKey: chatKeys.messages(conversationId) });
+      queryClient.removeQueries({ queryKey: [...chatKeys.all, 'thread', conversationId] });
     },
   });
 }

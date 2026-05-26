@@ -87,6 +87,13 @@ export function useChatRealtime(): void {
         ) {
           setActive(null);
         }
+        if (
+          kind === 'deleted' &&
+          event.conversationId &&
+          event.conversationId === activeId
+        ) {
+          setActive(null);
+        }
       }
 
       // Если меня упомянули — оживим nav-badge уведомлений.

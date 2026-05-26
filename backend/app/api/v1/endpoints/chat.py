@@ -182,6 +182,24 @@ async def get_conversation(
     return _conv_dto(conv, members, my)
 
 
+@router.delete(
+    "/conversations/{conversation_id}",
+    response_model=OkResponse,
+    summary="Удалить диалог (DM — участник, group — owner/admin)",
+)
+async def delete_conversation(
+    conversation_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> OkResponse:
+    await service.delete_conversation(
+        db,
+        current_user=user,
+        conversation_id=conversation_id,
+    )
+    return OkResponse()
+
+
 @router.post(
     "/conversations/{conversation_id}/read",
     response_model=OkResponse,

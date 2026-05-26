@@ -34,6 +34,8 @@ export type ChatRealtimeType =
   | 'chat.read'
   | 'chat.reaction_changed';
 
+export type PresenceRealtimeType = 'user.presence' | 'user.presence_snapshot';
+
 interface RealtimeEventBase {
   actorId: string | null;
   clientId: string;
@@ -58,15 +60,38 @@ export interface ChatRealtimeEvent extends RealtimeEventBase {
   payload: Record<string, unknown>;
 }
 
-export type RealtimeEvent = DomainRealtimeEvent | ChatRealtimeEvent;
+export interface PresenceRealtimeEvent extends RealtimeEventBase {
+  type: PresenceRealtimeType;
+  userId: string | null;
+  online: boolean | null;
+  onlineUserIds: string[];
+}
+
+export type RealtimeEvent =
+  | DomainRealtimeEvent
+  | ChatRealtimeEvent
+  | PresenceRealtimeEvent;
 
 type Listener = (e: RealtimeEvent) => void;
+type PresenceListener = (onlineUserIds: Set<string>) => void;
 
 const listeners = new Set<Listener>();
+const presenceListeners = new Set<PresenceListener>();
+let onlineUserIds = new Set<string>();
 
 export function subscribeRealtime(listener: Listener): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
+}
+
+export function getOnlineUserIdsSnapshot(): Set<string> {
+  return new Set(onlineUserIds);
+}
+
+export function subscribeOnlineUsers(listener: PresenceListener): () => void {
+  presenceListeners.add(listener);
+  listener(getOnlineUserIdsSnapshot());
+  return () => presenceListeners.delete(listener);
 }
 
 function emit(event: RealtimeEvent): void {
@@ -79,6 +104,30 @@ function emit(event: RealtimeEvent): void {
       console.warn('realtime listener threw', err);
     }
   }
+}
+
+function emitPresence(): void {
+  const snapshot = getOnlineUserIdsSnapshot();
+  for (const fn of presenceListeners) {
+    try {
+      fn(snapshot);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('presence listener threw', err);
+    }
+  }
+}
+
+function setPresenceSnapshot(ids: string[]): void {
+  onlineUserIds = new Set(ids);
+  emitPresence();
+}
+
+function applyPresenceChange(userId: string, online: boolean): void {
+  if (!userId) return;
+  if (online) onlineUserIds.add(userId);
+  else onlineUserIds.delete(userId);
+  emitPresence();
 }
 
 // --- connection ------------------------------------------------------------
@@ -144,9 +193,6 @@ function openSocket(): void {
     if (!data || typeof data !== 'object') return;
     const obj = data as Record<string, unknown>;
     const type = obj.type;
-
-    if (type === 'hello' || type === 'ping') return;
-
     const ownClientId = getClientId();
     const incomingClientId = typeof obj.clientId === 'string' ? obj.clientId : '';
     const base = {
@@ -155,6 +201,22 @@ function openSocket(): void {
       ts: typeof obj.ts === 'string' ? obj.ts : new Date().toISOString(),
       echo: !!ownClientId && incomingClientId === ownClientId,
     };
+
+    if (type === 'hello') {
+      const ids = Array.isArray(obj.onlineUserIds)
+        ? obj.onlineUserIds.filter((v): v is string => typeof v === 'string')
+        : [];
+      setPresenceSnapshot(ids);
+      emit({
+        ...base,
+        type: 'user.presence_snapshot',
+        userId: null,
+        online: null,
+        onlineUserIds: ids,
+      });
+      return;
+    }
+    if (type === 'ping') return;
 
     if (type === 'vacancy.changed' || type === 'candidate.changed') {
       emit({
@@ -176,6 +238,23 @@ function openSocket(): void {
           typeof obj.conversationId === 'string' ? obj.conversationId : null,
         messageId: typeof obj.messageId === 'string' ? obj.messageId : null,
         payload: obj as Record<string, unknown>,
+      });
+      return;
+    }
+
+    if (type === 'user.presence') {
+      const userId = typeof obj.userId === 'string' ? obj.userId : null;
+      const online =
+        typeof obj.online === 'boolean' ? obj.online : null;
+      if (userId && online !== null) {
+        applyPresenceChange(userId, online);
+      }
+      emit({
+        ...base,
+        type: 'user.presence',
+        userId,
+        online,
+        onlineUserIds: [],
       });
       return;
     }
@@ -224,4 +303,5 @@ export function stopRealtime(): void {
     /* ignore */
   }
   socket = null;
+  setPresenceSnapshot([]);
 }

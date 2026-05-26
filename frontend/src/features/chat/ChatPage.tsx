@@ -52,6 +52,7 @@ import { MessageItem } from './MessageItem';
 import { Composer } from './Composer';
 import { MembersSheet } from './MembersSheet';
 import { ThreadPanel } from './ThreadPanel';
+import { useOnlineUsers } from './useOnlineUsers';
 import { useUsers } from '@/features/users/hooks';
 import { useAuthStore } from '@/stores/auth';
 import { Button } from '@/components/ui/button';
@@ -71,6 +72,7 @@ export function ChatPage() {
 
   const { data: conversations = [] } = useConversations(showArchived);
   const [soundsOn, setSoundsOn] = useChatSoundsEnabled();
+  const onlineUserIds = useOnlineUsers();
   const { data: usersData = [] } = useUsers();
   const userMap = useMemo(() => {
     const m = new Map<UUID, User>();
@@ -162,6 +164,7 @@ export function ChatPage() {
                 active={c.id === activeId}
                 meId={currentUser?.id ?? null}
                 userMap={userMap}
+                onlineUserIds={onlineUserIds}
                 unread={isUnread(c)}
                 onClick={() => setActive(c.id)}
               />
@@ -187,6 +190,7 @@ export function ChatPage() {
             conversation={activeConversation}
             meId={currentUser?.id ?? null}
             userMap={userMap}
+            onlineUserIds={onlineUserIds}
           />
         ) : (
           <EmptyCenter onCreate={() => setNewOpen(true)} />
@@ -231,11 +235,37 @@ function initialsOf(
   return (peerId ? userMap.get(peerId)?.initials : null) ?? '··';
 }
 
+function peerUserIdOf(c: ChatConversation, meId: UUID | null): UUID | null {
+  if (c.kind !== 'dm') return null;
+  return c.memberIds.find((id) => id !== meId) ?? null;
+}
+
+function AvatarWithStatusDot({
+  initials,
+  online,
+}: {
+  initials: string;
+  online: boolean;
+}) {
+  return (
+    <span className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-muted text-[10.5px] font-medium text-foreground/70">
+      {initials}
+      {online && (
+        <span
+          className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border border-background bg-emerald-500"
+          aria-label="онлайн"
+        />
+      )}
+    </span>
+  );
+}
+
 function ConversationRow({
   conversation,
   active,
   meId,
   userMap,
+  onlineUserIds,
   unread,
   onClick,
 }: {
@@ -243,11 +273,14 @@ function ConversationRow({
   active: boolean;
   meId: UUID | null;
   userMap: Map<UUID, User>;
+  onlineUserIds: Set<UUID>;
   unread: boolean;
   onClick: () => void;
 }) {
   const title = titleOf(conversation, meId, userMap);
   const initials = initialsOf(conversation, meId, userMap);
+  const peerUserId = peerUserIdOf(conversation, meId);
+  const isOnline = !!peerUserId && onlineUserIds.has(peerUserId);
   const muted =
     !!conversation.myMutedUntil &&
     +new Date(conversation.myMutedUntil) > Date.now();
@@ -276,9 +309,7 @@ function ConversationRow({
         onClick={onClick}
         className="flex min-w-0 flex-1 items-center gap-2 text-left"
       >
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-muted text-[10.5px] font-medium text-foreground/70">
-          {initials}
-        </span>
+        <AvatarWithStatusDot initials={initials} online={isOnline} />
         <span
           className={cn(
             'min-w-0 flex-1 truncate text-[13px] text-foreground',
@@ -408,12 +439,17 @@ function ConversationView({
   conversation,
   meId,
   userMap,
+  onlineUserIds,
 }: {
   conversation: ChatConversation;
   meId: UUID | null;
   userMap: Map<UUID, User>;
+  onlineUserIds: Set<UUID>;
 }) {
   const title = titleOf(conversation, meId, userMap);
+  const initials = initialsOf(conversation, meId, userMap);
+  const peerUserId = peerUserIdOf(conversation, meId);
+  const isOnline = !!peerUserId && onlineUserIds.has(peerUserId);
   const subtitle =
     conversation.kind === 'group'
       ? `${conversation.memberIds.length} участников`
@@ -511,9 +547,7 @@ function ConversationView({
   return (
     <>
       <header className="flex shrink-0 items-center gap-3 border-b px-5 py-3">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted text-[11px] font-medium text-foreground/70">
-          {initialsOf(conversation, meId, userMap)}
-        </span>
+        <AvatarWithStatusDot initials={initials} online={isOnline} />
         <div className="min-w-0 flex-1">
           <div className="truncate text-[14px] font-semibold leading-tight">
             {title}
@@ -549,7 +583,12 @@ function ConversationView({
             Сообщений пока нет — напишите первое.
           </div>
         ) : (
-          <MessageList messages={messages} meId={meId} userMap={userMap} />
+          <MessageList
+            messages={messages}
+            meId={meId}
+            userMap={userMap}
+            onlineUserIds={onlineUserIds}
+          />
         )}
       </div>
 
@@ -605,10 +644,12 @@ function MessageList({
   messages,
   meId,
   userMap,
+  onlineUserIds,
 }: {
   messages: ChatMessage[];
   meId: UUID | null;
   userMap: Map<UUID, User>;
+  onlineUserIds: Set<UUID>;
 }) {
   // Группируем подряд идущие сообщения от одного автора в один «блок».
   type Block = { authorId: UUID | null; items: ChatMessage[] };
@@ -634,6 +675,7 @@ function MessageList({
           block={b}
           meId={meId}
           userMap={userMap}
+          onlineUserIds={onlineUserIds}
         />
       ))}
     </div>
@@ -644,21 +686,22 @@ function MessageBlock({
   block,
   meId,
   userMap,
+  onlineUserIds,
 }: {
   block: { authorId: UUID | null; items: ChatMessage[] };
   meId: UUID | null;
   userMap: Map<UUID, User>;
+  onlineUserIds: Set<UUID>;
 }) {
   const author = block.authorId ? userMap.get(block.authorId) : null;
   const isMe = block.authorId !== null && block.authorId === meId;
   const name = author?.fullName ?? (block.authorId ? 'Пользователь' : 'Бывший сотрудник');
   const initials = author?.initials ?? '··';
+  const isOnline = !!block.authorId && onlineUserIds.has(block.authorId);
   return (
     <div className="flex gap-3">
       <div className="shrink-0 pt-0.5">
-        <span className="flex h-7 w-7 items-center justify-center rounded-md bg-muted text-[10.5px] font-medium text-foreground/70">
-          {initials}
-        </span>
+        <AvatarWithStatusDot initials={initials} online={isOnline} />
       </div>
       <div className="min-w-0 flex-1">
         <div className="mb-0.5 flex items-baseline gap-2">

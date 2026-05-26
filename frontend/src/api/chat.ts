@@ -27,6 +27,9 @@ export const chatApi = {
   getConversation: (id: UUID) =>
     api.get(`chat/conversations/${id}`).json<ChatConversation>(),
 
+  deleteConversation: (id: UUID) =>
+    api.delete(`chat/conversations/${id}`).json<{ ok: true }>(),
+
   createDm: (payload: CreateDmRequest) =>
     api.post('chat/conversations/dm', { json: payload }).json<ChatConversation>(),
 

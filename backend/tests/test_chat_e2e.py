@@ -119,6 +119,36 @@ def test_soft_delete_blanks_text_but_keeps_id(
     assert found[0]["deletedAt"] is not None
 
 
+def test_delete_dm_removes_conversation_for_all_participants(
+    client: TestClient, alice: User, bob: User
+) -> None:
+    h_alice = auth_headers(client, alice.email)
+    h_bob = auth_headers(client, bob.email)
+    conv = _create_dm(client, h_alice, bob.id)
+
+    r = client.delete(
+        f"/api/v1/chat/conversations/{conv['id']}",
+        headers=h_alice,
+    )
+    assert r.status_code == 200, r.text
+
+    # Диалог физически удалён: у обоих участников его больше нет в списке.
+    r = client.get("/api/v1/chat/conversations", headers=h_alice)
+    assert r.status_code == 200
+    assert all(c["id"] != conv["id"] for c in r.json())
+
+    r = client.get("/api/v1/chat/conversations", headers=h_bob)
+    assert r.status_code == 200
+    assert all(c["id"] != conv["id"] for c in r.json())
+
+    # Карточка удалённого диалога не доступна.
+    r = client.get(
+        f"/api/v1/chat/conversations/{conv['id']}",
+        headers=h_alice,
+    )
+    assert r.status_code == 404
+
+
 def test_search_respects_privacy(
     client: TestClient, alice: User, bob: User, carol: User
 ) -> None:

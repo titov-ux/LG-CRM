@@ -23,6 +23,7 @@ from app.core.security import decode_token
 from app.db.session import SessionLocal
 from app.modules.users.models import User
 from app.realtime.bus import get_bus
+from app.realtime.events import publish_user_presence_event
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,33 @@ router = APIRouter(prefix="/ws", tags=["realtime"])
 # Раз в 30 секунд шлём приложение-уровневый ping, чтобы NAT/nginx-прокси
 # не порвали соединение по бездействию.
 _PING_INTERVAL_SECONDS = 30.0
+_presence_lock = asyncio.Lock()
+_online_connections: dict[str, int] = {}
+
+
+def _snapshot_online_user_ids() -> list[str]:
+    return list(_online_connections.keys())
+
+
+async def _mark_user_connected(user_id: uuid.UUID) -> tuple[list[str], bool]:
+    """Увеличить счётчик соединений user-а, вернуть (snapshot, became_online)."""
+    user_id_str = str(user_id)
+    async with _presence_lock:
+        before = _online_connections.get(user_id_str, 0)
+        _online_connections[user_id_str] = before + 1
+        return _snapshot_online_user_ids(), before == 0
+
+
+async def _mark_user_disconnected(user_id: uuid.UUID) -> bool:
+    """Уменьшить счётчик соединений user-а, вернуть became_offline."""
+    user_id_str = str(user_id)
+    async with _presence_lock:
+        before = _online_connections.get(user_id_str, 0)
+        if before <= 1:
+            _online_connections.pop(user_id_str, None)
+            return before > 0
+        _online_connections[user_id_str] = before - 1
+        return False
 
 
 async def _authenticate(token: str) -> User | None:
@@ -69,9 +97,18 @@ async def events(
     await websocket.accept()
     bus = get_bus()
     queue = await bus.subscribe()
+    online_snapshot, became_online = await _mark_user_connected(user.id)
 
     # Привет-сообщение, чтобы фронт мог отличить «подключились» от «ещё ждём».
-    await websocket.send_json({"type": "hello", "userId": str(user.id)})
+    await websocket.send_json(
+        {
+            "type": "hello",
+            "userId": str(user.id),
+            "onlineUserIds": online_snapshot,
+        }
+    )
+    if became_online:
+        publish_user_presence_event(user_id=user.id, online=True)
 
     async def _pump_events() -> None:
         # Фильтрация по audience: если в событии явно перечислена аудитория
@@ -140,6 +177,9 @@ async def events(
                 pass
     finally:
         await bus.unsubscribe(queue)
+        became_offline = await _mark_user_disconnected(user.id)
+        if became_offline:
+            publish_user_presence_event(user_id=user.id, online=False)
         try:
             await websocket.close()
         except Exception:

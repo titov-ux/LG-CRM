@@ -11,12 +11,25 @@ interface Props {
   value?: string;
   onSelect: (emoji: string) => void;
   onRemove?: () => void;
+  onOpenChange?: (open: boolean) => void;
   children: ReactNode; // триггер (обычно — клик по иконке документа)
   align?: 'start' | 'center' | 'end';
 }
 
-export function EmojiPicker({ value, onSelect, onRemove, children, align = 'start' }: Props) {
+export function EmojiPicker({
+  value,
+  onSelect,
+  onRemove,
+  onOpenChange,
+  children,
+  align = 'start',
+}: Props) {
   const [open, setOpen] = useState(false);
+  const handleOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen);
+    onOpenChange?.(nextOpen);
+  };
+
   const [query, setQuery] = useState('');
   const [activeTab, setActiveTab] = useState<string>(EMOJI_CATEGORIES[0].id);
   const recents = useDocumentsStore((s) => s.recentEmojis);
@@ -55,7 +68,7 @@ export function EmojiPicker({ value, onSelect, onRemove, children, align = 'star
   };
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>{children}</PopoverTrigger>
       <PopoverContent
         align={align}

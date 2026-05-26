@@ -633,6 +633,42 @@ async def set_archive(
     return member
 
 
+async def delete_conversation(
+    db: AsyncSession,
+    *,
+    current_user: User,
+    conversation_id: uuid.UUID,
+) -> None:
+    """Полное удаление диалога.
+
+    - DM может удалить любой участник;
+    - group — только owner (или admin системы).
+    """
+    conv = await db.get(ChatConversation, conversation_id)
+    if conv is None:
+        raise ApiError(
+            status.HTTP_404_NOT_FOUND, "not_found", "Диалог не найден"
+        )
+
+    my_member = await _ensure_member(db, conversation_id, current_user.id)
+    if conv.kind == ConversationKind.group:
+        await _ensure_owner(my_member, current_user)
+
+    audience_before = await _audience_user_ids(db, conversation_id)
+    await db.delete(conv)
+    await db.commit()
+
+    publish_chat_event(
+        "chat.conversation_changed",
+        audience=audience_before,
+        payload={
+            "conversationId": str(conversation_id),
+            "kind": "deleted",
+        },
+        actor_id=current_user.id,
+    )
+
+
 async def list_messages(
     db: AsyncSession,
     *,

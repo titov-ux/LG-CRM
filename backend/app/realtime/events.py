@@ -150,3 +150,24 @@ def publish_chat_event(
         get_bus().publish(event)
     except Exception:
         logger.exception("publish_chat_event failed (suppressed)")
+
+
+def publish_user_presence_event(*, user_id: uuid.UUID | str, online: bool) -> None:
+    """Опубликовать событие presence (online/offline) для пользователя.
+
+    Событие публичное для всех подключенных пользователей CRM и не требует
+    `audience`-фильтрации.
+    """
+    try:
+        event: dict[str, Any] = {
+            "type": "user.presence",
+            "userId": str(user_id),
+            "online": bool(online),
+            "actorId": None,
+            # presence рождается в ws-слое, поэтому clientId не привязываем.
+            "clientId": "",
+            "ts": _now_iso(),
+        }
+        get_bus().publish(event)
+    except Exception:
+        logger.exception("publish_user_presence_event failed (suppressed)")

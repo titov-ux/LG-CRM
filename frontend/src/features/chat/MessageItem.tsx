@@ -49,6 +49,7 @@ export function MessageItem({
   hideThreadBadge,
 }: Props) {
   const [editing, setEditing] = useState(false);
+  const [isReactionPickerOpen, setIsReactionPickerOpen] = useState(false);
   const update = useUpdateMessage(message.conversationId);
   const remove = useDeleteMessage(message.conversationId);
   const toggleReaction = useToggleReaction(message.conversationId);
@@ -148,12 +149,13 @@ export function MessageItem({
       {/* Hover-actions. */}
       <div
         className={cn(
-          'absolute right-0 top-0 hidden gap-0.5 rounded-md border bg-background px-1 py-0.5 shadow-sm',
-          'group-hover/msg:flex',
+          'absolute right-0 top-0 gap-0.5 rounded-md border bg-background px-1 py-0.5 shadow-sm',
+          isReactionPickerOpen ? 'flex' : 'hidden group-hover/msg:flex',
         )}
       >
         <EmojiPicker
           onSelect={(emoji) => handleToggle(emoji)}
+          onOpenChange={setIsReactionPickerOpen}
           align="end"
         >
           <Button

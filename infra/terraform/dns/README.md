@@ -21,7 +21,7 @@ tofu apply dns.tfplan
 Что будет создано:
 - `yandex_dns_zone.main` — публичная зона `lachevsky.ru.`
 - `yandex_dns_recordset.staging_a` — `staging.lachevsky.ru. A 300 <staging_ip>`
-- (опционально) `prod_apex_a`, `prod_www_a` — если в tfvars задан `prod_ip`
+- `yandex_dns_recordset.prod_a` — `<prod_subdomain>.lachevsky.ru. A 300 <prod_ip>` (создаётся только если `prod_ip` задан; по умолчанию `prod_subdomain = "crm"` → `crm.lachevsky.ru.`)
 
 ## NS для регистратора
 
@@ -49,12 +49,14 @@ dig +short NS lachevsky.ru @8.8.8.8
 1. После `tofu apply` в основном модуле с prod-workspace — забираем `tofu output public_ip` для prod.
 2. Возвращаемся сюда:
    ```bash
-   $EDITOR terraform.tfvars     # вписать prod_ip
+   cd infra/terraform/dns
+   $EDITOR terraform.tfvars     # вписать prod_ip = "<prod-vm-ip>"  (prod_subdomain="crm" уже стоит)
    export YC_TOKEN=$(yc iam create-token)
    tofu plan  -out=dns.tfplan
    tofu apply dns.tfplan
    ```
-3. Это добавит recordset'ы для `lachevsky.ru` и `www.lachevsky.ru`.
+3. Это добавит `crm.lachevsky.ru. A 300 <prod_ip>` (либо apex-запись, если `prod_subdomain=""`).
+4. Дальше — выпускать TLS-сертификат для `crm.lachevsky.ru` уже на самой prod-VM (см. `docs/deploy-prod.md`).
 
 ## Добавить произвольную запись
 

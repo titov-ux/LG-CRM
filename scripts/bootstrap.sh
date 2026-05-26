@@ -106,9 +106,23 @@ curl "${CURL_HEALTH_OPTS[@]}" "$HEALTHCHECK_URL"
 echo
 curl "${CURL_OPENAPI_OPTS[@]}" "$OPENAPI_URL" | jq -r '.info.title'
 
+# 9. Ежедневный бэкап (cron)
+# По умолчанию ставим автоматически — БД без бэкапа в prod это всегда ошибка.
+# Опт-аут через INSTALL_BACKUP_CRON=0.
+if [ "${INSTALL_BACKUP_CRON:-1}" = "1" ]; then
+    step "ставлю ежедневный cron-бэкап (01:00 UTC = 04:00 МСК)"
+    if [ "$(id -u)" -eq 0 ]; then
+        bash infra/scripts/install-backup-cron.sh
+    else
+        sudo -n bash infra/scripts/install-backup-cron.sh 2>/dev/null \
+            || sudo bash infra/scripts/install-backup-cron.sh
+    fi
+fi
+
 step "готово ✅ — стек поднят"
 echo "Дальше:"
 echo "  - проверь https://<domain>/healthz из внешней сети"
-echo "  - поставь бэкап: sudo cp backend/scripts/cron-backup.example /etc/cron.d/crm-lg-backup"
-echo "  - поставь cert renew: bash infra/scripts/setup-cert-renew.sh"
-echo "  - подключи Sentry: см. docs/sentry-setup.md"
+echo "  - запусти тестовый бэкап:  sudo bash infra/scripts/install-backup-cron.sh --run-now"
+echo "  - поставь cert renew:      bash infra/scripts/setup-cert-renew.sh"
+echo "  - подключи Sentry:         см. docs/sentry-setup.md"
+echo "  - recovery-drill (раз в неделю):  см. backend/scripts/recovery_drill.sh"

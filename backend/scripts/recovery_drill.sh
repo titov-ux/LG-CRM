@@ -20,8 +20,18 @@ set -euo pipefail
 
 : "${DATABASE_URL:?DATABASE_URL не задан}"
 : "${BACKUP_S3_BUCKET:?BACKUP_S3_BUCKET не задан}"
+# BACKUP_S3_PREFIX — опциональный, см. backup_db.sh.
+# Пусто = ищем дампы в legacy-пути daily/...
+: "${BACKUP_S3_PREFIX:=}"
 : "${S3_ENDPOINT:=https://storage.yandexcloud.net}"
 : "${S3_REGION:=ru-central1}"
+
+PREFIX_CLEAN="${BACKUP_S3_PREFIX#/}"; PREFIX_CLEAN="${PREFIX_CLEAN%/}"
+if [ -n "$PREFIX_CLEAN" ]; then
+    BACKUP_PATH="${PREFIX_CLEAN}/daily"
+else
+    BACKUP_PATH="daily"
+fi
 
 PG_URL_BASE="${DATABASE_URL/postgresql+asyncpg/postgresql}"
 # Вычленим только host/user/password части, чтобы потом подменить имя БД.
@@ -35,11 +45,11 @@ echo "[drill] target test DB: $DRILL_DB"
 LATEST_KEY="$(
     AWS_ACCESS_KEY_ID="${S3_ACCESS_KEY:-${AWS_ACCESS_KEY_ID:-}}" \
     AWS_SECRET_ACCESS_KEY="${S3_SECRET_KEY:-${AWS_SECRET_ACCESS_KEY:-}}" \
-        aws s3 ls "s3://${BACKUP_S3_BUCKET}/daily/" \
+        aws s3 ls "s3://${BACKUP_S3_BUCKET}/${BACKUP_PATH}/" \
             --endpoint-url="${S3_ENDPOINT}" --region "${S3_REGION}" \
         | sort -k1,2 -r | head -1 | awk '{print $4}'
 )"
-[ -z "$LATEST_KEY" ] && { echo "[drill] нет файлов в s3://${BACKUP_S3_BUCKET}/daily/"; exit 1; }
+[ -z "$LATEST_KEY" ] && { echo "[drill] нет файлов в s3://${BACKUP_S3_BUCKET}/${BACKUP_PATH}/"; exit 1; }
 echo "[drill] latest backup: $LATEST_KEY"
 
 TMP_DIR="$(mktemp -d)"
@@ -48,7 +58,7 @@ trap 'rm -rf "$TMP_DIR"; psql "$ADMIN_URL" -c "DROP DATABASE IF EXISTS \"$DRILL_
 
 AWS_ACCESS_KEY_ID="${S3_ACCESS_KEY:-${AWS_ACCESS_KEY_ID:-}}" \
 AWS_SECRET_ACCESS_KEY="${S3_SECRET_KEY:-${AWS_SECRET_ACCESS_KEY:-}}" \
-    aws s3 cp "s3://${BACKUP_S3_BUCKET}/daily/${LATEST_KEY}" "$LOCAL" \
+    aws s3 cp "s3://${BACKUP_S3_BUCKET}/${BACKUP_PATH}/${LATEST_KEY}" "$LOCAL" \
         --endpoint-url="${S3_ENDPOINT}" --region "${S3_REGION}"
 
 echo "[drill] create + restore"

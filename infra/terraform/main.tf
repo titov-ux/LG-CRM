@@ -64,6 +64,11 @@ variable "backups_bucket" {
   type    = string
   default = "crm-lg-backups"
 }
+variable "create_backups_bucket" {
+  type        = bool
+  default     = true
+  description = "Создавать ли S3-бакет для бэкапов в рамках этого workspace. Для prod выставляем false, если хотим переиспользовать staging-бакет — иначе два state'а попытаются управлять одним бакетом и второй apply упадёт."
+}
 variable "domain" {
   type        = string
   default     = ""
@@ -149,6 +154,7 @@ resource "yandex_storage_bucket" "files" {
 }
 
 resource "yandex_storage_bucket" "backups" {
+  count      = var.create_backups_bucket ? 1 : 0
   bucket     = var.backups_bucket
   access_key = yandex_iam_service_account_static_access_key.s3.access_key
   secret_key = yandex_iam_service_account_static_access_key.s3.secret_key
@@ -223,5 +229,7 @@ output "files_bucket" {
 }
 
 output "backups_bucket" {
-  value = yandex_storage_bucket.backups.bucket
+  // Если бакет в этом workspace не создаётся — возвращаем имя из var, чтобы
+  // .env.prod / cron знали, куда лить дампы (бакет существует в чужом state).
+  value = var.create_backups_bucket ? yandex_storage_bucket.backups[0].bucket : var.backups_bucket
 }

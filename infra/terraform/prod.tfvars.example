@@ -2,25 +2,32 @@
 # Скопировать в prod.tfvars и заполнить (prod.tfvars в .gitignore — не коммитим).
 #
 # Применяется после: tofu workspace select prod
-#   tofu plan -var-file=prod.tfvars
-#   tofu apply -var-file=prod.tfvars
+#   tofu plan  -var-file=prod.tfvars -out=prod.tfplan
+#   tofu apply prod.tfplan
 
-cloud_id  = "b1g6qe43fg33imfik8bs"
-folder_id = "b1gl1opj9lktq3k2vp0v"
+cloud_id  = "<yc-cloud-id>"
+folder_id = "<yc-folder-id>"
 zone      = "ru-central1-a"
 vm_name   = "crm-lg-prod"
 
-# Размер как у staging — пилотный запуск. При росте нагрузки увеличим cores/memory/disk.
-vm_cores     = 2
-vm_memory_gb = 4
-vm_disk_gb   = 60
+# Prod крупнее: 4 vCPU / 8 GB / 100 GB SSD. Подкрути под реальную нагрузку.
+vm_cores     = 4
+vm_memory_gb = 8
+vm_disk_gb   = 100
 
 # Тот же публичный SSH-ключ, что в staging.
-ssh_public_key = "ssh-ed25519 AAAA... titovalexeys@gmail.com"
+ssh_public_key = "ssh-ed25519 AAAA... user@host"
 
-# Глобально уникальные имена бакетов. Обязательно отличаются от staging.
-files_bucket   = "crm-lg-prod-files"
-backups_bucket = "crm-lg-prod-backups"
+# Files-бакет — глобально уникальное имя, отдельный от staging.
+files_bucket = "crm-lg-prod-files"
 
-# Боевой домен — используется в CORS files-бакета.
+# Бэкапы можно либо положить в отдельный бакет (например, crm-lg-prod-backups,
+# create_backups_bucket=true), либо переиспользовать staging-бакет
+# (имя из staging.tfvars + create_backups_bucket=false). Во втором случае
+# обязательно задайте разный BACKUP_S3_PREFIX в .env.prod prod- и staging-контура,
+# чтобы дампы не смешивались.
+backups_bucket        = "crm-lg-staging-backups"
+create_backups_bucket = false
+
+# Боевой домен — используется в CORS files-бакета и в info-outputs.
 domain = "crm.lachevsky.ru"

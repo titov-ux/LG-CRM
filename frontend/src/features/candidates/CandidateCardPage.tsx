@@ -151,7 +151,9 @@ function toFormValues(candidate: Candidate): Partial<CandidateFormValues> {
     format: candidate.format,
     rateMonth: candidate.rateMonth,
     employmentType: candidate.employmentType,
-    recruiterId: candidate.recruiterId,
+    // recruiterId может быть null (рекрутера отвязали) — в форму
+    // передаём пустую строку, поле снова станет обязательным при сохранении.
+    recruiterId: candidate.recruiterId ?? '',
     location: candidate.location,
     birthday: candidate.birthday ?? '',
     telegram: candidate.telegram ?? '',

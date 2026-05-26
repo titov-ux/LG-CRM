@@ -37,10 +37,12 @@ class Comment(Base):
         index=True,
     )
     entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
-    author_id: Mapped[uuid.UUID] = mapped_column(
+    # nullable=True + SET NULL: при удалении автора комментарий остаётся, но
+    # author_id обнуляется. См. миграцию 0011_user_fk_set_null.
+    author_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="RESTRICT"),
-        nullable=False,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
     )
     parent_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),

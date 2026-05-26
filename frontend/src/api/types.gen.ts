@@ -199,7 +199,12 @@ export interface paths {
             };
         };
         put?: never;
-        /** Создать пользователя */
+        /**
+         * Создать пользователя
+         * @description Если `password` не передан — пользователь создаётся с `isActive=false`,
+         *     ему уходит письмо со ссылкой на установку пароля. В этом случае при
+         *     отсутствии настроенного SMTP в ответе будет `inviteUrl`.
+         */
         post: {
             parameters: {
                 query?: never;
@@ -219,7 +224,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["User"];
+                        "application/json": components["schemas"]["CreateUserResponse"];
                     };
                 };
                 403: components["responses"]["Forbidden"];
@@ -298,6 +303,185 @@ export interface paths {
                 404: components["responses"]["NotFound"];
             };
         };
+        trace?: never;
+    };
+    "/users/{id}/invite": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Переотправить invite-приглашение
+         * @description Генерирует новый invite-токен и шлёт письмо повторно. Допустимо только
+         *     для пользователей с `isActive=false`. Возвращает обновлённый ответ
+         *     с флагом `emailSent` и при необходимости `inviteUrl` (если SMTP не
+         *     настроен или письмо не ушло).
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Invite issued */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["InviteResendResponse"];
+                    };
+                };
+                /** @description Пользователь уже активирован */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/invite/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                token: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Информация по invite-токену
+         * @description Возвращает email/имя для подсветки формы установки пароля.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    token: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description InviteInfo */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["InviteInfo"];
+                    };
+                };
+                /** @description Токен не найден */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description Токен истёк или уже использован */
+                410: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/invite/{token}/activate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                token: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Активировать аккаунт и установить пароль */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    token: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ActivateInviteRequest"];
+                };
+            };
+            responses: {
+                /** @description Аккаунт активирован, выданы токены */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TokenResponse"];
+                    };
+                };
+                /** @description Токен не найден */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description Токен истёк или уже использован */
+                410: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/clients": {
@@ -1985,10 +2169,17 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Сводка дашборда */
+        /** Сводка дашборда (KPI + дельты за период) */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description Начало периода (ISO-8601). По умолчанию — начало текущего месяца. */
+                    from?: string;
+                    /** @description Конец периода (ISO-8601). По умолчанию — сейчас. */
+                    to?: string;
+                    /** @description Окно для расчёта delta. По умолчанию prev. */
+                    compare?: components["schemas"]["CompareMode"];
+                };
                 header?: never;
                 path?: never;
                 cookie?: never;
@@ -2074,6 +2265,240 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["RecruiterLoad"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/analytics/trends": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Временные ряды за период (создано/закрыто вакансий, заведено кандидатов, наймы) */
+        get: {
+            parameters: {
+                query?: {
+                    from?: string;
+                    to?: string;
+                    granularity?: components["schemas"]["Granularity"];
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description TrendsResponse */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TrendsResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/analytics/funnel-v2": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Воронка с конверсиями и drop-off по VacancyCandidate */
+        get: {
+            parameters: {
+                query?: {
+                    from?: string;
+                    to?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description FunnelResponse */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["FunnelResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/analytics/time-to-hire": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Скорость найма за период */
+        get: {
+            parameters: {
+                query?: {
+                    from?: string;
+                    to?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description TimeToHireResponse */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TimeToHireResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/analytics/attention": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Требует внимания (SLA, дедлайны, зависшие) */
+        get: {
+            parameters: {
+                query?: {
+                    top?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description AttentionResponse */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AttentionResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/analytics/recruiter-performance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Эффективность рекрутеров за период */
+        get: {
+            parameters: {
+                query?: {
+                    from?: string;
+                    to?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description RecruiterPerformanceResponse */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RecruiterPerformanceResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/analytics/client-performance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Аналитика по клиентам за период */
+        get: {
+            parameters: {
+                query?: {
+                    from?: string;
+                    to?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description ClientPerformanceResponse */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ClientPerformanceResponse"];
                     };
                 };
             };
@@ -2298,6 +2723,548 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Список документов с фильтрами
+         * @description Возвращает плоский список документов с пагинацией. Папки идут как обычные
+         *     записи (`kind=folder`), вложенность определяется по `parentId`.
+         *     Фильтры комбинируются. Поле `q` ищет по `title`, `description`, `owner`,
+         *     `tags`.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    page?: components["parameters"]["Page"];
+                    pageSize?: components["parameters"]["PageSize"];
+                    section?: components["schemas"]["DocumentSectionId"];
+                    /** @description Если задан — только дети этой папки. Null = корень раздела. */
+                    parentId?: components["schemas"]["UUID"];
+                    kind?: components["schemas"]["DocumentKind"];
+                    tag?: string;
+                    favorite?: boolean;
+                    q?: string;
+                    ownerId?: components["schemas"]["UUID"];
+                    sortBy?: "updated" | "oldest" | "title" | "owner" | "kind";
+                    sortDir?: "asc" | "desc";
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Страница документов */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DocumentPage"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Создать документ или папку
+         * @description Если передан `fileId` — документ считается прикреплённым к ранее загруженному
+         *     файлу (см. `/files/confirm`). Папка создаётся с `kind=folder` без `fileId`.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CreateDocumentRequest"];
+                };
+            };
+            responses: {
+                /** @description Document */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Document"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+                /** @description Неверные данные (invalid_section / invalid_parent / parent_not_folder) */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/documents/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        /** Получить документ */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Document */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Document"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        post?: never;
+        /**
+         * Удалить документ или папку
+         * @description Удаление папки рекурсивно удаляет всё её содержимое. Файлы в S3 не удаляются
+         *     автоматически — они остаются по `DELETE /files/{id}` отдельно.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: components["responses"]["Ok"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        options?: never;
+        head?: never;
+        /** Обновить метаданные (title, emoji, tags, description, owner) */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["UpdateDocumentRequest"];
+                };
+            };
+            responses: {
+                /** @description Document */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Document"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        trace?: never;
+    };
+    "/documents/{id}/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Переместить документ в другой раздел/папку */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["MoveDocumentRequest"];
+                };
+            };
+            responses: {
+                /** @description Document */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Document"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+                /** @description Целевая папка некорректна (parent_not_folder / cycle_detected) */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/documents/bulk-move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Массовое перемещение (для toolbar) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["BulkMoveDocumentsRequest"];
+                };
+            };
+            responses: {
+                /** @description Количество перемещённых */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            moved: number;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/documents/bulk-delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Массовое удаление */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        ids: components["schemas"]["UUID"][];
+                    };
+                };
+            };
+            responses: {
+                /** @description Количество удалённых */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            deleted: number;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/documents/{id}/duplicate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Дублировать документ (без копирования файла; ссылка на тот же fileId) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Document (копия) */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Document"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/documents/{id}/favorite": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Добавить/убрать из избранного текущего пользователя */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        favorite: boolean;
+                    };
+                };
+            };
+            responses: {
+                200: components["responses"]["Ok"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/documents/{id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        /** История версий документа */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Список версий (новые сверху) */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DocumentVersion"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Сохранить новую версию
+         * @description Метка `label` обязательна (например, `v2`, `draft`). `fileId` опционален —
+         *     если передан, версия привязывается к новой загрузке файла.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CreateDocumentVersionRequest"];
+                };
+            };
+            responses: {
+                /** @description DocumentVersion */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DocumentVersion"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/documents/{id}/comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        /** Комментарии к документу (старые сверху) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Список комментариев */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DocumentComment"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Добавить комментарий */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        text: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description DocumentComment */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DocumentComment"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/permissions-matrix": {
         parameters: {
             query?: never;
@@ -2478,6 +3445,25 @@ export interface components {
             role?: components["schemas"]["Role"];
             isActive?: boolean;
         };
+        CreateUserResponse: {
+            user: components["schemas"]["User"];
+            /** @description Заполняется только если SMTP не настроен и письмо не ушло. */
+            inviteUrl?: string | null;
+        };
+        InviteResendResponse: {
+            user: components["schemas"]["User"];
+            inviteUrl?: string | null;
+            /** @description true — письмо реально ушло через SMTP; false — fallback на inviteUrl. */
+            emailSent: boolean;
+        };
+        InviteInfo: {
+            /** Format: email */
+            email: string;
+            fullName: string;
+        };
+        ActivateInviteRequest: {
+            password: string;
+        };
         /** @enum {string} */
         ClientStatus: "lead" | "in_progress" | "active" | "paused" | "archived";
         /**
@@ -2495,7 +3481,7 @@ export interface components {
             name: string;
             legalEntities: components["schemas"]["LegalEntity"][];
             industry: string;
-            accountManagerId: components["schemas"]["UUID"];
+            accountManagerId?: components["schemas"]["UUID"] | null;
             status: components["schemas"]["ClientStatus"];
             clientKind: components["schemas"]["ClientKind"];
             telegramChat?: string | null;
@@ -2510,7 +3496,7 @@ export interface components {
                 inn: string;
             }[];
             industry: string;
-            accountManagerId: components["schemas"]["UUID"];
+            accountManagerId?: components["schemas"]["UUID"] | null;
             status: components["schemas"]["ClientStatus"];
             clientKind: components["schemas"]["ClientKind"];
             telegramChat?: string;
@@ -2574,7 +3560,7 @@ export interface components {
             positions: number;
             status: components["schemas"]["VacancyStatus"];
             priority: components["schemas"]["Priority"];
-            accountManagerId: components["schemas"]["UUID"];
+            accountManagerId?: components["schemas"]["UUID"] | null;
             recruiterIds: components["schemas"]["UUID"][];
             daysInStatus: number;
             candidatesCount: number;
@@ -2597,7 +3583,7 @@ export interface components {
             positions: number;
             status: components["schemas"]["VacancyStatus"];
             priority: components["schemas"]["Priority"];
-            accountManagerId: components["schemas"]["UUID"];
+            accountManagerId?: components["schemas"]["UUID"] | null;
             recruiterIds?: components["schemas"]["UUID"][];
             /** Format: date */
             deadline?: string | null;
@@ -2681,7 +3667,7 @@ export interface components {
             employmentType: components["schemas"]["EmploymentType"];
             format: components["schemas"]["WorkFormat"];
             location: string;
-            recruiterId: components["schemas"]["UUID"];
+            recruiterId?: components["schemas"]["UUID"] | null;
             status: components["schemas"]["CandidateStatus"];
             daysInStatus: number;
             vacancyIds: components["schemas"]["UUID"][];
@@ -2719,7 +3705,7 @@ export interface components {
             employmentType: components["schemas"]["EmploymentType"];
             format: components["schemas"]["WorkFormat"];
             location?: string;
-            recruiterId?: components["schemas"]["UUID"];
+            recruiterId?: components["schemas"]["UUID"] | null;
             status?: components["schemas"]["CandidateStatus"];
             telegram?: string;
             phone?: string;
@@ -2808,7 +3794,7 @@ export interface components {
             id: components["schemas"]["UUID"];
             entityType: components["schemas"]["CommentEntityType"];
             entityId: components["schemas"]["UUID"];
-            authorId: components["schemas"]["UUID"];
+            authorId?: components["schemas"]["UUID"] | null;
             parentId: components["schemas"]["UUID"] | null;
             text: string;
             mentions: components["schemas"]["UUID"][];
@@ -2846,7 +3832,7 @@ export interface components {
             /** @enum {string} */
             entityType: "vacancy" | "candidate" | "client";
             entityId: components["schemas"]["UUID"];
-            actorId: components["schemas"]["UUID"];
+            actorId?: components["schemas"]["UUID"] | null;
             /** @enum {string} */
             kind: "create" | "status" | "note" | "call" | "email";
             text: string;
@@ -2857,12 +3843,29 @@ export interface components {
             id: components["schemas"]["UUID"];
             entityType: string;
             entityId: components["schemas"]["UUID"];
-            actorId: components["schemas"]["UUID"];
+            actorId?: components["schemas"]["UUID"] | null;
             field: string;
             before: string | null;
             after: string | null;
             /** Format: date-time */
             createdAt: string;
+        };
+        /** @enum {string} */
+        CompareMode: "prev" | "yoy" | "none";
+        /** @enum {string} */
+        Granularity: "auto" | "day" | "week" | "month";
+        PeriodWindow: {
+            /** Format: date-time */
+            from: string;
+            /** Format: date-time */
+            to: string;
+        };
+        CompareWindow: {
+            /** Format: date-time */
+            from: string;
+            /** Format: date-time */
+            to: string;
+            mode: components["schemas"]["CompareMode"];
         };
         DashboardSummary: {
             openVacancies: number;
@@ -2875,6 +3878,8 @@ export interface components {
                 closedThisMonth: number;
                 hiredThisMonth: number;
             };
+            period: components["schemas"]["PeriodWindow"];
+            compare?: components["schemas"]["CompareWindow"];
         };
         FunnelBucket: {
             status: components["schemas"]["VacancyStatus"];
@@ -2884,13 +3889,152 @@ export interface components {
             recruiterId: components["schemas"]["UUID"];
             activeCount: number;
         };
+        TrendsPoint: {
+            /** Format: date-time */
+            bucket: string;
+            value: number;
+        };
+        TrendsSeries: {
+            vacanciesCreated: components["schemas"]["TrendsPoint"][];
+            vacanciesClosed: components["schemas"]["TrendsPoint"][];
+            candidatesCreated: components["schemas"]["TrendsPoint"][];
+            hires: components["schemas"]["TrendsPoint"][];
+        };
+        TrendsResponse: {
+            /** @enum {string} */
+            granularity: "day" | "week" | "month";
+            period: components["schemas"]["PeriodWindow"];
+            series: components["schemas"]["TrendsSeries"];
+        };
+        FunnelStage: {
+            status: components["schemas"]["MatchStatus"];
+            count: number;
+            /** @description % к предыдущей стадии */
+            conversionPct: number;
+            /** @description абсолютный отток к этой стадии */
+            dropOff: number;
+        };
+        FunnelRejected: {
+            client: number;
+            internal: number;
+            total: number;
+        };
+        FunnelResponse: {
+            stages: components["schemas"]["FunnelStage"][];
+            rejected: components["schemas"]["FunnelRejected"];
+            total: number;
+            overallConversionPct: number;
+            period: components["schemas"]["PeriodWindow"];
+        };
+        TimeToHireBucket: {
+            label: string;
+            maxDays?: number | null;
+            count: number;
+        };
+        TimeInStage: {
+            status: string;
+            avgDays: number;
+            medianDays: number;
+            sample: number;
+        };
+        TimeToHireResponse: {
+            sampleSize: number;
+            avgDays: number;
+            medianDays: number;
+            p90Days: number;
+            distribution: components["schemas"]["TimeToHireBucket"][];
+            byStage: components["schemas"]["TimeInStage"][];
+            period: components["schemas"]["PeriodWindow"];
+        };
+        AttentionVacancyItem: {
+            id: components["schemas"]["UUID"];
+            title: string;
+            status?: components["schemas"]["VacancyStatus"];
+            daysInStatus?: number | null;
+            daysOpen?: number | null;
+            /** Format: date-time */
+            deadline?: string | null;
+            daysOverdue?: number | null;
+            daysLeft?: number | null;
+        };
+        AttentionCandidateItem: {
+            id: components["schemas"]["UUID"];
+            fullName: string;
+            status: string;
+            daysInStatus: number;
+        };
+        AttentionVacancyBlock: {
+            total: number;
+            thresholdDays?: number | null;
+            items: components["schemas"]["AttentionVacancyItem"][];
+        };
+        AttentionCandidateBlock: {
+            total: number;
+            thresholdDays?: number | null;
+            items: components["schemas"]["AttentionCandidateItem"][];
+        };
+        AttentionCountOnly: {
+            total: number;
+        };
+        AttentionResponse: {
+            stuckVacancies: components["schemas"]["AttentionVacancyBlock"];
+            stuckCandidates: components["schemas"]["AttentionCandidateBlock"];
+            vacanciesWithoutCandidates: components["schemas"]["AttentionVacancyBlock"];
+            overdueDeadlines: components["schemas"]["AttentionVacancyBlock"];
+            deadlinesNext7Days: components["schemas"]["AttentionVacancyBlock"];
+            deadlinesNext14Days: components["schemas"]["AttentionCountOnly"];
+        };
+        RecruiterMetric: {
+            recruiterId: components["schemas"]["UUID"];
+            fullName: string;
+            candidatesCreated: number;
+            presented: number;
+            hired: number;
+            /** @description hired / presented, % */
+            hireRatePct: number;
+            avgTimeToHireDays: number;
+            /** @description сумма (rate_client*160 − rate_month) по hired в ₽/мес */
+            totalMargin: number;
+            /** @description Hires по 8 недельным бакетам */
+            sparkline: number[];
+        };
+        RecruiterPerformanceResponse: {
+            items: components["schemas"]["RecruiterMetric"][];
+            period: components["schemas"]["PeriodWindow"];
+        };
         /** @enum {string} */
-        FileEntityType: "candidate" | "vacancy" | "client" | "contact";
+        ClientHealthFlag: "stale" | "no_open" | "high_rejection" | "no_vacancies_ever";
+        ClientMetric: {
+            clientId: components["schemas"]["UUID"];
+            name: string;
+            industry: string;
+            status?: components["schemas"]["ClientStatus"];
+            clientKind?: components["schemas"]["ClientKind"];
+            vacanciesTotal: number;
+            vacanciesOpen: number;
+            vacanciesClosedInPeriod: number;
+            hiresInPeriod: number;
+            avgTimeToFillDays: number;
+            monthlyMarginRunRate: number;
+            presentedToHiredPct: number;
+            /** Format: date-time */
+            lastVacancyAt?: string | null;
+            daysSinceLastVacancy?: number | null;
+            rejectionRatePct: number;
+            healthFlags: components["schemas"]["ClientHealthFlag"][];
+            sparkline: number[];
+        };
+        ClientPerformanceResponse: {
+            items: components["schemas"]["ClientMetric"][];
+            period: components["schemas"]["PeriodWindow"];
+        };
+        /** @enum {string} */
+        FileEntityType: "candidate" | "vacancy" | "client" | "contact" | "document";
         /** @enum {string} */
         ScanStatus: "pending" | "clean" | "infected" | "error";
         FileResponse: {
             id: components["schemas"]["UUID"];
-            ownerUserId: components["schemas"]["UUID"];
+            ownerUserId?: components["schemas"]["UUID"] | null;
             entityType: components["schemas"]["FileEntityType"];
             entityId: components["schemas"]["UUID"];
             fileKey: string;
@@ -2930,6 +4074,122 @@ export interface components {
         DownloadResponse: {
             url: string;
             expiresIn: number;
+        };
+        /**
+         * @description Логический раздел базы знаний:
+         *     - clients: документы по клиентам (договоры, NDA, спецификации)
+         *     - regulations: внутренние регламенты и SLA
+         *     - company: устав, реквизиты, учредительные
+         *     - employees: кадры
+         *     - contractors: внешние исполнители
+         *     - tender: тендерные заявки
+         *     - general: общие материалы команды
+         * @enum {string}
+         */
+        DocumentSectionId: "clients" | "regulations" | "company" | "employees" | "contractors" | "tender" | "general";
+        /**
+         * @description `note` — внутренняя заметка с HTML-телом (рендерится Tiptap). Тело хранится
+         *     в `Document.body`, файл (`fileId`) для заметок не используется.
+         * @enum {string}
+         */
+        DocumentKind: "doc" | "pdf" | "xlsx" | "pptx" | "image" | "folder" | "note";
+        Document: {
+            id: components["schemas"]["UUID"];
+            title: string;
+            /** @description Эмодзи-иконка документа/папки */
+            emoji: string;
+            kind: components["schemas"]["DocumentKind"];
+            section: components["schemas"]["DocumentSectionId"];
+            /** @description ID родительской папки. null/отсутствует = корень раздела. */
+            parentId?: components["schemas"]["UUID"] | null;
+            description?: string | null;
+            tags?: string[];
+            ownerUserId: components["schemas"]["UUID"];
+            /** @description Денормализованное ФИО владельца для списков */
+            ownerName?: string;
+            /** @description Ссылка на загруженный файл из /files (если есть) */
+            fileId?: components["schemas"]["UUID"] | null;
+            fileMeta?: components["schemas"]["DocumentFileMeta"] | null;
+            /** @description HTML-контент для kind=note (вывод Tiptap) */
+            body?: string | null;
+            versionsCount?: number;
+            commentsCount?: number;
+            /** @description Избранное для текущего пользователя */
+            isFavorite?: boolean;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        /**
+         * @description Облегчённые метаданные приложенного файла. Полную запись и presigned URL для
+         *     скачивания берём через `/files/{id}/download`.
+         */
+        DocumentFileMeta: {
+            fileName: string;
+            mime: string;
+            /** Format: int64 */
+            size: number;
+        };
+        CreateDocumentRequest: {
+            title: string;
+            emoji: string;
+            kind: components["schemas"]["DocumentKind"];
+            section: components["schemas"]["DocumentSectionId"];
+            parentId?: components["schemas"]["UUID"];
+            description?: string;
+            tags?: string[];
+            /** @description По умолчанию — текущий пользователь */
+            ownerUserId?: components["schemas"]["UUID"];
+            fileId?: components["schemas"]["UUID"];
+            /** @description HTML для kind=note */
+            body?: string | null;
+        };
+        UpdateDocumentRequest: {
+            title?: string;
+            emoji?: string;
+            description?: string | null;
+            tags?: string[];
+            ownerUserId?: components["schemas"]["UUID"];
+            /** @description HTML для kind=note */
+            body?: string | null;
+        };
+        MoveDocumentRequest: {
+            section: components["schemas"]["DocumentSectionId"];
+            parentId?: components["schemas"]["UUID"];
+        };
+        BulkMoveDocumentsRequest: {
+            ids: components["schemas"]["UUID"][];
+            section: components["schemas"]["DocumentSectionId"];
+            parentId?: components["schemas"]["UUID"];
+        };
+        DocumentVersion: {
+            id: components["schemas"]["UUID"];
+            documentId: components["schemas"]["UUID"];
+            label: string;
+            note?: string | null;
+            authorUserId: components["schemas"]["UUID"];
+            authorName?: string;
+            fileId?: components["schemas"]["UUID"];
+            /** Format: date-time */
+            createdAt: string;
+        };
+        CreateDocumentVersionRequest: {
+            label: string;
+            note?: string;
+            fileId?: components["schemas"]["UUID"];
+        };
+        DocumentComment: {
+            id: components["schemas"]["UUID"];
+            documentId: components["schemas"]["UUID"];
+            text: string;
+            authorUserId: components["schemas"]["UUID"];
+            authorName?: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        DocumentPage: components["schemas"]["Page"] & {
+            items?: components["schemas"]["Document"][];
         };
         MatrixPermission: {
             id: string;

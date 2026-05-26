@@ -12,7 +12,8 @@ class ActivityResponse(CamelModel):
     id: uuid.UUID
     entity_type: ActivityEntityType
     entity_id: uuid.UUID
-    actor_id: uuid.UUID
+    # actor_id может быть null, если автор записи удалён (см. миграцию 0011).
+    actor_id: uuid.UUID | None = None
     kind: ActivityKind
     text: str
     created_at: datetime
@@ -22,7 +23,8 @@ class AuditResponse(CamelModel):
     id: uuid.UUID
     entity_type: str
     entity_id: uuid.UUID
-    actor_id: uuid.UUID
+    # actor_id может быть null, если автор записи удалён (см. миграцию 0011).
+    actor_id: uuid.UUID | None = None
     field: str
     before: str | None = None
     after: str | None = None

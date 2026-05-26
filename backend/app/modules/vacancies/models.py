@@ -125,10 +125,12 @@ class Vacancy(Base, TimestampsMixin, SoftDeleteMixin):
         nullable=False,
         default=Priority.medium,
     )
-    account_manager_id: Mapped[uuid.UUID] = mapped_column(
+    # nullable=True + SET NULL: при удалении пользователя ответственный сбрасывается
+    # в пустое значение, вакансия не удаляется. См. миграцию 0011_user_fk_set_null.
+    account_manager_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="RESTRICT"),
-        nullable=False,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
     )
     status_changed_at: Mapped[datetime] = mapped_column(

@@ -260,6 +260,8 @@ async def funnel(db: AsyncSession) -> list[dict]:
 
 
 async def recruiter_load(db: AsyncSession) -> list[dict]:
+    # recruiter_id может быть None (FK SET NULL) — такую «безхозную» группу
+    # не показываем в аналитике загрузки рекрутеров.
     rows = (
         await db.execute(
             select(Candidate.recruiter_id, func.count())
@@ -267,6 +269,7 @@ async def recruiter_load(db: AsyncSession) -> list[dict]:
                 Candidate.deleted_at.is_(None),
                 Candidate.archived.is_(False),
                 Candidate.status.in_(ACTIVE_CANDIDATE_STATUSES),
+                Candidate.recruiter_id.is_not(None),
             )
             .group_by(Candidate.recruiter_id)
             .order_by(func.count().desc())
@@ -640,7 +643,9 @@ async def recruiter_performance(
     }
 
     def _ensure(rid: str | None) -> dict | None:
-        if not rid:
+        # rid может прийти как None (FK SET NULL) или как строка "None" —
+        # «безхозного» рекрутера в аналитике не показываем.
+        if not rid or rid == "None":
             return None
         if rid not in recruiters:
             # рекрутер мог быть деактивирован, но у него есть исторические

@@ -52,10 +52,11 @@ class ActivityEntry(Base):
         index=True,
     )
     entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
-    actor_id: Mapped[uuid.UUID] = mapped_column(
+    # nullable=True + SET NULL: запись истории не теряется при удалении актёра.
+    actor_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="RESTRICT"),
-        nullable=False,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
     )
     kind: Mapped[ActivityKind] = mapped_column(
         Enum(ActivityKind, name="activity_kind", values_callable=_enum_values),
@@ -77,10 +78,11 @@ class AuditEntry(Base):
     )
     entity_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
-    actor_id: Mapped[uuid.UUID] = mapped_column(
+    # nullable=True + SET NULL: запись аудита переживает удаление актёра.
+    actor_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="RESTRICT"),
-        nullable=False,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
     )
     field: Mapped[str] = mapped_column(String(64), nullable=False)
     before: Mapped[str | None] = mapped_column(Text(), nullable=True)

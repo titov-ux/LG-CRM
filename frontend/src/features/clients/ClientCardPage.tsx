@@ -45,7 +45,9 @@ function toFormValues(client: Client): Partial<ClientFormValues> {
     name: client.name,
     legalEntities: client.legalEntities.map((le) => ({ name: le.name, inn: le.inn })),
     industry: client.industry,
-    accountManagerId: client.accountManagerId,
+    // accountManagerId может быть null (ответственного отвязали) — в форму
+    // передаём пустую строку, поле «AM» снова станет обязательным при сохранении.
+    accountManagerId: client.accountManagerId ?? '',
     status: client.status,
     clientKind: client.clientKind,
     telegramChat: client.telegramChat ?? '',

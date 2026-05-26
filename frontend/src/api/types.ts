@@ -77,7 +77,8 @@ export interface Client {
   name: string;
   legalEntities: LegalEntity[];
   industry: string;
-  accountManagerId: UUID;
+  /** null = ответственного «отвязали» (например, удалили пользователя). */
+  accountManagerId: UUID | null;
   status: ClientStatus;
   /** Прямой клиент или посредник. */
   clientKind: ClientKind;
@@ -161,8 +162,9 @@ export interface Vacancy {
   /**
    * Аккаунт-менеджер, отвечающий за вакансию.
    * По умолчанию наследуется от клиента, но может быть переопределён вручную.
+   * null = ответственного «отвязали» (например, удалили пользователя).
    */
-  accountManagerId: UUID;
+  accountManagerId: UUID | null;
   recruiterIds: UUID[];
   daysInStatus: number;
   candidatesCount: number;
@@ -278,7 +280,8 @@ export interface Candidate {
   employmentType: EmploymentType;
   format: WorkFormat;
   location: string;
-  recruiterId: UUID;
+  /** null = рекрутера «отвязали» (например, удалили пользователя). */
+  recruiterId: UUID | null;
   status: CandidateStatus;
   daysInStatus: number;
   vacancyIds: UUID[];
@@ -353,7 +356,8 @@ export interface Comment {
   id: UUID;
   entityType: CommentEntityType;
   entityId: UUID;
-  authorId: UUID;
+  /** null = автор удалён. */
+  authorId: UUID | null;
   /** id родительского комментария — для ответов в нити */
   parentId: UUID | null;
   text: string;
@@ -382,7 +386,8 @@ export interface ActivityEntry {
   id: UUID;
   entityType: 'vacancy' | 'candidate' | 'client';
   entityId: UUID;
-  actorId: UUID;
+  /** null = актёр удалён. */
+  actorId: UUID | null;
   kind: 'create' | 'status' | 'note' | 'call' | 'email';
   text: string;
   createdAt: string;
@@ -392,7 +397,8 @@ export interface AuditEntry {
   id: UUID;
   entityType: string;
   entityId: UUID;
-  actorId: UUID;
+  /** null = актёр удалён. */
+  actorId: UUID | null;
   field: string;
   before: string | null;
   after: string | null;

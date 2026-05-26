@@ -30,7 +30,8 @@ class VacancyResponse(CamelModel):
     positions: int
     status: VacancyStatus
     priority: Priority
-    account_manager_id: uuid.UUID
+    # nullable: если пользователь удалён, AM сбрасывается в null (см. миграцию 0011).
+    account_manager_id: uuid.UUID | None = None
     recruiter_ids: list[uuid.UUID] = Field(default_factory=list)
     days_in_status: int
     candidates_count: int = 0
@@ -53,7 +54,8 @@ class CreateVacancyRequest(CamelModel):
     positions: int = Field(default=1, ge=1)
     status: VacancyStatus = VacancyStatus.new
     priority: Priority = Priority.medium
-    account_manager_id: uuid.UUID
+    # AM можно не указывать при создании — тогда вакансия будет «без ответственного».
+    account_manager_id: uuid.UUID | None = None
     recruiter_ids: list[uuid.UUID] = Field(default_factory=list)
     deadline: date | None = None
     description: str | None = None

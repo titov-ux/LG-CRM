@@ -46,10 +46,11 @@ class File(Base, TimestampsMixin):
         primary_key=True,
         server_default=text("uuid_generate_v4()"),
     )
-    owner_user_id: Mapped[uuid.UUID] = mapped_column(
+    # nullable=True + SET NULL: файл остаётся, владелец сбрасывается.
+    owner_user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="RESTRICT"),
-        nullable=False,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
     )
     entity_type: Mapped[FileEntityType] = mapped_column(

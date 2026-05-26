@@ -14,7 +14,8 @@ class CommentResponse(CamelModel):
     id: uuid.UUID
     entity_type: CommentEntityType
     entity_id: uuid.UUID
-    author_id: uuid.UUID
+    # nullable: если автор удалён, комментарий остаётся, author_id = null.
+    author_id: uuid.UUID | None = None
     parent_id: uuid.UUID | None = None
     text: str
     mentions: list[uuid.UUID] = Field(default_factory=list)

@@ -498,6 +498,10 @@ export function RolesPage() {
                   Пользователь «
                   <span className="font-medium text-foreground">{userToDelete.fullName}</span>» будет удалён
                   без возможности восстановления. Его доступы аннулируются.
+                  <span className="mt-2 block text-[12px] text-muted-foreground">
+                    Если на нём «висели» вакансии, кандидаты, клиенты или комментарии —
+                    они не удаляются: ответственный в этих записях просто сбросится в пустое значение.
+                  </span>
                 </>
               )}
             </DialogDescription>

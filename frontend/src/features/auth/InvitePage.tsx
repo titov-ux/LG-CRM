@@ -11,6 +11,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { authApi } from '@/api/auth';
 import { useAuthStore } from '@/stores/auth';
 import { authKeys } from './useAuth';
+import { BubbleBackdrop } from './BubbleBackdrop';
 
 /**
  * Страница активации аккаунта по invite-ссылке.
@@ -23,6 +24,9 @@ import { authKeys } from './useAuth';
  *    по любому signup-флоу), сабмит идёт POST /auth/invite/{token}/activate.
  * 3) Бэк сразу возвращает access/refresh — кладём accessToken в стор и
  *    редиректим на /dashboard, не прогоняя через форму логина.
+ *
+ * Визуально страница использует тот же [[BubbleBackdrop]] и «стеклянную»
+ * карточку, что и LoginPage — это одно семейство публичных экранов.
  */
 export function InvitePage() {
   const { token } = useParams({ from: '/invite/$token' });
@@ -69,16 +73,16 @@ export function InvitePage() {
   };
 
   return (
-    <div className="grid min-h-screen place-items-center bg-gradient-to-br from-slate-50 via-white to-slate-100 p-6">
-      <Card className="w-full max-w-sm">
+    <BubbleBackdrop>
+      <Card className="relative w-full max-w-sm border-white/50 bg-white/70 shadow-2xl shadow-slate-900/10 backdrop-blur-xl">
         <CardHeader className="space-y-2">
           <div className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-md bg-foreground text-xs font-bold text-background">
+            <div className="flex h-8 w-8 items-center justify-center rounded-md bg-foreground text-xs font-bold text-background shadow-sm">
               ЛГ
             </div>
             <div>
-              <CardTitle>Активация аккаунта</CardTitle>
-              <CardDescription>Задайте пароль, чтобы войти в систему</CardDescription>
+              <CardTitle>ЛГ Интеграция · SaaS</CardTitle>
+              <CardDescription>Активация аккаунта</CardDescription>
             </div>
           </div>
         </CardHeader>
@@ -95,7 +99,7 @@ export function InvitePage() {
 
           {info.data && (
             <form onSubmit={handleSubmit} className="space-y-3">
-              <div className="rounded-md border bg-muted/40 p-3 text-[12.5px]">
+              <div className="rounded-md border border-white/60 bg-white/60 p-3 text-[12.5px] backdrop-blur-sm">
                 <div className="text-muted-foreground">Приглашение для</div>
                 <div className="mt-0.5 font-medium text-foreground">{info.data.fullName}</div>
                 <div className="text-[11.5px] text-muted-foreground">{info.data.email}</div>
@@ -111,6 +115,7 @@ export function InvitePage() {
                   required
                   autoComplete="new-password"
                   autoFocus
+                  className="bg-white/80"
                 />
               </div>
               <div className="space-y-1.5">
@@ -122,6 +127,7 @@ export function InvitePage() {
                   onChange={(e) => setConfirm(e.target.value)}
                   required
                   autoComplete="new-password"
+                  className="bg-white/80"
                 />
               </div>
 
@@ -148,7 +154,7 @@ export function InvitePage() {
           )}
         </CardContent>
       </Card>
-    </div>
+    </BubbleBackdrop>
   );
 }
 

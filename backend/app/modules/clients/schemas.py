@@ -31,7 +31,8 @@ class ClientResponse(CamelModel):
     name: str
     legal_entities: list[LegalEntityOut] = Field(default_factory=list)
     industry: str
-    account_manager_id: uuid.UUID
+    # nullable: если AM удалён, поле сбрасывается в null (см. миграцию 0011).
+    account_manager_id: uuid.UUID | None = None
     status: ClientStatus
     client_kind: ClientKind
     telegram_chat: str | None = None
@@ -43,7 +44,8 @@ class CreateClientRequest(CamelModel):
     name: str = Field(min_length=1)
     legal_entities: list[LegalEntityIn] = Field(default_factory=list)
     industry: str = ""
-    account_manager_id: uuid.UUID
+    # При создании AM опционален — клиента можно завести «без ответственного».
+    account_manager_id: uuid.UUID | None = None
     status: ClientStatus = ClientStatus.lead
     client_kind: ClientKind = ClientKind.direct
     telegram_chat: str | None = None

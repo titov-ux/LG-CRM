@@ -366,7 +366,8 @@ export function CandidatesDatabasePage() {
 
               {!isLoading &&
                 items.map((c) => {
-                  const recruiter = userMap.get(c.recruiterId);
+                  // recruiterId может быть null (рекрутера отвязали) — тогда recruiter = undefined.
+                  const recruiter = c.recruiterId ? userMap.get(c.recruiterId) : undefined;
                   const meta = statusMeta(c.status);
                   // Покажем первые 3 элемента стека + «+N» как фолбэк под Notion-стиль.
                   return (

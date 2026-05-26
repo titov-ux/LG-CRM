@@ -96,10 +96,12 @@ class Candidate(Base, TimestampsMixin, SoftDeleteMixin):
         default=WorkFormat.hybrid,
     )
     location: Mapped[str] = mapped_column(String(255), nullable=False, default="")
-    recruiter_id: Mapped[uuid.UUID] = mapped_column(
+    # nullable=True + SET NULL: при удалении пользователя ответственный сбрасывается
+    # в пустое значение, кандидат не удаляется. См. миграцию 0011_user_fk_set_null.
+    recruiter_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="RESTRICT"),
-        nullable=False,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
     )
     status: Mapped[CandidateStatus] = mapped_column(

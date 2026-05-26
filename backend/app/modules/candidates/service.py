@@ -265,7 +265,9 @@ async def create_candidate(
     db: AsyncSession, user: User, payload: CreateCandidateRequest
 ) -> tuple[Candidate, list[uuid.UUID]]:
     _ensure_can_mutate(user)
-    await _ensure_valid_recruiter_id(db, payload.recruiter_id)
+    # Рекрутер опционален — кандидата можно завести без ответственного.
+    if payload.recruiter_id is not None:
+        await _ensure_valid_recruiter_id(db, payload.recruiter_id)
 
     # Дубль-чек по email/phone.
     duplicate: Candidate | None = None
@@ -382,6 +384,7 @@ async def update_candidate(
         cand.stack = list(data["stack"])
     if "email" in data:
         cand.email = str(data["email"]) if data["email"] else None
+    # Допускаем null: «отвязать» рекрутера — валидный сценарий.
     if "recruiter_id" in data and data["recruiter_id"] is not None:
         await _ensure_valid_recruiter_id(db, data["recruiter_id"])
     _apply_resume_patch(cand, data)
@@ -488,7 +491,9 @@ async def change_status(
             ),
         )
         # Уведомление рекрутеру кандидата, если статус сменил не он сам.
-        if cand.recruiter_id != user.id:
+        # recruiter_id может быть None после удаления пользователя (FK SET NULL) —
+        # тогда уведомлять некого, просто пропускаем.
+        if cand.recruiter_id is not None and cand.recruiter_id != user.id:
             await notify_service.notify(
                 db,
                 recipient_id=cand.recruiter_id,

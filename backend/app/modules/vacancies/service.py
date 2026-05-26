@@ -159,6 +159,8 @@ async def create_vacancy(
     db: AsyncSession, user: User, payload: CreateVacancyRequest
 ) -> Vacancy:
     _ensure_can_mutate(user)
+    # AM может создавать вакансии только на себя (или вообще без AM-а — это
+    # запрещено, иначе он мог бы «обойти» scope-проверку).
     if user.role == Role.account_manager and payload.account_manager_id != user.id:
         raise ApiError(
             status.HTTP_403_FORBIDDEN,
@@ -237,12 +239,14 @@ async def update_vacancy(
     if "salary_max" in data:
         v = data["salary_max"]
         vac.salary_max = float(v) if v is not None else None
-    if "account_manager_id" in data and data["account_manager_id"] is not None:
-        if user.role == Role.account_manager and data["account_manager_id"] != user.id:
+    if "account_manager_id" in data:
+        # Допускаем null: фронт может «отвязать» ответственного.
+        new_am = data["account_manager_id"]
+        if user.role == Role.account_manager and new_am != user.id:
             raise ApiError(
                 status.HTTP_403_FORBIDDEN, "forbidden", "Сменить AM может только админ"
             )
-        vac.account_manager_id = data["account_manager_id"]
+        vac.account_manager_id = new_am
     if "recruiter_ids" in data and data["recruiter_ids"] is not None:
         _replace_recruiters(vac, list(data["recruiter_ids"]))
 
@@ -330,9 +334,11 @@ async def change_status(
                 + (f". {payload.comment}" if payload.comment else "")
             ),
         )
-        # Уведомление рекрутерам + AM (кроме того, кто менял).
+        # Уведомление рекрутерам + AM (кроме того, кто менял). AM может быть None
+        # (FK SET NULL после удаления пользователя) — такие записи не уведомляем.
         recipients = {r.user_id for r in vac.recruiters}
-        recipients.add(vac.account_manager_id)
+        if vac.account_manager_id is not None:
+            recipients.add(vac.account_manager_id)
         recipients.discard(user.id)
         if recipients:
             await notify_service.notify_many(
@@ -398,7 +404,8 @@ async def reorder_kanban(
                 text=f"Статус изменён: {before_status} → {upd.status.value}",
             )
             recipients = {r.user_id for r in v.recruiters}
-            recipients.add(v.account_manager_id)
+            if v.account_manager_id is not None:
+                recipients.add(v.account_manager_id)
             recipients.discard(user.id)
             if recipients:
                 await notify_service.notify_many(

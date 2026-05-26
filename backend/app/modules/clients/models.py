@@ -52,10 +52,12 @@ class Client(Base, TimestampsMixin, SoftDeleteMixin):
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     industry: Mapped[str] = mapped_column(String(255), nullable=False, default="")
-    account_manager_id: Mapped[uuid.UUID] = mapped_column(
+    # nullable=True + SET NULL: при удалении пользователя AM сбрасывается в пустое
+    # значение, клиент не удаляется. См. миграцию 0011_user_fk_set_null.
+    account_manager_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="RESTRICT"),
-        nullable=False,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
     )
     status: Mapped[ClientStatus] = mapped_column(

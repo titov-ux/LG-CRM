@@ -104,7 +104,9 @@ function toFormValues(vacancy: Vacancy): Partial<VacancyFormValues> {
     positions: vacancy.positions,
     stack: vacancy.stack.join(', '),
     deadline: vacancy.deadline ?? '',
-    accountManagerId: vacancy.accountManagerId,
+    // accountManagerId может быть null (AM отвязали) — в форму передаём
+    // пустую строку, поле снова станет обязательным при сохранении.
+    accountManagerId: vacancy.accountManagerId ?? '',
     recruiterIds: [...vacancy.recruiterIds],
     description: vacancy.description ?? '',
     requirements: vacancy.requirements ?? '',

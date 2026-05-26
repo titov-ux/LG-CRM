@@ -12,7 +12,8 @@ from app.modules.files.models import FileEntityType, ScanStatus
 
 class FileResponse(CamelModel):
     id: uuid.UUID
-    owner_user_id: uuid.UUID
+    # nullable: владелец сбрасывается в null при удалении пользователя.
+    owner_user_id: uuid.UUID | None = None
     entity_type: FileEntityType
     entity_id: uuid.UUID
     file_key: str

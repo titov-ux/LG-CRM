@@ -74,7 +74,8 @@ class CandidateResponse(CamelModel):
     employment_type: EmploymentType
     format: WorkFormat
     location: str
-    recruiter_id: uuid.UUID
+    # nullable: если рекрутер удалён, поле сбрасывается в null (см. миграцию 0011).
+    recruiter_id: uuid.UUID | None = None
     status: CandidateStatus
     days_in_status: int
     vacancy_ids: list[uuid.UUID] = Field(default_factory=list)
@@ -106,7 +107,8 @@ class CreateCandidateRequest(CamelModel):
     employment_type: EmploymentType = EmploymentType.smz
     format: WorkFormat = WorkFormat.hybrid
     location: str = ""
-    recruiter_id: uuid.UUID
+    # При создании рекрутер опционален — карточку можно завести и без ответственного.
+    recruiter_id: uuid.UUID | None = None
     status: CandidateStatus = CandidateStatus.new
     telegram: str | None = None
     phone: str | None = None

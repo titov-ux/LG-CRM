@@ -84,6 +84,97 @@ def test_admin_cannot_delete_self(client: TestClient, admin_user) -> None:
     assert r.json()["detail"]["code"] == "cannot_delete_self"
 
 
+def test_delete_user_with_attached_entities_resets_fk(
+    client: TestClient, admin_user, account_manager_user, recruiter_user
+) -> None:
+    """Удаление пользователя, на которого «висят» сущности, не должно блокироваться.
+
+    Все FK (clients.account_manager_id, vacancies.account_manager_id,
+    candidates.recruiter_id, comments.author_id, activity_log.actor_id, ...)
+    должны сбрасываться в NULL — см. миграцию 0011_user_fk_set_null.
+    """
+    h = auth_headers(client, admin_user.email)
+
+    # 1) Клиент на ответственном AM.
+    r = client.post(
+        "/api/v1/clients",
+        headers=h,
+        json={
+            "name": "Acme",
+            "industry": "fintech",
+            "accountManagerId": str(account_manager_user.id),
+            "status": "lead",
+            "clientKind": "direct",
+        },
+    )
+    assert r.status_code == 201, r.text
+    cid = r.json()["id"]
+
+    # 2) Вакансия на том же AM.
+    r = client.post(
+        "/api/v1/vacancies",
+        headers=h,
+        json={
+            "title": "Backend Senior",
+            "clientId": cid,
+            "engagementType": "outstaff",
+            "grade": "Senior",
+            "format": "Гибрид",
+            "rateClient": 3500,
+            "positions": 1,
+            "status": "new",
+            "priority": "medium",
+            "accountManagerId": str(account_manager_user.id),
+            "stack": ["Python"],
+            "recruiterIds": [str(recruiter_user.id)],
+        },
+    )
+    assert r.status_code == 201, r.text
+    vid = r.json()["id"]
+
+    # 3) Кандидат на рекрутере (этот пользователь и удаляется ниже).
+    h_rec = auth_headers(client, recruiter_user.email)
+    r = client.post(
+        "/api/v1/candidates",
+        headers=h_rec,
+        json={
+            "fullName": "Иван Иванов",
+            "role": "Backend",
+            "engagementType": "outstaff",
+            "grade": "Senior",
+            "experienceYears": 5,
+            "stack": ["Python"],
+            "employmentType": "СМЗ",
+            "format": "Гибрид",
+            "location": "",
+            "recruiterId": str(recruiter_user.id),
+            "status": "new",
+        },
+    )
+    assert r.status_code == 201, r.text
+    cand_id = r.json()["id"]
+
+    # 4) Удаляем AM — должен пройти, вакансия и клиент остаются с null AM.
+    r = client.delete(f"/api/v1/users/{account_manager_user.id}", headers=h)
+    assert r.status_code == 200, r.text
+
+    r = client.get(f"/api/v1/vacancies/{vid}", headers=h)
+    assert r.status_code == 200
+    assert r.json()["accountManagerId"] is None
+
+    r = client.get(f"/api/v1/clients/{cid}", headers=h)
+    assert r.status_code == 200
+    assert r.json()["accountManagerId"] is None
+
+    # 5) Удаляем рекрутера — должен пройти, кандидат остаётся с null recruiter.
+    r = client.delete(f"/api/v1/users/{recruiter_user.id}", headers=h)
+    assert r.status_code == 200, r.text
+
+    r = client.get(f"/api/v1/candidates/{cand_id}", headers=h)
+    assert r.status_code == 200
+    assert r.json()["recruiterId"] is None
+
+
 def test_email_conflict(client: TestClient, admin_user, recruiter_user) -> None:
     h = auth_headers(client, admin_user.email)
     r = client.post(

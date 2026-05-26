@@ -342,11 +342,14 @@ export function ClientsListPage() {
                     </span>
                   </TableCell>
                   <TableCell>
-                    {am && (
+                    {am ? (
                       <span className="flex items-center gap-2">
                         <UserAvatar user={am} size={22} />
                         <span className="text-[12.5px]">{am.fullName}</span>
                       </span>
+                    ) : (
+                      // accountManagerId может быть null (ответственного удалили).
+                      <span className="text-[12.5px] text-muted-foreground">—</span>
                     )}
                   </TableCell>
                   <TableCell className="tnum text-right font-semibold">

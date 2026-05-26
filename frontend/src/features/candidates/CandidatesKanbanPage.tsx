@@ -239,7 +239,13 @@ export function CandidatesKanbanPage() {
             });
           }}
           getAccentColor={(c) => ENGAGEMENT_META[c.engagementType].borderColor}
-          renderCard={(c) => <CandidateKanbanCard candidate={c} recruiter={userMap.get(c.recruiterId)} />}
+          renderCard={(c) => (
+            <CandidateKanbanCard
+              candidate={c}
+              // recruiterId может быть null (рекрутера отвязали).
+              recruiter={c.recruiterId ? userMap.get(c.recruiterId) : undefined}
+            />
+          )}
         />
       )}
     </div>

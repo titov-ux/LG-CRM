@@ -1714,7 +1714,7 @@ components:
         inn:  { type: string }
     Client:
       type: object
-      required: [id, name, legalEntities, industry, accountManagerId, status, clientKind, vacanciesCount, contactsCount]
+      required: [id, name, legalEntities, industry, status, clientKind, vacanciesCount, contactsCount]
       properties:
         id:               { $ref: '#/components/schemas/UUID' }
         name:             { type: string }
@@ -1722,7 +1722,8 @@ components:
           type: array
           items: { $ref: '#/components/schemas/LegalEntity' }
         industry:         { type: string }
-        accountManagerId: { $ref: '#/components/schemas/UUID' }
+        # Может быть null: ответственного «отвязали» при удалении пользователя.
+        accountManagerId: { allOf: [{ $ref: '#/components/schemas/UUID' }], nullable: true }
         status:           { $ref: '#/components/schemas/ClientStatus' }
         clientKind:       { $ref: '#/components/schemas/ClientKind' }
         telegramChat:     { type: string, nullable: true }
@@ -1730,7 +1731,7 @@ components:
         contactsCount:    { type: integer, minimum: 0 }
     CreateClientRequest:
       type: object
-      required: [name, industry, accountManagerId, status, clientKind]
+      required: [name, industry, status, clientKind]
       properties:
         name:             { type: string }
         legalEntities:
@@ -1743,7 +1744,8 @@ components:
               name: { type: string }
               inn:  { type: string }
         industry:         { type: string }
-        accountManagerId: { $ref: '#/components/schemas/UUID' }
+        # AM опционален: клиент может существовать без ответственного.
+        accountManagerId: { allOf: [{ $ref: '#/components/schemas/UUID' }], nullable: true }
         status:           { $ref: '#/components/schemas/ClientStatus' }
         clientKind:       { $ref: '#/components/schemas/ClientKind' }
         telegramChat:     { type: string }
@@ -1819,7 +1821,6 @@ components:
         - positions
         - status
         - priority
-        - accountManagerId
         - recruiterIds
         - daysInStatus
         - candidatesCount
@@ -1838,7 +1839,8 @@ components:
         positions:         { type: integer, minimum: 1 }
         status:            { $ref: '#/components/schemas/VacancyStatus' }
         priority:          { $ref: '#/components/schemas/Priority' }
-        accountManagerId:  { $ref: '#/components/schemas/UUID' }
+        # Может быть null: ответственного «отвязали» при удалении пользователя.
+        accountManagerId:  { allOf: [{ $ref: '#/components/schemas/UUID' }], nullable: true }
         recruiterIds:
           type: array
           items: { $ref: '#/components/schemas/UUID' }
@@ -1850,7 +1852,7 @@ components:
         requirements:      { type: string, nullable: true }
     CreateVacancyRequest:
       type: object
-      required: [title, clientId, engagementType, grade, format, positions, status, priority, accountManagerId]
+      required: [title, clientId, engagementType, grade, format, positions, status, priority]
       properties:
         title:            { type: string }
         clientId:         { $ref: '#/components/schemas/UUID' }
@@ -1864,7 +1866,8 @@ components:
         positions:        { type: integer, minimum: 1 }
         status:           { $ref: '#/components/schemas/VacancyStatus' }
         priority:         { $ref: '#/components/schemas/Priority' }
-        accountManagerId: { $ref: '#/components/schemas/UUID' }
+        # AM опционален: вакансию можно завести без ответственного.
+        accountManagerId: { allOf: [{ $ref: '#/components/schemas/UUID' }], nullable: true }
         recruiterIds:
           type: array
           items: { $ref: '#/components/schemas/UUID' }
@@ -1980,7 +1983,6 @@ components:
         - employmentType
         - format
         - location
-        - recruiterId
         - status
         - daysInStatus
         - vacancyIds
@@ -1997,7 +1999,8 @@ components:
         employmentType:   { $ref: '#/components/schemas/EmploymentType' }
         format:           { $ref: '#/components/schemas/WorkFormat' }
         location:         { type: string }
-        recruiterId:      { $ref: '#/components/schemas/UUID' }
+        # Может быть null: рекрутера «отвязали» при удалении пользователя.
+        recruiterId:      { allOf: [{ $ref: '#/components/schemas/UUID' }], nullable: true }
         status:           { $ref: '#/components/schemas/CandidateStatus' }
         daysInStatus:     { type: integer, minimum: 0 }
         vacancyIds:
@@ -2042,7 +2045,8 @@ components:
         employmentType:  { $ref: '#/components/schemas/EmploymentType' }
         format:          { $ref: '#/components/schemas/WorkFormat' }
         location:        { type: string }
-        recruiterId:     { $ref: '#/components/schemas/UUID' }
+        # Опционально: можно завести кандидата без ответственного.
+        recruiterId:     { allOf: [{ $ref: '#/components/schemas/UUID' }], nullable: true }
         status:          { $ref: '#/components/schemas/CandidateStatus' }
         telegram:        { type: string }
         phone:           { type: string }
@@ -2156,12 +2160,13 @@ components:
       enum: [contact, candidate, vacancy, client]
     Comment:
       type: object
-      required: [id, entityType, entityId, authorId, parentId, text, mentions, createdAt, updatedAt]
+      required: [id, entityType, entityId, parentId, text, mentions, createdAt, updatedAt]
       properties:
         id:         { $ref: '#/components/schemas/UUID' }
         entityType: { $ref: '#/components/schemas/CommentEntityType' }
         entityId:   { $ref: '#/components/schemas/UUID' }
-        authorId:   { $ref: '#/components/schemas/UUID' }
+        # Может быть null: автор удалён.
+        authorId:   { allOf: [{ $ref: '#/components/schemas/UUID' }], nullable: true }
         parentId:
           allOf: [{ $ref: '#/components/schemas/UUID' }]
           nullable: true
@@ -2217,14 +2222,15 @@ components:
     # ─── Audit / Activity ───
     ActivityEntry:
       type: object
-      required: [id, entityType, entityId, actorId, kind, text, createdAt]
+      required: [id, entityType, entityId, kind, text, createdAt]
       properties:
         id:         { $ref: '#/components/schemas/UUID' }
         entityType:
           type: string
           enum: [vacancy, candidate, client]
         entityId:   { $ref: '#/components/schemas/UUID' }
-        actorId:    { $ref: '#/components/schemas/UUID' }
+        # Может быть null: актёр удалён.
+        actorId:    { allOf: [{ $ref: '#/components/schemas/UUID' }], nullable: true }
         kind:
           type: string
           enum: [create, status, note, call, email]
@@ -2232,12 +2238,13 @@ components:
         createdAt:  { type: string, format: date-time }
     AuditEntry:
       type: object
-      required: [id, entityType, entityId, actorId, field, before, after, createdAt]
+      required: [id, entityType, entityId, field, before, after, createdAt]
       properties:
         id:         { $ref: '#/components/schemas/UUID' }
         entityType: { type: string }
         entityId:   { $ref: '#/components/schemas/UUID' }
-        actorId:    { $ref: '#/components/schemas/UUID' }
+        # Может быть null: актёр удалён.
+        actorId:    { allOf: [{ $ref: '#/components/schemas/UUID' }], nullable: true }
         field:      { type: string }
         before:     { type: string, nullable: true }
         after:      { type: string, nullable: true }
@@ -2500,10 +2507,11 @@ components:
       enum: [pending, clean, infected, error]
     FileResponse:
       type: object
-      required: [id, ownerUserId, entityType, entityId, fileKey, originalName, mime, size, scanStatus, createdAt]
+      required: [id, entityType, entityId, fileKey, originalName, mime, size, scanStatus, createdAt]
       properties:
         id:           { $ref: '#/components/schemas/UUID' }
-        ownerUserId:  { $ref: '#/components/schemas/UUID' }
+        # Может быть null: владелец удалён.
+        ownerUserId:  { allOf: [{ $ref: '#/components/schemas/UUID' }], nullable: true }
         entityType:   { $ref: '#/components/schemas/FileEntityType' }
         entityId:     { $ref: '#/components/schemas/UUID' }
         fileKey:      { type: string }

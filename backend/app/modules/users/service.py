@@ -87,12 +87,18 @@ async def _create_invite(db: AsyncSession, *, user_id: uuid.UUID) -> str:
 async def _send_invite_email(*, to: str, full_name: str, raw_token: str) -> bool:
     """Отправить письмо с invite-ссылкой. Возвращает True, если SMTP реально отработал."""
     invite_url = _build_invite_url(raw_token)
-    subject, text, html = render_invite_email(
+    subject, text, html, inline_images = render_invite_email(
         full_name=full_name or to,
         invite_url=invite_url,
         ttl_days=_ttl_days(),
     )
-    return await send_email(to=to, subject=subject, text_body=text, html_body=html)
+    return await send_email(
+        to=to,
+        subject=subject,
+        text_body=text,
+        html_body=html,
+        inline_images=inline_images,
+    )
 
 
 async def create_user(db: AsyncSession, payload: CreateUserRequest) -> tuple[User, str | None]:

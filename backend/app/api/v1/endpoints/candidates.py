@@ -19,6 +19,7 @@ from app.modules.candidates.ai import (
     AiUnavailableError,
     parse_resume_text,
 )
+from app.modules.candidates.resume_ai import improve_resume_for_vacancy
 from app.modules.candidates.models import Candidate, CandidateStatus, EmploymentType
 from app.modules.candidates.schemas import (
     ArchiveRequest,
@@ -27,11 +28,15 @@ from app.modules.candidates.schemas import (
     CandidateResponse,
     ChangeCandidateStatusRequest,
     CreateCandidateRequest,
+    ImproveResumeRequest,
+    ImproveResumeResponse,
+    ImprovedResume,
     ParsedCandidate,
     ParseResumeTextRequest,
     ParseResumeTextResponse,
     UpdateCandidateRequest,
 )
+from app.modules.vacancies import service as vacancies_service
 from app.modules.users.models import Role, User
 from app.modules.vacancies.models import EngagementType, Grade
 
@@ -286,6 +291,66 @@ async def restore_candidate(
 ) -> CandidateResponse:
     cand, vids = await service.restore_candidate(db, user, cand_id)
     return _to_dto(cand, vids, user)
+
+
+@router.post(
+    "/{cand_id}/resume/improve",
+    response_model=ImproveResumeResponse,
+    summary="AI-адаптация резюме кандидата под конкретную вакансию",
+)
+async def improve_resume(
+    cand_id: uuid.UUID,
+    payload: ImproveResumeRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ImproveResumeResponse:
+    """Просит YandexGPT адаптировать summary/стек/категории/буллеты опыта под вакансию.
+
+    Менять можно только переформулировку (никаких новых компаний/технологий).
+    Фронт мерджит результат в кандидата и тут же отдаёт пользователю DOCX.
+
+    Ошибки:
+      * 503 `ai_unavailable` — нет ключа AI / сеть / 5xx;
+      * 502 `ai_bad_request` — 4xx от Yandex AI Studio.
+    """
+    cand, _ = await service.get_candidate(db, cand_id)
+    # get_vacancy сделает 404 если вакансия не существует или невидима пользователю.
+    vac = await vacancies_service.get_vacancy(db, user, payload.vacancy_id)
+
+    cand_dto = _to_dto(cand, [], user).model_dump(by_alias=True, exclude_none=True)
+    vac_payload = {
+        "title": vac.title,
+        "grade": vac.grade.value if vac.grade else None,
+        "stack": list(vac.stack or []),
+        "description": vac.description,
+        "requirements": vac.requirements,
+    }
+
+    try:
+        raw = await improve_resume_for_vacancy(
+            candidate_payload=cand_dto,
+            vacancy_payload=vac_payload,
+        )
+    except AiUnavailableError as exc:
+        logger.warning("candidates.improve_resume unavailable: %s", exc)
+        raise ApiError(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "ai_unavailable",
+            "Сервис AI-адаптации резюме временно недоступен. Скачайте резюме в оригинале.",
+        ) from exc
+    except AiBadRequestError as exc:
+        logger.error("candidates.improve_resume bad request: %s", exc)
+        raise ApiError(
+            status.HTTP_502_BAD_GATEWAY,
+            "ai_bad_request",
+            "Не удалось адаптировать резюме. Скачайте в оригинале или попробуйте позже.",
+        ) from exc
+
+    # `raw` уже почищен (длина experience совпадает, em-dash убраны).
+    # Тем не менее на всякий случай прогоняем через Pydantic — это даст
+    # понятную 422 при неожиданной форме вместо невнятного 500 у пользователя.
+    improvement = ImprovedResume.model_validate(raw)
+    return ImproveResumeResponse(improvement=improvement)
 
 
 @router.delete("/{cand_id}", response_model=OkResponse, summary="Удалить кандидата")

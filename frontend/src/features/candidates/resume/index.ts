@@ -6,3 +6,4 @@ export {
   resumeFileNameKhronyuk,
 } from './generateDocxKhronyuk';
 export { downloadResumePdf } from './generatePdf';
+export { applyImprovementToCandidate } from './applyImprovement';

@@ -895,6 +895,56 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Candidate' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /candidates/{id}/resume/improve:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [candidates]
+      summary: AI-адаптация резюме кандидата под конкретную вакансию
+      description: |
+        Просит LLM (YandexGPT) переписать сопроводительное, переставить
+        навыки/стек и переформулировать буллеты опыта с акцентом на
+        технологии и задачи из вакансии. **Не выдумывает фактов**:
+        компании/должности/даты остаются как у кандидата; список мест
+        работы возвращается той же длины и в том же порядке.
+
+        Фронт мерджит непустые поля поверх Candidate и сразу
+        отдаёт пользователю DOCX.
+
+        Если AI недоступен — 503 `ai_unavailable`; если AI вернул мусор —
+        502 `ai_bad_request`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [vacancyId]
+              properties:
+                vacancyId:
+                  type: string
+                  format: uuid
+      responses:
+        '200':
+          description: Адаптированное резюме
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [improvement]
+                properties:
+                  improvement: { $ref: '#/components/schemas/ImprovedResume' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '502':
+          description: AI вернул ошибку формата (ai_bad_request)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '503':
+          description: AI-сервис недоступен (ai_unavailable)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
   /candidates/{id}/activity:
     parameters:
       - $ref: '#/components/parameters/UuidPathId'
@@ -2137,6 +2187,24 @@ components:
         education:       { type: array, items: { $ref: '#/components/schemas/ParsedEducation' } }
         certifications:  { type: array, items: { $ref: '#/components/schemas/ParsedCertification' } }
         languages:       { type: array, items: { $ref: '#/components/schemas/ParsedLanguageItem' } }
+
+    # ─── Improved resume (AI-адаптация под вакансию) ───
+    # Все поля опциональны. Список `experience` — той же длины и в том же
+    # порядке, что у кандидата (модель не может выдумывать новые места работы).
+    # Менять разрешено только `project` и `achievements` внутри блока.
+    ImprovedExperienceItem:
+      type: object
+      properties:
+        project:      { type: string }
+        achievements: { type: array, items: { type: string } }
+    ImprovedResume:
+      type: object
+      properties:
+        summary:         { type: string }
+        experienceYears: { type: number }
+        stack:           { type: array, items: { type: string } }
+        skillCategories: { type: array, items: { $ref: '#/components/schemas/ParsedSkillCategory' } }
+        experience:      { type: array, items: { $ref: '#/components/schemas/ImprovedExperienceItem' } }
 
     # ─── Matching ───
     MatchStatus:

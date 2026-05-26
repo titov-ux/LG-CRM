@@ -248,3 +248,48 @@ class ParsedCandidate(CamelModel):
 
 class ParseResumeTextResponse(CamelModel):
     parsed: ParsedCandidate
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# AI-адаптация резюме под вакансию
+# ────────────────────────────────────────────────────────────────────────────
+
+
+class ImproveResumeRequest(CamelModel):
+    """Адаптировать резюме кандидата под конкретную вакансию.
+
+    Пара (candidate_id, vacancy_id) валидируется в эндпоинте — оба должны
+    существовать и быть доступны текущему пользователю.
+    """
+
+    vacancy_id: uuid.UUID
+
+
+class ImprovedExperienceItem(CamelModel):
+    """Адаптированный блок места работы — только переписываемые поля.
+
+    Поле опциональное: модель может улучшить не каждое место работы. Фронт
+    мерджит непустые `project`/`achievements` поверх оригинала по индексу.
+    """
+
+    project: str | None = None
+    achievements: list[str] | None = None
+
+
+class ImprovedResume(CamelModel):
+    """Adapted-под-вакансию подмножество полей кандидата.
+
+    Все поля опциональны. Фронт мерджит непустые значения поверх Candidate
+    перед сборкой ResumeModel → DOCX. Никаких новых компаний/должностей AI
+    добавить не может — `experience` приходит той же длины, что у кандидата.
+    """
+
+    summary: str | None = None
+    experience_years: float | None = None
+    stack: list[str] | None = None
+    skill_categories: list[ParsedSkillCategory] | None = None
+    experience: list[ImprovedExperienceItem] | None = None
+
+
+class ImproveResumeResponse(CamelModel):
+    improvement: ImprovedResume

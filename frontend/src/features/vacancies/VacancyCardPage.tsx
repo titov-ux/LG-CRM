@@ -42,7 +42,7 @@ import { useUsers } from '@/features/users/hooks';
 import { useCandidates } from '@/features/candidates/hooks';
 import { vacancyStatuses } from '@/mocks/db/vacancies';
 import { formatDateRu, formatMoneyRub } from '@/lib/utils';
-import type { Vacancy } from '@/api/types';
+import type { Candidate, Vacancy } from '@/api/types';
 import { useAuthStore } from '@/stores/auth';
 import { useCan } from '@/lib/permissions';
 import { CommentsSection } from '@/features/comments/CommentsSection';
@@ -50,7 +50,63 @@ import { AttachCandidateDialog } from '@/features/matching/AttachCandidateDialog
 import { useAttachCandidate, useDetachCandidate } from '@/features/matching/hooks';
 import { MatchCompensationRow } from '@/features/matching/MatchCompensationRow';
 import { DEFAULT_HOURS_PER_MONTH, vacancyMaxNetSalary } from '@/lib/compensation';
-import { generateResumeDocxBlob, resumeFileName } from '@/features/candidates/resume';
+import { HTTPError } from 'ky';
+import {
+  applyImprovementToCandidate,
+  generateResumeDocxBlob,
+  resumeFileName,
+} from '@/features/candidates/resume';
+import { candidatesApi } from '@/api/candidates';
+
+/**
+ * Скачать Blob под именем — выносим, чтобы не дублировать boilerplate
+ * (createObjectURL → <a download> → revoke) в нескольких хендлерах.
+ */
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/**
+ * Достаёт человекочитаемое сообщение из ApiError-ответа AI-эндпоинта.
+ * Дублируем локально — общего helper'а в проекте пока нет (см.
+ * VacancyImportDialog/CandidateForm — там такие же реализации).
+ */
+async function extractAiErrorMessage(e: unknown): Promise<string> {
+  if (e instanceof HTTPError) {
+    try {
+      const body = (await e.response.clone().json()) as
+        | { detail?: { code?: string; message?: string } }
+        | undefined;
+      const detail = body?.detail;
+      if (detail?.message) return detail.message;
+    } catch {
+      /* не JSON — fallthrough */
+    }
+    if (e.response.status === 503) {
+      return 'AI-сервис недоступен. Скачайте резюме в исходном виде.';
+    }
+    if (e.response.status === 502) {
+      return 'AI вернул неожиданный ответ. Попробуйте ещё раз или скачайте в исходном виде.';
+    }
+  }
+  return 'Не удалось адаптировать резюме. Скачайте в исходном виде.';
+}
+
+/**
+ * Имя файла адаптированного резюме. Чтобы пользователь сразу видел,
+ * что это «адаптированная» версия и не путал с оригиналом на диске.
+ */
+function improvedResumeFileName(candidate: Candidate): string {
+  const safe = candidate.fullName.replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, '_');
+  return `${safe}_резюме_адаптировано.docx`;
+}
 
 function splitStack(value: string | undefined): string[] {
   return (value ?? '')
@@ -133,6 +189,9 @@ export function VacancyCardPage() {
   const [attachOpen, setAttachOpen] = useState(false);
   const [activityExpanded, setActivityExpanded] = useState(false);
   const [downloadingResumes, setDownloadingResumes] = useState(false);
+  // ID кандидата, для которого сейчас крутится AI-улучшение. Один за раз —
+  // чтобы не наплодить параллельных запросов к Yandex AI (квоты, цена).
+  const [improvingCandidateId, setImprovingCandidateId] = useState<string | null>(null);
   const hoursPerMonth = DEFAULT_HOURS_PER_MONTH;
 
   const close = () => navigate({ to: '/vacancies' });
@@ -261,6 +320,47 @@ export function VacancyCardPage() {
       }
     } finally {
       setDownloadingResumes(false);
+    }
+  };
+
+  /**
+   * Скачать резюме одного кандидата КАК ЕСТЬ — тот же шаблон, что и в
+   * карточке кандидата (см. CandidateCardPage.handleDownloadDocx).
+   */
+  const handleDownloadOriginalResume = async (candidate: Candidate) => {
+    try {
+      const blob = await generateResumeDocxBlob(candidate);
+      downloadBlob(blob, resumeFileName(candidate, 'docx'));
+    } catch (e) {
+      console.error('Не удалось сформировать резюме', e);
+      toast.error('Не удалось сформировать резюме');
+    }
+  };
+
+  /**
+   * Запросить у AI адаптированную под вакансию версию резюме и сразу
+   * скачать DOCX. Если AI недоступен — сообщаем и предлагаем скачать
+   * оригинал; ничего сами не падаем.
+   */
+  const handleDownloadImprovedResume = async (candidate: Candidate) => {
+    if (!vacancy) return;
+    if (improvingCandidateId) return; // защита от двойного клика
+    setImprovingCandidateId(candidate.id);
+    const toastId = toast.loading(`AI адаптирует резюме «${candidate.fullName}»…`);
+    try {
+      const { improvement } = await candidatesApi.improveResumeForVacancy(
+        candidate.id,
+        vacancy.id,
+      );
+      const adapted = applyImprovementToCandidate(candidate, improvement);
+      const blob = await generateResumeDocxBlob(adapted);
+      downloadBlob(blob, improvedResumeFileName(candidate));
+      toast.success('Адаптированное резюме готово', { id: toastId });
+    } catch (e) {
+      const message = await extractAiErrorMessage(e);
+      toast.error(message, { id: toastId });
+    } finally {
+      setImprovingCandidateId(null);
     }
   };
 
@@ -579,6 +679,9 @@ export function VacancyCardPage() {
                         onOpen={() => navigate({ to: '/candidates/$id', params: { id: c.id } })}
                         onDetach={() => handleDetachCandidate(c.id, c.fullName)}
                         detachDisabled={detachCandidate.isPending}
+                        onDownloadOriginal={() => handleDownloadOriginalResume(c)}
+                        onDownloadImproved={() => handleDownloadImprovedResume(c)}
+                        improving={improvingCandidateId === c.id}
                       />
                     ))}
                   </div>

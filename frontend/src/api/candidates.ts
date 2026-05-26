@@ -65,4 +65,35 @@ export const candidatesApi = {
     api
       .post('candidates/parse-resume-text', { json: { text } })
       .json<{ parsed: ParsedCandidate }>(),
+  /**
+   * AI-адаптация резюме кандидата под конкретную вакансию.
+   * Возвращает только поля, которые AI решил изменить (summary / experienceYears /
+   * stack / skillCategories / experience). Поле `experience` приходит ТОЙ ЖЕ длины,
+   * что у кандидата — мерджим по индексу, никаких новых компаний быть не должно.
+   */
+  improveResumeForVacancy: (candidateId: UUID, vacancyId: UUID) =>
+    api
+      .post(`candidates/${candidateId}/resume/improve`, { json: { vacancyId } })
+      .json<{ improvement: ImprovedResume }>(),
 };
+
+/**
+ * AI-адаптация резюме под вакансию. Все поля опциональны — фронт мерджит
+ * непустые значения поверх Candidate перед сборкой ResumeModel → DOCX.
+ *
+ * `experience[i].project` / `achievements` — патчи к местам работы по индексу.
+ * `company`, `position`, `startMonth`, `endMonth`, `stack` AI не трогает —
+ * они остаются как у кандидата.
+ */
+export interface ImprovedExperienceItem {
+  project?: string;
+  achievements?: string[];
+}
+
+export interface ImprovedResume {
+  summary?: string;
+  experienceYears?: number;
+  stack?: string[];
+  skillCategories?: { name: string; items: string[] }[];
+  experience?: ImprovedExperienceItem[];
+}

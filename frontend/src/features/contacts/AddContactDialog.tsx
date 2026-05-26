@@ -25,9 +25,9 @@ interface Props {
  */
 export function AddContactDialog({ open, onOpenChange }: Props) {
   const queryClient = useQueryClient();
-  // Берём всех клиентов без пагинации — для селектора этого достаточно.
-  // При росте >1000 клиентов стоит добавить асинхронный поиск.
-  const { data: clientsData } = useClients({ pageSize: 500 });
+  // Берём максимум клиентов за один запрос (бэкенд ограничивает pageSize до 200).
+  // При росте базы стоит перейти на асинхронный поиск по клиентам.
+  const { data: clientsData } = useClients({ pageSize: 200 });
 
   const createContact = useMutation({
     mutationFn: ({ clientId, payload }: { clientId: UUID; payload: CreateContactRequest }) =>

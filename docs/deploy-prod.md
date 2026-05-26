@@ -114,6 +114,9 @@ chmod 600 .env.prod
 | `S3_ACCESS_KEY` / `S3_SECRET_KEY` | из `tofu output -raw s3_access_key/s3_secret_key` |
 | `SENTRY_DSN` | (опционально) из Sentry-проекта prod |
 | `APP_BASE_URL` | `https://crm.lachevsky.ru` (НЕ голый `lachevsky.ru`, иначе invite-ссылки уйдут в никуда) |
+| `SMTP_PASSWORD` | пароль приложения из Яндекс ID для `noreply@lachevsky.group` (тот же, что на staging) |
+
+Без `SMTP_PASSWORD` invite-письма не уйдут — в ответе `POST /users` придёт `inviteUrl`, фронт покажет «Не удалось отправить письмо автоматически». Остальные `SMTP_*` уже под prod в example.
 
 `BACKUP_S3_BUCKET=crm-lg-staging-backups`, `BACKUP_S3_PREFIX=prod` — менять не надо, уже в example.
 

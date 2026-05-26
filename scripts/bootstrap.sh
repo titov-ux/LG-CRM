@@ -72,6 +72,14 @@ if ! command -v pnpm >/dev/null 2>&1; then
 fi
 (cd frontend && pnpm install --frozen-lockfile && pnpm build)
 
+# Если bootstrap запускали под sudo — pnpm создал node_modules/dist под root,
+# и обычный deploy-vm.sh от имени crm потом падает с EACCES при rm/rewrite.
+# Возвращаем владельца сразу, чтобы инкрементальный деплой работал.
+if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+    step "возвращаю владельца $SUDO_USER на $ROOT (после pnpm под root)"
+    chown -R "$SUDO_USER:$SUDO_USER" "$ROOT"
+fi
+
 # 4. Docker compose
 step "поднимаю стек"
 $COMPOSE pull --quiet || true

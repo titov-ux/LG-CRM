@@ -118,7 +118,10 @@ export function VacancyForm({
   const { data: users } = useUsers();
   // В качестве «ответственных рекрутеров» можно назначать и админов — они тоже ведут вакансии.
   const recruiters = (users ?? []).filter((u) => u.role === 'recruiter' || u.role === 'admin');
-  const accountManagers = (users ?? []).filter((u) => u.role === 'account_manager' && u.isActive);
+  // В поле «Ответственный менеджер» можно выбирать как аккаунт-менеджеров, так и админов.
+  const accountManagers = (users ?? []).filter(
+    (u) => (u.role === 'account_manager' || u.role === 'admin') && u.isActive,
+  );
   const [importOpen, setImportOpen] = useState(false);
 
   const form = useForm<VacancyFormValues>({

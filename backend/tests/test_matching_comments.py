@@ -125,6 +125,50 @@ def test_match_patch_and_delete(
     assert r.json() == []
 
 
+def test_match_detach_by_synthetic_id(
+    client: TestClient, admin_user, account_manager_user, recruiter_user
+) -> None:
+    """Фронт собирает matchId как `m-{vacancyId}-{candidateId}` (наследие MSW-моков).
+
+    Backend должен принимать этот формат наравне с настоящим UUID — иначе
+    кнопка «Открепить» на карточке вакансии валится 422-ой.
+    """
+    h = auth_headers(client, admin_user.email)
+    cid = client.post(
+        "/api/v1/clients", headers=h, json=_client_payload(account_manager_user.id)
+    ).json()["id"]
+    vid = client.post(
+        "/api/v1/vacancies", headers=h, json=_vac_payload(cid, account_manager_user.id)
+    ).json()["id"]
+    cand_id = client.post(
+        "/api/v1/candidates", headers=h, json=_cand_payload(recruiter_user.id)
+    ).json()["id"]
+    client.post(
+        f"/api/v1/vacancies/{vid}/candidates", headers=h, json={"candidateId": cand_id}
+    )
+
+    synthetic = f"m-{vid}-{cand_id}"
+
+    # PATCH по синтетическому id — меняем статус.
+    r = client.patch(
+        f"/api/v1/matches/{synthetic}",
+        headers=h,
+        json={"status": "interview"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "interview"
+
+    # DELETE по синтетическому id — откреп.
+    r = client.delete(f"/api/v1/matches/{synthetic}", headers=h)
+    assert r.status_code == 200, r.text
+    assert client.get(f"/api/v1/vacancies/{vid}/candidates", headers=h).json() == []
+
+    # Несуществующий id — 404, а не 422.
+    bogus = "m-00000000-0000-0000-0000-000000000000-00000000-0000-0000-0000-000000000000"
+    r = client.delete(f"/api/v1/matches/{bogus}", headers=h)
+    assert r.status_code == 404
+
+
 # ───── comments ─────
 
 

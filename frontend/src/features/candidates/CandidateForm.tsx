@@ -42,6 +42,7 @@ import type {
   WorkFormat,
 } from '@/api/types';
 import { useAuthStore } from '@/stores/auth';
+import { formatMoneyRub } from '@/lib/utils';
 
 const GRADES: Grade[] = ['Junior', 'Middle', 'Senior', 'Lead'];
 const FORMATS: WorkFormat[] = ['Удалённо', 'Гибрид', 'Офис'];
@@ -54,6 +55,18 @@ const LANGUAGE_LEVELS: LanguageLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2', '�
  */
 function uid(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+/**
+ * Делает первую букву каждого слова в ФИО заглавной — чтобы рекрутер не ловил
+ * «иванов иван» при быстром вводе. Капитализируем после пробела и после дефиса
+ * (для составных фамилий: «петров-водкин» → «Петров-Водкин»). Остальные буквы
+ * не трогаем — рекрутер мог осознанно написать «де Фриз» или «МакЛейн».
+ */
+function capitalizeFullName(value: string): string {
+  return value.replace(/(^|[\s\-])(\p{L})/gu, (_, sep: string, letter: string) =>
+    sep + letter.toLocaleUpperCase('ru-RU'),
+  );
 }
 
 /** Извлекает человекочитаемый текст ошибки из ApiError-конверта `{ code, message }`. */
@@ -397,7 +410,14 @@ export function CandidateForm({
             render={({ field }) => (
               <FormItem>
                 <FormLabel>ФИО</FormLabel>
-                <FormControl><Input {...field} placeholder="Иванов Иван Иванович" /></FormControl>
+                <FormControl>
+                  <Input
+                    {...field}
+                    placeholder="Иванов Иван Иванович"
+                    autoCapitalize="words"
+                    onChange={(e) => field.onChange(capitalizeFullName(e.target.value))}
+                  />
+                </FormControl>
                 <FormMessage />
               </FormItem>
             )}
@@ -467,7 +487,24 @@ export function CandidateForm({
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Ожидаемая ставка (₽/мес)</FormLabel>
-                  <FormControl><Input type="number" min={0} {...field} /></FormControl>
+                  <FormControl>
+                    <Input
+                      // type=text, чтобы можно было показывать «1 000» с разделителями;
+                      // inputMode=numeric — мобильная клавиатура с цифрами.
+                      // В стор/БД уходит чистое число — onChange приводит к Number.
+                      type="text"
+                      inputMode="numeric"
+                      placeholder="0"
+                      name={field.name}
+                      ref={field.ref}
+                      onBlur={field.onBlur}
+                      value={field.value ? formatMoneyRub(field.value) : ''}
+                      onChange={(e) => {
+                        const digits = e.target.value.replace(/\D/g, '');
+                        field.onChange(digits ? Number(digits) : 0);
+                      }}
+                    />
+                  </FormControl>
                   <FormMessage />
                 </FormItem>
               )}

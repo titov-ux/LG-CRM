@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { HTTPError } from 'ky';
+import { HTTPError, TimeoutError } from 'ky';
 import { FileDown, FileUp, Loader2, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
@@ -103,20 +103,48 @@ async function getPdfErrorDescription(error: unknown): Promise<string | null> {
 }
 
 async function extractAiErrorMessage(error: unknown): Promise<string> {
+  // ky обрывает запрос по своему таймауту (см. `client.ts` + override в `candidatesApi`).
+  // Это НЕ HTTPError, поэтому раньше падало в общий fallback и было непонятно,
+  // что именно пошло не так. Теперь сообщаем явно.
+  if (error instanceof TimeoutError) {
+    return (
+      'Запрос к AI занял слишком много времени и был прерван. ' +
+      'Попробуйте резюме покороче либо повторите попытку.'
+    );
+  }
   if (error instanceof HTTPError) {
+    let bodyText = '';
     try {
-      const body = (await error.response.clone().json()) as
-        | { detail?: { code?: string; message?: string }; message?: string }
-        | undefined;
-      const detail = body?.detail;
-      if (detail?.code === 'ai_unavailable') {
-        return detail.message ?? 'Сервис AI-распознавания временно недоступен. Попробуйте позже.';
-      }
-      if (detail?.message) return detail.message;
-      if (body?.message) return body.message;
+      bodyText = await error.response.clone().text();
     } catch {
-      // ignore invalid json
+      // ignore — некоторые ошибки приходят без тела (CORS / отвалившаяся сеть)
     }
+    if (bodyText) {
+      try {
+        const body = JSON.parse(bodyText) as
+          | { detail?: { code?: string; message?: string }; message?: string }
+          | undefined;
+        const detail = body?.detail;
+        if (detail?.code === 'ai_unavailable') {
+          return (
+            detail.message ?? 'Сервис AI-распознавания временно недоступен. Попробуйте позже.'
+          );
+        }
+        if (detail?.message) return detail.message;
+        if (body?.message) return body.message;
+      } catch {
+        // тело есть, но это не JSON — отдадим первую сотню символов как намёк
+        const trimmed = bodyText.trim();
+        if (trimmed) {
+          return `Ошибка ${error.response.status}: ${trimmed.slice(0, 200)}`;
+        }
+      }
+    }
+    return `Ошибка ${error.response.status} от сервера. Проверьте сеть и попробуйте ещё раз.`;
+  }
+  // network error / TypeError и пр. — отдаём message, если он информативен
+  if (error instanceof Error && error.message) {
+    return `Не удалось обратиться к серверу: ${error.message}`;
   }
   return 'Не удалось распознать файл. Проверьте содержимое или попробуйте другой документ.';
 }
@@ -257,6 +285,10 @@ export function ResumeFormatterPage() {
       try {
         parsedResponse = await candidatesApi.parseResumeText(rawText);
       } catch (apiError) {
+        // Логируем оригинал — без этого в проде не видно, был ли TimeoutError,
+        // 5xx от Yandex AI или что-то ещё. Описание тоста переводит причину
+        // в человекочитаемый текст.
+        console.error('[resume-formatter] parseResumeText failed', apiError);
         const message = await extractAiErrorMessage(apiError);
         toast.error('Не удалось распознать резюме', { description: message });
         return;

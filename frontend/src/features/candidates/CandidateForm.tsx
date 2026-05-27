@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFieldArray, useForm, useWatch, type Control } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { HTTPError } from 'ky';
+import { HTTPError, TimeoutError } from 'ky';
 import { Loader2, Plus, Sparkles, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -52,6 +52,14 @@ function uid(prefix: string): string {
 
 /** Извлекает человекочитаемый текст ошибки из ApiError-конверта `{ code, message }`. */
 async function extractAiErrorMessage(e: unknown): Promise<string> {
+  // ky-овский таймаут — не HTTPError. До этого фикса попадал в общий fallback
+  // и пользователь видел невнятное «Не удалось распознать резюме».
+  if (e instanceof TimeoutError) {
+    return (
+      'Запрос к AI занял слишком много времени и был прерван. ' +
+      'Попробуйте резюме покороче либо повторите попытку.'
+    );
+  }
   if (e instanceof HTTPError) {
     try {
       const body = (await e.response.clone().json()) as
@@ -251,6 +259,9 @@ export function CandidateForm({
       try {
         parsedResponse = await candidatesApi.parseResumeText(rawText);
       } catch (apiErr) {
+        // Логируем сырую ошибку — иначе непонятно, был ли TimeoutError,
+        // 5xx или сетевая. Тост — для пользователя, console — для дебага.
+        console.error('[candidate-form] parseResumeText failed', apiErr);
         const msg = await extractAiErrorMessage(apiErr);
         toast.error('Не удалось распознать резюме', { description: msg });
         return;

@@ -60,31 +60,49 @@ export const candidatesApi = {
     api.patch(`candidates/${id}/status`, { json: { status, comment } }).json<Candidate>(),
   reorderKanban: (updates: { id: UUID; status: CandidateStatus; kanbanOrder: number }[]) =>
     api.put('candidates/kanban-order', { json: { updates } }).json<Candidate[]>(),
-  /** AI-распознавание сплошного текста резюме → структурированные поля формы. */
+  /**
+   * AI-распознавание сплошного текста резюме → структурированные поля формы.
+   *
+   * Таймаут переопределён: глобальные 15с (см. `client.ts`) короче, чем
+   * `yandex_ai_timeout_seconds=30` на бэке, и для больших резюме
+   * (HH-PDF на 5-8 страниц, `max_tokens=12000`) YandexGPT отвечает 20-30с.
+   * Без override ky обрывает запрос раньше → фронт ловит TimeoutError и
+   * показывает общий «Не удалось распознать файл…» вместо реальной ошибки.
+   */
   parseResumeText: (text: string) =>
     api
-      .post('candidates/parse-resume-text', { json: { text } })
+      .post('candidates/parse-resume-text', { json: { text }, timeout: 60_000 })
       .json<{ parsed: ParsedCandidate }>(),
   /**
    * Извлечение текста из бинарного .doc через серверный antiword.
    * Используется только в форматтере резюме — у .doc нет браузерного декодера.
    * Размер файла ограничен 10 МБ; ошибки парсера приходят с кодами
    * `doc_extract_*` (см. backend candidates.py).
+   *
+   * Таймаут 60с: antiword обычно отрабатывает за 1-2с, но загрузка крупного
+   * файла через мобильный канал + холодный backend могут не уложиться в 15с.
    */
   extractDocText: (file: File) => {
     const fd = new FormData();
     fd.append('file', file);
-    return api.post('candidates/extract-doc', { body: fd }).json<{ text: string }>();
+    return api
+      .post('candidates/extract-doc', { body: fd, timeout: 60_000 })
+      .json<{ text: string }>();
   },
   /**
    * AI-адаптация резюме кандидата под конкретную вакансию.
    * Возвращает только поля, которые AI решил изменить (summary / experienceYears /
    * stack / skillCategories / experience). Поле `experience` приходит ТОЙ ЖЕ длины,
    * что у кандидата — мерджим по индексу, никаких новых компаний быть не должно.
+   *
+   * Таймаут 60с — те же причины, что у `parseResumeText`.
    */
   improveResumeForVacancy: (candidateId: UUID, vacancyId: UUID) =>
     api
-      .post(`candidates/${candidateId}/resume/improve`, { json: { vacancyId } })
+      .post(`candidates/${candidateId}/resume/improve`, {
+        json: { vacancyId },
+        timeout: 60_000,
+      })
       .json<{ improvement: ImprovedResume }>(),
 };
 

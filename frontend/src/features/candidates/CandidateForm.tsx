@@ -8,7 +8,13 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { extractPdfText, parsedToFormValues } from './resumeImport';
+import {
+  detectResumeFormat,
+  extractResumeText,
+  parsedToFormValues,
+  RESUME_ACCEPT,
+  RESUME_FORMATS_LABEL,
+} from './resumeImport';
 import { candidatesApi } from '@/api/candidates';
 import {
   Form,
@@ -90,10 +96,10 @@ async function extractAiErrorMessage(e: unknown): Promise<string> {
       return 'Сервис AI-распознавания временно недоступен. Заполните карточку вручную.';
     }
     if (e.response.status === 502) {
-      return 'Не удалось распознать резюме. Попробуйте другой PDF или заполните вручную.';
+      return 'Не удалось распознать резюме. Попробуйте другой файл или заполните вручную.';
     }
   }
-  return 'Не удалось распознать резюме. Попробуйте другой PDF или заполните вручную.';
+  return 'Не удалось распознать резюме. Попробуйте другой файл или заполните вручную.';
 }
 
 const skillCategorySchema = z.object({
@@ -236,19 +242,41 @@ export function CandidateForm({
   }, [defaultValues?.recruiterId, watchedRecruiterId, currentUser, recruiters, form]);
 
   // ──────────────────────────────────────────────────────────────────────────
-  // Импорт резюме из PDF («Распознать из файла»)
+  // Импорт резюме («Распознать из файла»)
+  //
+  // Поддерживаются те же форматы, что и в форматтере: PDF/DOCX/DOC/RTF/TXT/HTML.
+  // Логика: detect → extract (через resumeImport) → AI-парсинг → мерж в форму.
   // ──────────────────────────────────────────────────────────────────────────
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [importing, setImporting] = useState(false);
 
   const handleResumeFile = async (file: File) => {
+    const format = detectResumeFormat(file);
+    if (!format) {
+      toast.error(`Поддерживаются ${RESUME_FORMATS_LABEL}`);
+      return;
+    }
+
     setImporting(true);
     try {
-      // 1) PDF → сплошной текст (по-прежнему на фронте, pdfjs через CDN).
-      const rawText = await extractPdfText(file);
+      // 1) Файл → сплошной текст. Для .doc извлечение идёт через бэкенд
+      //    (antiword) — у него осмысленные коды ошибок, поэтому ловим отдельно.
+      let rawText: string;
+      try {
+        rawText = await extractResumeText(file, format);
+      } catch (extractErr) {
+        if (format === 'doc') {
+          const msg = await extractAiErrorMessage(extractErr);
+          toast.error('Не удалось обработать .doc', { description: msg });
+          return;
+        }
+        throw extractErr;
+      }
+
       if (!rawText.trim()) {
-        toast.warning('В PDF не найден текстовый слой', {
-          description: 'Похоже, это скан. Попробуйте PDF с текстом или заполните карточку вручную.',
+        toast.warning('В файле не найден текст', {
+          description:
+            'Похоже, это скан или пустой документ. Попробуйте другой файл или заполните карточку вручную.',
         });
         return;
       }
@@ -271,7 +299,7 @@ export function CandidateForm({
 
       if (filledFields.length === 0) {
         toast.warning('Не удалось распознать данные из файла', {
-          description: 'Заполните карточку вручную или попробуйте другой PDF.',
+          description: 'Заполните карточку вручную или попробуйте другой файл.',
         });
         return;
       }
@@ -303,8 +331,8 @@ export function CandidateForm({
       toast.success(`Распознано: ${filledFields.join(', ')}`);
     } catch (err) {
       console.error('[resume-import] failed', err);
-      toast.error('Не удалось прочитать PDF', {
-        description: 'Проверьте, что файл не зашифрован и не битый.',
+      toast.error('Не удалось обработать файл', {
+        description: 'Проверьте, что файл не зашифрован и не повреждён.',
       });
     } finally {
       setImporting(false);
@@ -338,7 +366,7 @@ export function CandidateForm({
             <input
               ref={fileInputRef}
               type="file"
-              accept="application/pdf,.pdf"
+              accept={RESUME_ACCEPT}
               className="hidden"
               onChange={(e) => {
                 const file = e.target.files?.[0];

@@ -24,6 +24,7 @@ import {
   useRenameGroup,
 } from './hooks';
 import { useChatStore } from './store';
+import { useOnlineUsers } from './useOnlineUsers';
 import { useUsers } from '@/features/users/hooks';
 import { useAuthStore } from '@/stores/auth';
 import { cn } from '@/lib/utils';
@@ -39,6 +40,7 @@ export function MembersSheet({ open, onOpenChange, conversation }: Props) {
   const { data: users = [] } = useUsers();
   const meId = useAuthStore((s) => s.user?.id) ?? null;
   const setActive = useChatStore((s) => s.setActiveConversation);
+  const onlineUserIds = useOnlineUsers();
 
   const memberUsers = conversation.memberIds
     .map((id) => users.find((u) => u.id === id))
@@ -164,13 +166,21 @@ export function MembersSheet({ open, onOpenChange, conversation }: Props) {
           {memberUsers.map((u) => {
             const isMe = u.id === meId;
             const isOwner = u.id === conversation.createdBy;
+            const isOnline = onlineUserIds.has(u.id);
+            const roleLabel = isOwner ? 'Владелец' : 'Участник';
             return (
               <div
                 key={u.id}
                 className="group flex items-center gap-3 rounded-md px-3 py-1.5 hover:bg-muted/40"
               >
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-muted text-[10.5px] font-medium text-foreground/70">
+                <span className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-muted text-[10.5px] font-medium text-foreground/70">
                   {u.initials}
+                  {isOnline && (
+                    <span
+                      className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border border-background bg-emerald-500"
+                      aria-label="онлайн"
+                    />
+                  )}
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[13px] font-medium">
@@ -179,7 +189,15 @@ export function MembersSheet({ open, onOpenChange, conversation }: Props) {
                     )}
                   </span>
                   <span className="block truncate text-[11px] text-muted-foreground">
-                    {isOwner ? 'Владелец' : 'Участник'}
+                    {roleLabel}
+                    {isOnline && (
+                      <>
+                        {' · '}
+                        <span className="text-emerald-600 dark:text-emerald-400">
+                          в сети
+                        </span>
+                      </>
+                    )}
                   </span>
                 </span>
                 {amOwner && !isMe && (

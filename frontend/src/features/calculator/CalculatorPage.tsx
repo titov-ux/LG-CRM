@@ -200,9 +200,6 @@ export function CalculatorPage() {
                     <span className="text-[12px] text-muted-foreground">%</span>
                   </div>
                 </div>
-                <p className="text-[10.5px] text-muted-foreground">
-                  Маржа агентства: {formatMoneyRub(row.agencyMargin)} ₽/мес
-                </p>
               </div>
 
               {/* Главное число — «на руки» */}
@@ -223,16 +220,6 @@ export function CalculatorPage() {
 
               {/* Раскладка */}
               <dl className="space-y-1.5 text-[12px]">
-                <Row
-                  label="Зарплата «до» (брутто)"
-                  value={`${formatMoneyRub(row.grossCap)} ₽`}
-                  emphasize
-                />
-                <Row
-                  label={`Налоги/взносы (${Math.round(EMPLOYMENT_TAX_RATE[row.type] * 100)}%)`}
-                  value={`−${formatMoneyRub(row.tax)} ₽`}
-                  muted
-                />
                 <Row
                   label="На руки"
                   value={`${formatMoneyRub(row.net)} ₽`}

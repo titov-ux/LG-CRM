@@ -7,8 +7,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { formatMoneyRub } from '@/lib/utils';
-import { calcMatchCompensation, pairSupportsMargin } from '@/lib/compensation';
+import { pairSupportsMargin } from '@/lib/compensation';
 import { MarginBadge } from './MarginBadge';
 import type { Candidate, Vacancy } from '@/api/types';
 
@@ -41,18 +40,9 @@ export function MatchCompensationRow({
   onDownloadImproved,
   improving,
 }: Props) {
-  // В агентской модели маржа и «на руки» бессмысленны: LG получает разовый fee,
-  // а не платит кандидату ежемесячно. Поэтому полный расчёт компенсации делаем
-  // только для outstaff-пары, иначе показываем упрощённый ряд.
+  // В агентской модели маржа бессмысленна: LG получает разовый fee,
+  // а не платит кандидату ежемесячно. Маржу показываем только для outstaff-пары.
   const showMargin = pairSupportsMargin(vacancy, candidate);
-  const comp = showMargin
-    ? calcMatchCompensation({
-        rateClient: vacancy.rateClient,
-        rateMonth: candidate.rateMonth,
-        employmentType: candidate.employmentType,
-        hoursPerMonth,
-      })
-    : null;
 
   return (
     <div className="group flex items-center rounded-md border bg-muted/30 hover:bg-muted">
@@ -78,20 +68,6 @@ export function MatchCompensationRow({
       </button>
 
       <div className="flex shrink-0 items-center gap-2 pr-2">
-        <div className="text-right">
-          {/* Для outstaff показываем «на руки» (после налогов) — это конкретика, важная
-              рекрутёру при разговоре с кандидатом. Для агентской пары comp нет
-              (мы не платим кандидату ежемесячно), поэтому fallback — ожидаемый rateMonth. */}
-          {comp ? (
-            <div className="tnum text-[11.5px] leading-none text-muted-foreground">
-              на руки {formatMoneyRub(comp.candidateNet)} ₽
-            </div>
-          ) : (
-            <div className="tnum text-[11.5px] leading-none text-muted-foreground">
-              {formatMoneyRub(candidate.rateMonth)} ₽/мес
-            </div>
-          )}
-        </div>
         {showMargin && (
           <MarginBadge
             vacancy={vacancy}

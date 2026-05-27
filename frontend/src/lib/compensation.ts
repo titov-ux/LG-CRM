@@ -7,9 +7,11 @@ import type { Candidate, EmploymentType, EngagementType, Vacancy } from '@/api/t
  * Допущения, согласованные с продактом:
  *   • Vacancy.rateClient — почасовая ставка от клиента (₽/час).
  *   • Месячная выручка от клиента = rateClient × часы_в_месяц (по умолчанию 160).
- *   • Candidate.rateMonth — то, что мы платим кандидату в месяц (брутто его «оформления»).
- *   • НПД/УСН/НДФЛ удерживаются ИЗ rateMonth — это «на руки» кандидата.
- *   • Маржа = (выручка_от_клиента − rateMonth) / выручка_от_клиента.
+ *   • Candidate.rateMonth — это «на руки» кандидату в месяц (нетто, после удержаний).
+ *     Так же, как «оклад до» в карточке вакансии и калькуляторе — все они «на руки».
+ *   • Брутто-себестоимость для агентства = rateMonth / (1 − налог), потому что
+ *     НДФЛ/УСН/НПД мы платим/удерживаем сверх «на руки».
+ *   • Маржа = (выручка_от_клиента − брутто_себестоимость) / выручка_от_клиента.
  *
  * Налоговые ставки:
  *   • ТК РФ — −30% (НДФЛ + страховые взносы)
@@ -62,8 +64,12 @@ export function monthlyClientRevenue(rateClient: number, hoursPerMonth = DEFAULT
 }
 
 /**
- * Чистая выплата кандидату «на руки» в месяц после налогов.
- * round10k повторяет поведение исходного rate.html.
+ * Чистая выплата кандидату «на руки» в месяц после налогов — из брутто-«оклада до».
+ * Используется только для расчёта «потолка оклада» в калькуляторе и в карточке
+ * вакансии. round10k повторяет поведение исходного rate.html.
+ *
+ * NB: для уже введённого Candidate.rateMonth эта функция не нужна — оно само
+ * хранится как «на руки».
  */
 export function netToCandidate(rateMonth: number, employmentType: EmploymentType): number {
   const rate = EMPLOYMENT_TAX_RATE[employmentType] ?? 0;
@@ -71,24 +77,49 @@ export function netToCandidate(rateMonth: number, employmentType: EmploymentType
 }
 
 /**
- * Маржа в долях (0..1). Если выручка ≤ 0 — возвращаем 0.
- * Может быть отрицательной, если ставка кандидата выше выручки от клиента —
- * это сигнал «убыточный мэтч».
+ * Брутто-себестоимость кандидата для агентства (то, во что нам обходится
+ * выплатить ему `rateNet` «на руки» с учётом налогов).
+ *   ТК РФ: 30% — НДФЛ + страховые. Чтобы дать кандидату N, выплачиваем N / 0.7.
+ *   ИП/СМЗ: 6.5% — УСН/НПД. Чтобы дать кандидату N, выплачиваем N / 0.935.
  */
-export function marginShare(clientRevenue: number, rateMonth: number): number {
+export function grossFromNet(rateNet: number, employmentType: EmploymentType): number {
+  const rate = EMPLOYMENT_TAX_RATE[employmentType] ?? 0;
+  // 1 - rate всегда > 0 для известных типов, на всякий случай страхуем нижний предел.
+  const keep = Math.max(1e-6, 1 - rate);
+  return Math.max(0, rateNet) / keep;
+}
+
+/**
+ * Маржа в долях (0..1). Если выручка ≤ 0 — возвращаем 0.
+ * Может быть отрицательной, если себестоимость кандидата (брутто) выше выручки
+ * от клиента — это сигнал «убыточный мэтч».
+ *
+ * Важно: `rateMonthNet` — это «на руки» кандидату (как введено в карточку).
+ * Брутто-стоимость для агентства считается через `grossFromNet`.
+ */
+export function marginShare(
+  clientRevenue: number,
+  rateMonthNet: number,
+  employmentType: EmploymentType,
+): number {
   if (clientRevenue <= 0) return 0;
-  return (clientRevenue - rateMonth) / clientRevenue;
+  const gross = grossFromNet(rateMonthNet, employmentType);
+  return (clientRevenue - gross) / clientRevenue;
 }
 
 /** Маржа в процентах, округлённая до целых. */
-export function marginPercent(clientRevenue: number, rateMonth: number): number {
-  return Math.round(marginShare(clientRevenue, rateMonth) * 100);
+export function marginPercent(
+  clientRevenue: number,
+  rateMonthNet: number,
+  employmentType: EmploymentType,
+): number {
+  return Math.round(marginShare(clientRevenue, rateMonthNet, employmentType) * 100);
 }
 
 export interface MatchCompensation {
   /** Месячная выручка от клиента, ₽. */
   clientRevenue: number;
-  /** Месячная себестоимость = rateMonth кандидата, ₽. */
+  /** Месячная брутто-себестоимость для агентства (rateMonth + налоги), ₽. */
   candidateCost: number;
   /** Маржа в процентах (может быть отрицательной). */
   marginPct: number;
@@ -105,19 +136,20 @@ export interface MatchCompensation {
 /** Полный расчёт компенсации для пары «вакансия ↔ кандидат». */
 export function calcMatchCompensation(params: {
   rateClient: number;
+  /** Сколько кандидат хочет «на руки» в месяц (нетто). */
   rateMonth: number;
   employmentType: EmploymentType;
   hoursPerMonth?: number;
 }): MatchCompensation {
   const hours = params.hoursPerMonth ?? DEFAULT_HOURS_PER_MONTH;
   const clientRevenue = monthlyClientRevenue(params.rateClient, hours);
-  const candidateCost = Math.max(0, params.rateMonth);
-  const candidateNet = netToCandidate(candidateCost, params.employmentType);
+  const candidateNet = Math.max(0, params.rateMonth);
+  const candidateCost = grossFromNet(candidateNet, params.employmentType);
   const candidateTax = Math.max(0, candidateCost - candidateNet);
   return {
     clientRevenue,
     candidateCost,
-    marginPct: marginPercent(clientRevenue, candidateCost),
+    marginPct: marginPercent(clientRevenue, candidateNet, params.employmentType),
     marginAbs: clientRevenue - candidateCost,
     candidateNet,
     candidateTax,

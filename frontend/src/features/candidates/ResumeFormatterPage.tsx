@@ -14,7 +14,15 @@ import { candidatesApi } from '@/api/candidates';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { extractDocxText, extractPdfText, parsedToFormValues, type ParsedCandidate } from './resumeImport';
+import {
+  extractDocText,
+  extractDocxText,
+  extractPdfText,
+  extractRtfText,
+  extractTxtText,
+  parsedToFormValues,
+  type ParsedCandidate,
+} from './resumeImport';
 import {
   downloadResumePdf,
   generateResumeDocxBlob,
@@ -45,15 +53,36 @@ function normalizeFileName(rawName: string): string {
   return noExt.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-function isPdfFile(file: File): boolean {
-  return file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
-}
+type ResumeFormat = 'pdf' | 'docx' | 'doc' | 'rtf' | 'txt';
 
-function isDocxFile(file: File): boolean {
-  return (
-    file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
-    file.name.toLowerCase().endsWith('.docx')
-  );
+/**
+ * Определяем формат по расширению + MIME (extension важнее, потому что
+ * .doc/.docx у Windows-юзеров часто приходят с одинаковым `application/msword`).
+ */
+function detectResumeFormat(file: File): ResumeFormat | null {
+  const name = file.name.toLowerCase();
+  if (name.endsWith('.pdf')) return 'pdf';
+  if (name.endsWith('.docx')) return 'docx';
+  if (name.endsWith('.doc')) return 'doc';
+  if (name.endsWith('.rtf')) return 'rtf';
+  if (name.endsWith('.txt')) return 'txt';
+
+  switch (file.type) {
+    case 'application/pdf':
+      return 'pdf';
+    case 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+      return 'docx';
+    case 'application/msword':
+      // Без расширения отличить .doc от .docx по MIME нельзя — пусть будет .doc.
+      return 'doc';
+    case 'application/rtf':
+    case 'text/rtf':
+      return 'rtf';
+    case 'text/plain':
+      return 'txt';
+    default:
+      return null;
+  }
 }
 
 async function getPdfErrorDescription(error: unknown): Promise<string | null> {
@@ -178,14 +207,44 @@ export function ResumeFormatterPage() {
   const [pdfPending, setPdfPending] = useState(false);
 
   const handleParseFile = async (file: File) => {
-    if (!isPdfFile(file) && !isDocxFile(file)) {
-      toast.error('Поддерживаются только PDF и DOCX');
+    const format = detectResumeFormat(file);
+    if (!format) {
+      toast.error('Поддерживаются PDF, DOCX, DOC, RTF и TXT');
       return;
     }
 
     setParsing(true);
     try {
-      const rawText = isPdfFile(file) ? await extractPdfText(file) : await extractDocxText(file);
+      let rawText: string;
+      try {
+        switch (format) {
+          case 'pdf':
+            rawText = await extractPdfText(file);
+            break;
+          case 'docx':
+            rawText = await extractDocxText(file);
+            break;
+          case 'doc':
+            // .doc идёт через бэкенд (antiword) — отдельная ветка для ошибок.
+            rawText = await extractDocText(file);
+            break;
+          case 'rtf':
+            rawText = await extractRtfText(file);
+            break;
+          case 'txt':
+            rawText = await extractTxtText(file);
+            break;
+        }
+      } catch (extractError) {
+        // Для .doc приходят осмысленные сообщения от бэкенда (HTTPError) —
+        // показываем их пользователю, иначе общий тост в catch ниже.
+        if (format === 'doc') {
+          const message = await extractAiErrorMessage(extractError);
+          toast.error('Не удалось обработать .doc', { description: message });
+          return;
+        }
+        throw extractError;
+      }
 
       if (!rawText.trim()) {
         toast.warning('В файле не найден текст', {
@@ -289,8 +348,8 @@ export function ResumeFormatterPage() {
         <div>
           <h1 className="text-[15px] font-semibold tracking-tight">Оформление резюме</h1>
           <p className="text-[11.5px] text-muted-foreground">
-            Загрузите исходное резюме в PDF или DOCX. Сервис распознает данные и подготовит выгрузку в
-            корпоративном формате.
+            Загрузите исходное резюме в PDF, DOCX, DOC, RTF или TXT. Сервис распознает данные и
+            подготовит выгрузку в корпоративном формате.
           </p>
         </div>
       </div>
@@ -299,7 +358,8 @@ export function ResumeFormatterPage() {
         <CardHeader className="p-4 pb-2">
           <CardTitle className="text-[13px]">Загрузка и распознавание</CardTitle>
           <CardDescription className="text-[12px]">
-            Поддерживаются файлы `PDF` и `DOCX`. После обработки станут доступны кнопки выгрузки.
+            Поддерживаются файлы `PDF`, `DOCX`, `DOC`, `RTF` и `TXT`. После обработки станут доступны
+            кнопки выгрузки.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3 p-4 pt-2">
@@ -329,7 +389,19 @@ export function ResumeFormatterPage() {
           <input
             ref={inputRef}
             type="file"
-            accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx"
+            accept={[
+              'application/pdf',
+              '.pdf',
+              'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+              '.docx',
+              'application/msword',
+              '.doc',
+              'application/rtf',
+              'text/rtf',
+              '.rtf',
+              'text/plain',
+              '.txt',
+            ].join(',')}
             className="hidden"
             onChange={(e) => {
               const file = e.target.files?.[0];

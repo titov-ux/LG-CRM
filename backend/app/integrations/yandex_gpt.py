@@ -47,6 +47,16 @@ class AiBadRequestError(AiError):
     """4xx от Yandex AI Studio — обычно проблема с промптом/настройками."""
 
 
+class AiTruncatedJsonError(AiError):
+    """Модель оборвала JSON-ответ по достижении max_tokens.
+
+    Содержательно это «вход/выход слишком большой для текущего лимита».
+    Endpoint'у имеет смысл показать пользователю отдельный понятный текст
+    («резюме слишком большое, сократите и попробуйте ещё раз»), а не общий
+    `ai_unavailable`.
+    """
+
+
 class YandexGptClient:
     """Минимальный клиент Yandex AI Studio Chat Completions.
 
@@ -139,9 +149,14 @@ class YandexGptClient:
             raise AiUnavailableError(f"bad json from yandex: {exc}") from exc
 
         try:
-            content = body["choices"][0]["message"]["content"]
+            choice = body["choices"][0]
+            content = choice["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
             raise AiUnavailableError(f"unexpected yandex response shape: {exc}") from exc
+
+        # OpenAI-совместимый ответ кладёт сюда 'stop' / 'length' / 'tool_calls'.
+        # 'length' = модель дошла до max_tokens — JSON почти наверняка оборван.
+        finish_reason = choice.get("finish_reason") if isinstance(choice, dict) else None
 
         if not isinstance(content, str) or not content.strip():
             raise AiUnavailableError("empty content from yandex")
@@ -149,6 +164,10 @@ class YandexGptClient:
         try:
             parsed = json.loads(content)
         except json.JSONDecodeError as exc:
+            if finish_reason == "length":
+                raise AiTruncatedJsonError(
+                    f"yandex truncated response at max_tokens={max_tokens}: {exc}"
+                ) from exc
             raise AiUnavailableError(f"bad json in yandex content: {exc}") from exc
 
         if not isinstance(parsed, dict):

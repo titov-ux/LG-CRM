@@ -6,7 +6,7 @@ import uuid
 from datetime import date
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ApiError
@@ -16,11 +16,13 @@ from app.modules.auth.schemas import OkResponse
 from app.modules.candidates import service
 from app.modules.candidates.ai import (
     AiBadRequestError,
+    AiTruncatedJsonError,
     AiUnavailableError,
     parse_resume_text,
 )
-from app.modules.candidates.resume_ai import improve_resume_for_vacancy
+from app.modules.candidates.doc_extractor import DocExtractError, extract_doc_text
 from app.modules.candidates.models import Candidate, CandidateStatus, EmploymentType
+from app.modules.candidates.resume_ai import improve_resume_for_vacancy
 from app.modules.candidates.schemas import (
     ArchiveRequest,
     CandidateKanbanOrderRequest,
@@ -28,16 +30,17 @@ from app.modules.candidates.schemas import (
     CandidateResponse,
     ChangeCandidateStatusRequest,
     CreateCandidateRequest,
+    ExtractDocResponse,
+    ImprovedResume,
     ImproveResumeRequest,
     ImproveResumeResponse,
-    ImprovedResume,
     ParsedCandidate,
     ParseResumeTextRequest,
     ParseResumeTextResponse,
     UpdateCandidateRequest,
 )
-from app.modules.vacancies import service as vacancies_service
 from app.modules.users.models import Role, User
+from app.modules.vacancies import service as vacancies_service
 from app.modules.vacancies.models import EngagementType, Grade
 
 router = APIRouter(prefix="/candidates", tags=["candidates"])
@@ -121,6 +124,16 @@ async def parse_resume(
             payload.text,
             today=date.today().isoformat(),
         )
+    except AiTruncatedJsonError as exc:
+        # Модель обрезала JSON по max_tokens — обычно слишком большое резюме.
+        # Отдаём 413, чтобы фронт показал «сократите резюме», а не общий 503.
+        logger.warning("candidates.parse_resume truncated: %s", exc)
+        raise ApiError(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            "resume_too_long",
+            "Резюме слишком большое для AI-распознавания. Сократите текст "
+            "или заполните карточку вручную.",
+        ) from exc
     except AiUnavailableError as exc:
         logger.warning("candidates.parse_resume unavailable: %s", exc)
         raise ApiError(
@@ -152,6 +165,67 @@ async def parse_resume(
         cleaned = {k: v for k, v in parsed_raw.items() if k not in bad_keys}
         parsed = ParsedCandidate.model_validate(cleaned)
     return ParseResumeTextResponse(parsed=parsed)
+
+
+# Лимит на размер загружаемого .doc (10 МБ). Antiword без -w 0 ест мало
+# памяти, но .doc-файлы >10МБ — это почти всегда сканы с картинками, парсер
+# для них бесполезен.
+_DOC_MAX_BYTES = 10 * 1024 * 1024
+
+
+@router.post(
+    "/extract-doc",
+    response_model=ExtractDocResponse,
+    summary="Извлечение текста из бинарного .doc (Word 97-2003)",
+)
+async def extract_doc(
+    file: UploadFile = File(...),
+    _: User = Depends(get_current_user),
+) -> ExtractDocResponse:
+    """Принимает .doc, возвращает plain-текст через antiword.
+
+    Для .docx/.pdf/.rtf/.txt парсинг делается на фронте — этот эндпоинт нужен
+    только потому, что у .doc нет адекватного браузерного декодера. После
+    извлечения текста фронт пушит результат в /candidates/parse-resume-text.
+    """
+    filename = (file.filename or "").strip()
+    if not filename.lower().endswith(".doc"):
+        raise ApiError(
+            status.HTTP_400_BAD_REQUEST,
+            "doc_extract_bad_type",
+            "Поддерживается только формат .doc (Word 97-2003). Для .docx используйте "
+            "клиентский парсер.",
+        )
+
+    data = await file.read()
+    if len(data) == 0:
+        raise ApiError(
+            status.HTTP_400_BAD_REQUEST,
+            "doc_extract_empty_upload",
+            "Файл пустой.",
+        )
+    if len(data) > _DOC_MAX_BYTES:
+        raise ApiError(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            "doc_extract_too_large",
+            f"Файл больше {_DOC_MAX_BYTES // (1024 * 1024)} МБ. Уменьшите размер.",
+        )
+
+    try:
+        text = extract_doc_text(data, filename=filename)
+    except DocExtractError as exc:
+        # `doc_extract_unavailable` → 503 (antiword не установлен);
+        # `doc_extract_too_large` уже отсеяли выше;
+        # `doc_extract_empty`/`doc_extract_timeout` и общий fail → 422.
+        if exc.code == "doc_extract_unavailable":
+            http_status = status.HTTP_503_SERVICE_UNAVAILABLE
+        elif exc.code == "doc_extract_timeout":
+            http_status = status.HTTP_504_GATEWAY_TIMEOUT
+        else:
+            http_status = status.HTTP_422_UNPROCESSABLE_ENTITY
+        raise ApiError(http_status, exc.code, exc.message) from exc
+
+    return ExtractDocResponse(text=text)
 
 
 @router.get("", response_model=CandidatePage, summary="Список кандидатов с фильтрами")

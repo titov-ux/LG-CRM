@@ -58,6 +58,12 @@ async function extractAiErrorMessage(e: unknown): Promise<string> {
         | { detail?: { code?: string; message?: string }; message?: string }
         | undefined;
       const detail = body?.detail;
+      if (detail?.code === 'resume_too_long') {
+        return (
+          detail.message ??
+          'Резюме слишком большое для AI-распознавания. Сократите текст или заполните карточку вручную.'
+        );
+      }
       if (detail?.code === 'ai_unavailable') {
         return (
           detail.message ??
@@ -68,6 +74,9 @@ async function extractAiErrorMessage(e: unknown): Promise<string> {
       if (body?.message) return body.message;
     } catch {
       // не JSON — fallthrough
+    }
+    if (e.response.status === 413) {
+      return 'Резюме слишком большое для AI-распознавания. Сократите текст или заполните карточку вручную.';
     }
     if (e.response.status === 503) {
       return 'Сервис AI-распознавания временно недоступен. Заполните карточку вручную.';

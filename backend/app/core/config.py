@@ -86,7 +86,10 @@ class Settings(BaseSettings):
     # response_format=json_schema). Для стабильной — `yandexgpt/latest`.
     yandex_ai_model: str = "yandexgpt/rc"
     yandex_ai_timeout_seconds: float = 30.0
-    yandex_ai_max_input_chars: int = 20000
+    # 7-страничные HH-резюме доходят до ~25-30к символов; 20к обрезал последние
+    # секции (образование, языки). 40к ≈ 13-18к токенов на вход — укладывается
+    # в 32к-контекст yandexgpt/rc вместе с system-промптом и schema.
+    yandex_ai_max_input_chars: int = 40000
 
 
 @lru_cache(maxsize=1)

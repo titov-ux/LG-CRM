@@ -9,6 +9,9 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential libpq-dev curl \
+    # antiword — конвертация бинарного .doc (Word 97-2003) в текст для
+    # /candidates/extract-doc. Лёгкий (~100КБ), без зависимостей.
+    antiword \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml ./

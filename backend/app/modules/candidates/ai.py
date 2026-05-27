@@ -39,6 +39,7 @@ from typing import Any
 from app.core.config import get_settings
 from app.integrations.yandex_gpt import (
     AiBadRequestError,
+    AiTruncatedJsonError,
     AiUnavailableError,
     YandexGptClient,
 )
@@ -791,8 +792,11 @@ async def parse_resume_text(text: str, *, today: str) -> dict[str, Any]:
         user=snippet,
         schema_name="parsed_candidate",
         schema=PARSED_CANDIDATE_SCHEMA,
-        # Резюме большие; даём модели запас на выходной JSON с experience-блоками.
-        max_tokens=4096,
+        # Резюме большие (HH-PDF на 6-8 страниц с десятками буллетов в опыте
+        # разворачивается в JSON на 5-8к токенов). Прежний лимит 4096 регулярно
+        # обрезал ответ на середине, json.loads падал → 503 ai_unavailable.
+        # yandexgpt/rc держит общий контекст 32к токенов, запас остаётся.
+        max_tokens=12000,
     )
     return _coerce_parsed(raw)
 
@@ -800,6 +804,7 @@ async def parse_resume_text(text: str, *, today: str) -> dict[str, Any]:
 __all__ = [
     "PARSED_CANDIDATE_SCHEMA",
     "AiBadRequestError",
+    "AiTruncatedJsonError",
     "AiUnavailableError",
     "parse_resume_text",
 ]

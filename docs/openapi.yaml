@@ -797,6 +797,60 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ApiError' }
+  /candidates/extract-doc:
+    post:
+      tags: [candidates]
+      summary: Извлечение текста из бинарного .doc (Word 97-2003)
+      description: |
+        Принимает multipart-файл .doc и возвращает plain-текст через
+        системный antiword. Нужен только для .doc — .docx/.pdf/.rtf/.txt
+        парсятся на клиенте. Размер файла ≤ 10 МБ.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Извлечённый plain-текст
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [text]
+                properties:
+                  text: { type: string }
+        '400':
+          description: Не .doc файл или пустой upload
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '413':
+          description: Файл больше 10 МБ
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '422':
+          description: Парсер не смог обработать файл (повреждён/защищён)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '503':
+          description: antiword не установлен на сервере
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '504':
+          description: Парсер не уложился в 30 секунд
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
   /candidates/{id}:
     parameters:
       - $ref: '#/components/parameters/UuidPathId'

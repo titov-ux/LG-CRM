@@ -66,6 +66,17 @@ export const candidatesApi = {
       .post('candidates/parse-resume-text', { json: { text } })
       .json<{ parsed: ParsedCandidate }>(),
   /**
+   * Извлечение текста из бинарного .doc через серверный antiword.
+   * Используется только в форматтере резюме — у .doc нет браузерного декодера.
+   * Размер файла ограничен 10 МБ; ошибки парсера приходят с кодами
+   * `doc_extract_*` (см. backend candidates.py).
+   */
+  extractDocText: (file: File) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return api.post('candidates/extract-doc', { body: fd }).json<{ text: string }>();
+  },
+  /**
    * AI-адаптация резюме кандидата под конкретную вакансию.
    * Возвращает только поля, которые AI решил изменить (summary / experienceYears /
    * stack / skillCategories / experience). Поле `experience` приходит ТОЙ ЖЕ длины,

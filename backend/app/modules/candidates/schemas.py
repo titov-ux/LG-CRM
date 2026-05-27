@@ -250,6 +250,12 @@ class ParseResumeTextResponse(CamelModel):
     parsed: ParsedCandidate
 
 
+class ExtractDocResponse(CamelModel):
+    """Результат извлечения текста из .doc через antiword."""
+
+    text: str
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # AI-адаптация резюме под вакансию
 # ────────────────────────────────────────────────────────────────────────────

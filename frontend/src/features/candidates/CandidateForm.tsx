@@ -458,7 +458,25 @@ export function CandidateForm({
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Опыт, лет</FormLabel>
-                  <FormControl><Input type="number" min={0} {...field} /></FormControl>
+                  <FormControl>
+                    <Input
+                      // type=text + inputMode=numeric — печатаются только цифры
+                      // (исключаем «2.5» при ручном вводе). Если дробное прилетит
+                      // извне (AI-парсинг резюме), округлим вверх в value.
+                      // Схема: z.coerce.number().int().min(0).max(60).
+                      type="text"
+                      inputMode="numeric"
+                      placeholder="0"
+                      name={field.name}
+                      ref={field.ref}
+                      onBlur={field.onBlur}
+                      value={field.value ? String(Math.min(60, Math.ceil(field.value))) : ''}
+                      onChange={(e) => {
+                        const digits = e.target.value.replace(/\D/g, '');
+                        field.onChange(digits ? Math.min(60, Number(digits)) : 0);
+                      }}
+                    />
+                  </FormControl>
                   <FormMessage />
                 </FormItem>
               )}

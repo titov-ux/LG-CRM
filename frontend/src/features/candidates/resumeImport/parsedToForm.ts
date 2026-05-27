@@ -45,7 +45,9 @@ export function parsedToFormValues(parsed: ParsedCandidate): ParsedToFormResult 
     add('грейд');
   }
   if (typeof parsed.experienceYears === 'number' && parsed.experienceYears > 0) {
-    out.experienceYears = parsed.experienceYears;
+    // AI бывает возвращает дробное («2.5 года») — округляем вверх, чтобы форма
+    // получала целое: схема experienceYears — z.coerce.number().int().min(0).max(60).
+    out.experienceYears = Math.min(60, Math.ceil(parsed.experienceYears));
     add('опыт, лет');
   }
   if (parsed.format) {

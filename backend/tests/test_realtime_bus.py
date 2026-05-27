@@ -1,7 +1,12 @@
-"""Unit-тесты на in-memory шину realtime-событий.
+"""Unit-тесты на шину realtime-событий.
 
-Не требуют Postgres / Redis — проверяют только сам EventBus и хелперы
-publish_* (включая echo-метку через current_client_id_var).
+С миграции на Redis pub/sub `EventBus` имеет два режима:
+  * `redis=None` — чисто локальный fanout (этим режимом пользуются тесты);
+  * `redis=<async client>` — события публикуются ещё и в Redis pub/sub для
+    других воркеров (это покрыто отдельно через fakeredis).
+
+Эти тесты не требуют Postgres / Redis — проверяют только сам EventBus и
+хелперы publish_* (включая echo-метку через current_client_id_var).
 """
 from __future__ import annotations
 
@@ -100,3 +105,67 @@ async def test_publish_never_raises_even_without_subscribers() -> None:
     # Без подписчиков просто ничего не происходит — без падения.
     publish_vacancy_changed("created", id=uuid.uuid4(), actor_id=uuid.uuid4())
     publish_candidate_changed("deleted", id=uuid.uuid4(), actor_id=uuid.uuid4())
+
+
+@pytest.mark.asyncio
+async def test_redis_pubsub_delivers_across_instances() -> None:
+    """Главный тест миграции: события, опубликованные в одном инстансе bus,
+    доходят до подписчика во втором инстансе через Redis pub/sub.
+
+    Это имитирует прод-сценарий с `--workers > 1`: воркер #1 публикует
+    событие → воркер #2 получает его через Redis-канал и доставляет в свои
+    WebSocket-очереди.
+    """
+    import fakeredis.aioredis as fakeredis_async
+
+    # Один общий fakeredis-сервер, к которому подключаются оба инстанса.
+    server = fakeredis_async.FakeServer()
+    redis_a = fakeredis_async.FakeRedis(server=server, decode_responses=True)
+    redis_b = fakeredis_async.FakeRedis(server=server, decode_responses=True)
+
+    bus_a = EventBus(redis=redis_a, channel="test:realtime")
+    bus_b = EventBus(redis=redis_b, channel="test:realtime")
+    await bus_a.start_listener()
+    await bus_b.start_listener()
+    try:
+        # Подписчик на воркере B.
+        q_b = await bus_b.subscribe()
+        # Воркер A публикует.
+        bus_a.publish({"type": "vacancy.changed", "id": "v1"})
+        # B должен получить событие через Redis.
+        event = await asyncio.wait_for(q_b.get(), timeout=2.0)
+        assert event["type"] == "vacancy.changed"
+        assert event["id"] == "v1"
+        # `_bus_source` — служебная метка, должна быть удалена перед доставкой.
+        assert "_bus_source" not in event
+    finally:
+        await bus_a.stop_listener()
+        await bus_b.stop_listener()
+        await redis_a.aclose()
+        await redis_b.aclose()
+
+
+@pytest.mark.asyncio
+async def test_redis_pubsub_no_self_duplicate() -> None:
+    """Bus не должен доставлять собственное событие дважды: один раз
+    локально (синхронно в publish), второй раз — из Redis pub/sub.
+    """
+    import fakeredis.aioredis as fakeredis_async
+
+    server = fakeredis_async.FakeServer()
+    redis = fakeredis_async.FakeRedis(server=server, decode_responses=True)
+
+    bus = EventBus(redis=redis, channel="test:realtime")
+    await bus.start_listener()
+    try:
+        q = await bus.subscribe()
+        bus.publish({"type": "candidate.changed", "id": "c1"})
+        # Первое событие — локальная мгновенная доставка.
+        e1 = await asyncio.wait_for(q.get(), timeout=2.0)
+        assert e1["id"] == "c1"
+        # Никаких дублей из Redis быть не должно — даём времени листенеру.
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(q.get(), timeout=0.5)
+    finally:
+        await bus.stop_listener()
+        await redis.aclose()

@@ -29,6 +29,8 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.modules.users.models import Role, User
+from app.realtime.bus import EventBus, set_bus_for_tests
+from app.realtime.presence import set_presence_store_for_tests
 
 
 # pytest-asyncio: один event loop на сессию (нужно для async-фикстур-сессий)
@@ -37,6 +39,26 @@ def event_loop() -> Iterator[asyncio.AbstractEventLoop]:
     loop = asyncio.new_event_loop()
     yield loop
     loop.close()
+
+
+@pytest.fixture(autouse=True)
+def _stub_realtime_bus() -> Iterator[None]:
+    """Подменяем realtime-bus и presence-store на in-memory варианты.
+
+    На проде `EventBus` подключается к Redis pub/sub (см. `app/realtime/bus.py`),
+    а `PresenceStore` — на Redis SET/ZSET (см. `app/realtime/presence.py`). В тестах
+    поднимать Redis не нужно — обе подсистемы умеют падать в in-memory режим, и
+    тогда поведение совпадает с тем, что было до миграции на Redis.
+    """
+    from app.realtime.presence import _InMemoryPresenceStore  # noqa: WPS450
+
+    set_bus_for_tests(EventBus(redis=None))
+    set_presence_store_for_tests(_InMemoryPresenceStore())
+    try:
+        yield
+    finally:
+        set_bus_for_tests(None)
+        set_presence_store_for_tests(None)
 
 
 @pytest_asyncio.fixture(scope="session")

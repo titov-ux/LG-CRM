@@ -5,13 +5,20 @@
 """
 from __future__ import annotations
 
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.v1 import api_router
 from app.core.config import get_settings
-from app.realtime.events import current_client_id_var
+from app.realtime.bus import get_bus
+from app.realtime.events import current_client_id_var, publish_user_presence_event
+from app.realtime.presence import start_sweeper, stop_sweeper
+
+logger = logging.getLogger(__name__)
 
 
 def _init_sentry(dsn: str, environment: str, traces_sample_rate: float) -> None:
@@ -37,6 +44,49 @@ def _init_sentry(dsn: str, environment: str, traces_sample_rate: float) -> None:
     )
 
 
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    """Жизненный цикл процесса: поднимаем фоновые задачи на startup,
+    останавливаем на shutdown.
+
+    Realtime-bus подписывается на Redis pub/sub один раз на воркер. Без
+    этого события из других uvicorn-воркеров (`--workers > 1` в проде)
+    не доходили бы до WebSocket-ов, прицепленных к этому воркеру.
+
+    Presence-sweeper чистит протухшие WS-соединения в общем Redis-стор-е
+    presence-а (см. app/realtime/presence.py). Запускается во всех воркерах —
+    Lua-скрипты атомарны, конкуренция между воркерами безопасна и просто
+    приводит к тому, что чистку выполнит тот, кто пришёл первым.
+    """
+    bus = get_bus()
+    try:
+        await bus.start_listener()
+    except Exception:
+        logger.exception("realtime: failed to start bus listener (continuing)")
+
+    async def _on_user_offlined(user_id: str) -> None:
+        # Sweeper зачистил все соединения юзера — публикуем offline всем
+        # подписчикам (это будет получено фронтами через тот же realtime-bus).
+        publish_user_presence_event(user_id=user_id, online=False)
+
+    try:
+        await start_sweeper(on_offline=_on_user_offlined)
+    except Exception:
+        logger.exception("presence: failed to start sweeper (continuing)")
+
+    try:
+        yield
+    finally:
+        try:
+            await stop_sweeper()
+        except Exception:
+            logger.exception("presence: error while stopping sweeper")
+        try:
+            await bus.stop_listener()
+        except Exception:
+            logger.exception("realtime: error while stopping bus listener")
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
     _init_sentry(
@@ -50,6 +100,7 @@ def create_app() -> FastAPI:
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url=f"{settings.api_v1_prefix}/openapi.json",
+        lifespan=_lifespan,
     )
 
     app.add_middleware(

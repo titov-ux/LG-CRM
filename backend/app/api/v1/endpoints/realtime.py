@@ -6,6 +6,11 @@
 
 Сервер шлёт каждому подписчику JSON-события из app.realtime.bus, плюс
 служебные `{"type": "ping"}` для keep-alive (за NAT / прокси / nginx).
+
+Online-presence считается через `app.realtime.presence` — общий Redis-store,
+который одинаково видят все воркеры uvicorn. См. модуль для деталей. Каждый
+HB-цикл этого WS продлевает TTL соединения в Redis; sweeper в lifespan
+чистит протухшие connection-ы при падении воркера.
 """
 from __future__ import annotations
 
@@ -24,41 +29,17 @@ from app.db.session import SessionLocal
 from app.modules.users.models import User
 from app.realtime.bus import get_bus
 from app.realtime.events import publish_user_presence_event
+from app.realtime.presence import get_presence_store
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ws", tags=["realtime"])
 
 # Раз в 30 секунд шлём приложение-уровневый ping, чтобы NAT/nginx-прокси
-# не порвали соединение по бездействию.
+# не порвали соединение по бездействию. Тот же интервал используется как
+# heartbeat для presence-store: при пропуске двух подряд presence.TTL=90с
+# успевает протухнуть, и sweeper подберёт мёртвую запись.
 _PING_INTERVAL_SECONDS = 30.0
-_presence_lock = asyncio.Lock()
-_online_connections: dict[str, int] = {}
-
-
-def _snapshot_online_user_ids() -> list[str]:
-    return list(_online_connections.keys())
-
-
-async def _mark_user_connected(user_id: uuid.UUID) -> tuple[list[str], bool]:
-    """Увеличить счётчик соединений user-а, вернуть (snapshot, became_online)."""
-    user_id_str = str(user_id)
-    async with _presence_lock:
-        before = _online_connections.get(user_id_str, 0)
-        _online_connections[user_id_str] = before + 1
-        return _snapshot_online_user_ids(), before == 0
-
-
-async def _mark_user_disconnected(user_id: uuid.UUID) -> bool:
-    """Уменьшить счётчик соединений user-а, вернуть became_offline."""
-    user_id_str = str(user_id)
-    async with _presence_lock:
-        before = _online_connections.get(user_id_str, 0)
-        if before <= 1:
-            _online_connections.pop(user_id_str, None)
-            return before > 0
-        _online_connections[user_id_str] = before - 1
-        return False
 
 
 async def _authenticate(token: str) -> User | None:
@@ -96,14 +77,23 @@ async def events(
 
     await websocket.accept()
     bus = get_bus()
+    presence = get_presence_store()
     queue = await bus.subscribe()
-    online_snapshot, became_online = await _mark_user_connected(user.id)
+
+    user_id_str = str(user.id)
+    # Уникальный id WS-соединения. На один user_id может быть несколько
+    # одновременных вкладок / устройств — presence-store считает их отдельно
+    # и снимает юзера с online только когда исчезнет последнее соединение.
+    connection_id = str(uuid.uuid4())
+    online_snapshot, became_online = await presence.connect(
+        user_id_str, connection_id
+    )
 
     # Привет-сообщение, чтобы фронт мог отличить «подключились» от «ещё ждём».
     await websocket.send_json(
         {
             "type": "hello",
-            "userId": str(user.id),
+            "userId": user_id_str,
             "onlineUserIds": online_snapshot,
         }
     )
@@ -115,7 +105,6 @@ async def events(
         # (приватные чат-события), отдаём его только тем, кто в этом списке.
         # События без `audience` остаются как раньше — рассылаются всем (так
         # ведут себя vacancy.changed / candidate.changed).
-        user_id_str = str(user.id)
         try:
             while True:
                 event: dict[str, Any] = await queue.get()
@@ -139,10 +128,20 @@ async def events(
     async def _heartbeat() -> None:
         # Не используем websocket.ping() (низкоуровневый, не во всех клиентах
         # триггерит обработчик) — шлём свой JSON-«ping», его читает фронт.
+        # Параллельно продлеваем TTL записи в presence-store, чтобы sweeper
+        # не считал нас мёртвыми.
         try:
             while True:
                 await asyncio.sleep(_PING_INTERVAL_SECONDS)
                 await websocket.send_json({"type": "ping"})
+                try:
+                    await presence.heartbeat(user_id_str, connection_id)
+                except Exception:
+                    # presence не должен валить соединение — даже если Redis
+                    # ненадолго недоступен, sweeper потом подметёт. Пишем в лог.
+                    logger.exception(
+                        "realtime: presence heartbeat failed (continuing)"
+                    )
         except WebSocketDisconnect:
             raise
         except Exception:
@@ -177,7 +176,13 @@ async def events(
                 pass
     finally:
         await bus.unsubscribe(queue)
-        became_offline = await _mark_user_disconnected(user.id)
+        try:
+            became_offline = await presence.disconnect(user_id_str, connection_id)
+        except Exception:
+            # Если Redis отвалился на shutdown — не падаем. Sweeper позже
+            # уберёт запись по TTL.
+            logger.exception("realtime: presence disconnect failed (continuing)")
+            became_offline = False
         if became_offline:
             publish_user_presence_event(user_id=user.id, online=False)
         try:

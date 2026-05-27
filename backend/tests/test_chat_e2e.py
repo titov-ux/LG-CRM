@@ -177,6 +177,175 @@ def test_search_respects_privacy(
     assert len(r.json()["items"]) >= 1
 
 
+def _create_group(
+    client: TestClient, headers: dict, title: str, member_ids: list[uuid.UUID]
+) -> dict:
+    r = client.post(
+        "/api/v1/chat/conversations/group",
+        json={"title": title, "memberIds": [str(m) for m in member_ids]},
+        headers=headers,
+    )
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+@pytest_asyncio.fixture()
+async def dave(db: AsyncSession) -> User:
+    return await _make_user(db, "dave@lg.ru", "correct-horse-battery-staple", Role.recruiter, True)
+
+
+@pytest.mark.asyncio
+async def test_mention_all_notifies_everyone_except_author(
+    client: TestClient,
+    alice: User,
+    bob: User,
+    carol: User,
+    dave: User,
+    db: AsyncSession,
+) -> None:
+    """Сообщение `<@all>` в групповом чате создаёт Notification всем
+    участникам диалога кроме автора. Постороннему (`dave`, не член группы)
+    ничего не приходит.
+    """
+    h_alice = auth_headers(client, alice.email)
+    conv = _create_group(client, h_alice, "Команда", [bob.id, carol.id])
+
+    _post_message(client, h_alice, conv["id"], "доброе утро <@all>")
+
+    rows = (
+        await db.execute(
+            select(Notification).where(
+                Notification.kind == NotificationKind.mention,
+            )
+        )
+    ).scalars().all()
+    recipient_ids = {n.user_id for n in rows}
+    assert recipient_ids == {bob.id, carol.id}
+    # Автор сам себе не нотифится.
+    assert alice.id not in recipient_ids
+    # Посторонний — не член группы — не получает уведомления.
+    assert dave.id not in recipient_ids
+    # payload помечен mentionAll=True — пригодится UI для бейджа.
+    for n in rows:
+        assert n.payload.get("mentionAll") is True
+
+
+@pytest.mark.asyncio
+async def test_mention_all_respects_mute(
+    client: TestClient,
+    alice: User,
+    bob: User,
+    carol: User,
+    db: AsyncSession,
+) -> None:
+    """Если кто-то заmute-ил диалог, `<@all>` его не разбудит — это та же
+    политика, что и для персонального упоминания.
+    """
+    h_alice = auth_headers(client, alice.email)
+    h_bob = auth_headers(client, bob.email)
+    conv = _create_group(client, h_alice, "Команда", [bob.id, carol.id])
+
+    r = client.post(
+        f"/api/v1/chat/conversations/{conv['id']}/mute",
+        json={"until": "2099-12-31T23:59:59+00:00"},
+        headers=h_bob,
+    )
+    assert r.status_code == 200
+
+    _post_message(client, h_alice, conv["id"], "<@all> срочно")
+
+    rows = (
+        await db.execute(
+            select(Notification).where(
+                Notification.kind == NotificationKind.mention,
+            )
+        )
+    ).scalars().all()
+    recipient_ids = {n.user_id for n in rows}
+    assert recipient_ids == {carol.id}
+    assert bob.id not in recipient_ids
+
+
+@pytest.mark.asyncio
+async def test_mention_all_on_edit_notifies_new(
+    client: TestClient,
+    alice: User,
+    bob: User,
+    carol: User,
+    db: AsyncSession,
+) -> None:
+    """Если в исходном сообщении `<@all>` не было, а на edit-е появился —
+    нотифим всех участников (кроме автора), как при первичном post.
+    Повторный edit не должен слать дубль.
+    """
+    h_alice = auth_headers(client, alice.email)
+    conv = _create_group(client, h_alice, "Команда", [bob.id, carol.id])
+    msg = _post_message(client, h_alice, conv["id"], "пока без all")
+
+    # До edit-а никаких mention-нотификаций нет.
+    pre = (
+        await db.execute(
+            select(Notification).where(
+                Notification.kind == NotificationKind.mention,
+            )
+        )
+    ).scalars().all()
+    assert pre == []
+
+    r = client.patch(
+        f"/api/v1/chat/conversations/{conv['id']}/messages/{msg['id']}",
+        json={"text": "теперь <@all> точно"},
+        headers=h_alice,
+    )
+    assert r.status_code == 200, r.text
+
+    rows = (
+        await db.execute(
+            select(Notification).where(
+                Notification.kind == NotificationKind.mention,
+            )
+        )
+    ).scalars().all()
+    assert {n.user_id for n in rows} == {bob.id, carol.id}
+
+    # Второй edit с тем же <@all> не должен порождать дубль.
+    r2 = client.patch(
+        f"/api/v1/chat/conversations/{conv['id']}/messages/{msg['id']}",
+        json={"text": "ещё раз <@all> точно"},
+        headers=h_alice,
+    )
+    assert r2.status_code == 200
+    rows2 = (
+        await db.execute(
+            select(Notification).where(
+                Notification.kind == NotificationKind.mention,
+            )
+        )
+    ).scalars().all()
+    assert len(rows2) == 2  # столько же, никаких дублей
+
+
+@pytest.mark.asyncio
+async def test_mention_all_in_dm_notifies_peer(
+    client: TestClient, alice: User, bob: User, db: AsyncSession
+) -> None:
+    """В DM `<@all>` адресует ровно одного «всех» — собеседника. Простая
+    sanity-проверка, чтобы поведение DM совпадало с групповым.
+    """
+    h_alice = auth_headers(client, alice.email)
+    conv = _create_dm(client, h_alice, bob.id)
+    _post_message(client, h_alice, conv["id"], "<@all> привет")
+
+    rows = (
+        await db.execute(
+            select(Notification).where(
+                Notification.kind == NotificationKind.mention,
+            )
+        )
+    ).scalars().all()
+    assert {n.user_id for n in rows} == {bob.id}
+
+
 @pytest.mark.asyncio
 async def test_mute_blocks_notification_but_not_message(
     client: TestClient, alice: User, bob: User, db: AsyncSession

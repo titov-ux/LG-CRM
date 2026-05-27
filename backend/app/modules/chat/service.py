@@ -66,6 +66,12 @@ _MENTION_RE = re.compile(
     r"<@([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})>"
 )
 
+# Special-token «упомянуть всех участников диалога», как @channel/@here в
+# Slack. На фронте редактируется и рендерится как @all, на проводе и в БД
+# хранится как `<@all>`. Регэксп требует те же границы, что и у @-юзера —
+# `\b` после `>` обеспечивается тем, что токен заканчивается на `>`.
+_MENTION_ALL_RE = re.compile(r"<@all>")
+
 
 def _extract_mention_ids(text: str) -> list[uuid.UUID]:
     """Уникальные UUID, упомянутые в тексте, в порядке появления."""
@@ -77,6 +83,11 @@ def _extract_mention_ids(text: str) -> list[uuid.UUID]:
             continue
         seen.setdefault(uid, None)
     return list(seen.keys())
+
+
+def _has_mention_all(text: str) -> bool:
+    """Есть ли в тексте токен `<@all>` (упоминание всех участников диалога)."""
+    return bool(_MENTION_ALL_RE.search(text))
 
 
 async def _ensure_member(
@@ -237,6 +248,7 @@ async def _notify_mentions(
     mention_ids: list[uuid.UUID],
     conversation_id: uuid.UUID,
     message_id: uuid.UUID,
+    mention_all: bool = False,
 ) -> list[uuid.UUID]:
     """Создаёт Notification kind=mention для упомянутых, возвращает список
     тех, кого фактически уведомили (для UI/realtime-payload).
@@ -248,13 +260,21 @@ async def _notify_mentions(
       • если у получателя `muted_until > now()` — Notification не создаётся
         (но realtime-сообщение всё равно приходит, см. §2.5 плана и Этап 6);
       • повторное упоминание того же юзера при редактировании сообщения
-        здесь не дедуплицируется — это делает вызывающий код через diff.
+        здесь не дедуплицируется — это делает вызывающий код через diff;
+      • `mention_all=True` (токен `<@all>`, Slack-style) — добавляет в
+        кандидаты всех участников диалога, кроме автора. Текст уведомления
+        остаётся прежний: получателю достаточно знать, что его упомянули,
+        механика @all/@user для него снаружи неотличима.
     """
-    candidates = [
+    # Сложим персональные упоминания и (по флагу) всех участников.
+    candidate_set: set[uuid.UUID] = {
         uid
         for uid in mention_ids
         if uid in audience_ids and uid != author.id
-    ]
+    }
+    if mention_all:
+        candidate_set.update(uid for uid in audience_ids if uid != author.id)
+    candidates = list(candidate_set)
     if not candidates:
         return []
 
@@ -282,6 +302,7 @@ async def _notify_mentions(
         payload={
             "conversationId": str(conversation_id),
             "messageId": str(message_id),
+            "mentionAll": mention_all,
         },
     )
     return recipients
@@ -402,6 +423,7 @@ async def post_message(
 
     audience_ids = await _audience_user_ids(db, conversation_id)
     mention_ids = _extract_mention_ids(text)
+    mention_all = _has_mention_all(text)
     notified = await _notify_mentions(
         db,
         author=current_user,
@@ -409,6 +431,7 @@ async def post_message(
         mention_ids=mention_ids,
         conversation_id=conversation_id,
         message_id=msg.id,
+        mention_all=mention_all,
     )
 
     await db.commit()
@@ -426,6 +449,7 @@ async def post_message(
             "authorId": str(current_user.id),
             "preview": text[:140],
             "mentions": [str(u) for u in mention_ids],
+            "mentionAll": mention_all,
             "notifiedUserIds": [str(u) for u in notified],
             "createdAt": msg.created_at.isoformat(),
         },
@@ -477,13 +501,17 @@ async def update_message(
     previous_mentions = set(_extract_mention_ids(msg.text_))
     new_mentions = _extract_mention_ids(text)
     added = [uid for uid in new_mentions if uid not in previous_mentions]
+    # @all-токен по той же логике: если его не было — теперь нотифим всех.
+    had_all = _has_mention_all(msg.text_)
+    has_all = _has_mention_all(text)
+    added_all = has_all and not had_all
 
     msg.text_ = text
     msg.edited_at = datetime.now(timezone.utc)
 
     audience_ids = await _audience_user_ids(db, conversation_id)
     notified: list[uuid.UUID] = []
-    if added:
+    if added or added_all:
         notified = await _notify_mentions(
             db,
             author=current_user,
@@ -491,6 +519,7 @@ async def update_message(
             mention_ids=added,
             conversation_id=conversation_id,
             message_id=msg.id,
+            mention_all=added_all,
         )
 
     await db.commit()
@@ -503,6 +532,7 @@ async def update_message(
             "conversationId": str(conversation_id),
             "messageId": str(msg.id),
             "mentions": [str(u) for u in new_mentions],
+            "mentionAll": has_all,
             "notifiedUserIds": [str(u) for u in notified],
             "editedAt": msg.edited_at.isoformat() if msg.edited_at else None,
         },

@@ -33,7 +33,9 @@ dev = [
     "pytest-asyncio>=0.24",
     "pytest-cov>=6.0",
     "schemathesis>=3.39",
-    "fakeredis>=2.26",
+    # `[lua]` подтягивает lupa — нужно, чтобы fakeredis выполнял Lua-скрипты
+    # из app/realtime/presence.py (EVAL/EVALSHA в тестах presence-стора).
+    "fakeredis[lua]>=2.26",
 ]
 
 [build-system]

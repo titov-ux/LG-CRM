@@ -6,6 +6,10 @@
  * этот же формат сохраняет бэкенд и понимают парсеры (см. renderMessageText
  * и service.py::_extract_mention_ids).
  *
+ * Slack-style @all — первый пункт в combobox-е («all — Все в диалоге»). При
+ * выборе вставляется токен `<@all>`; бэк пушит Notification всем участникам
+ * диалога кроме автора (с учётом mute).
+ *
  * Вложения (Этап 4): кнопка-скрепка и drag&drop в композер. Файлы льются
  * через presign+confirm как в DocumentsPage с временным entity_id, бэк
  * пересвяжет их к сообщению при post_message.
@@ -13,12 +17,20 @@
  * Notion-эстетика: список плоский, без рамок, фокусная подсветка серым.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Paperclip, Send, X } from 'lucide-react';
+import { Paperclip, Send, Users, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { uploadFile, type FileResponse } from '@/api/files';
 import { cn } from '@/lib/utils';
 import type { User, UUID } from '@/api/types';
+
+/** Sentinel-id для пункта «all» в combobox-е. Не пересекается с UUID. */
+const ALL_ID = '__all__' as const;
+
+/** Пункт меню — либо реальный юзер, либо специальный @all. */
+type MentionPick =
+  | { kind: 'user'; user: User }
+  | { kind: 'all' };
 
 interface Props {
   disabled: boolean;
@@ -96,18 +108,24 @@ export function Composer({ disabled, candidates, onSend }: Props) {
     }
   };
 
-  const filtered = useMemo<User[]>(() => {
+  const filtered = useMemo<MentionPick[]>(() => {
     if (!mention.open) return [];
     const q = mention.query.trim().toLowerCase();
-    const all = candidates.filter((u) => u.isActive !== false);
-    if (!q) return all.slice(0, 8);
-    return all
-      .filter(
-        (u) =>
-          u.fullName.toLowerCase().includes(q) ||
-          u.email.toLowerCase().includes(q),
-      )
-      .slice(0, 8);
+    const active = candidates.filter((u) => u.isActive !== false);
+    // @all показываем только если в диалоге кроме меня есть ещё кто-то —
+    // иначе нечего адресовать (broadcast «на себя» бессмысленно).
+    const allItem: MentionPick[] =
+      active.length > 0 && 'all'.startsWith(q) ? [{ kind: 'all' }] : [];
+    const users: MentionPick[] = (
+      q
+        ? active.filter(
+            (u) =>
+              u.fullName.toLowerCase().includes(q) ||
+              u.email.toLowerCase().includes(q),
+          )
+        : active
+    ).map((u) => ({ kind: 'user', user: u }));
+    return [...allItem, ...users].slice(0, 8);
   }, [mention, candidates]);
 
   // Если query больше не матчит никого — закрываем combobox.
@@ -148,12 +166,12 @@ export function Composer({ disabled, candidates, onSend }: Props) {
     setMention({ open: true, triggerAt: atIndex, query, highlight: 0 });
   };
 
-  const pickMention = (user: User) => {
+  const pickMention = (pick: MentionPick) => {
     const before = text.slice(0, mention.triggerAt);
     const afterCaret = text.slice(
       (ref.current?.selectionStart ?? mention.triggerAt + mention.query.length + 1),
     );
-    const token = `<@${user.id}> `;
+    const token = pick.kind === 'all' ? '<@all> ' : `<@${pick.user.id}> `;
     const next = `${before}${token}${afterCaret}`;
     setText(next);
     setMention(INITIAL_MENTION);
@@ -289,36 +307,58 @@ export function Composer({ disabled, candidates, onSend }: Props) {
             <div className="border-b px-2.5 py-1 text-[10.5px] uppercase tracking-wider text-muted-foreground/70">
               Упомянуть
             </div>
-            {filtered.map((u, i) => (
-              <button
-                key={u.id}
-                type="button"
-                onMouseDown={(e) => {
-                  // mousedown, не click — чтобы не сбился фокус textarea.
-                  e.preventDefault();
-                  pickMention(u);
-                }}
-                onMouseEnter={() =>
-                  setMention((m) => ({ ...m, highlight: i }))
-                }
-                className={cn(
-                  'flex w-full items-center gap-2 px-2.5 py-1.5 text-left',
-                  i === mention.highlight ? 'bg-muted/70' : 'hover:bg-muted/40',
-                )}
-              >
-                <span className="flex h-6 w-6 items-center justify-center rounded-md bg-muted text-[10px] font-medium text-foreground/70">
-                  {u.initials}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[12.5px] font-medium">
-                    {u.fullName}
-                  </span>
-                  <span className="block truncate text-[11px] text-muted-foreground">
-                    {u.email}
-                  </span>
-                </span>
-              </button>
-            ))}
+            {filtered.map((item, i) => {
+              const isActive = i === mention.highlight;
+              const key = item.kind === 'all' ? ALL_ID : item.user.id;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onMouseDown={(e) => {
+                    // mousedown, не click — чтобы не сбился фокус textarea.
+                    e.preventDefault();
+                    pickMention(item);
+                  }}
+                  onMouseEnter={() =>
+                    setMention((m) => ({ ...m, highlight: i }))
+                  }
+                  className={cn(
+                    'flex w-full items-center gap-2 px-2.5 py-1.5 text-left',
+                    isActive ? 'bg-muted/70' : 'hover:bg-muted/40',
+                  )}
+                >
+                  {item.kind === 'all' ? (
+                    <>
+                      <span className="flex h-6 w-6 items-center justify-center rounded-md bg-amber-100/70 text-amber-900">
+                        <Users className="h-3.5 w-3.5" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[12.5px] font-medium">
+                          all
+                        </span>
+                        <span className="block truncate text-[11px] text-muted-foreground">
+                          Уведомить всех участников диалога
+                        </span>
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="flex h-6 w-6 items-center justify-center rounded-md bg-muted text-[10px] font-medium text-foreground/70">
+                        {item.user.initials}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[12.5px] font-medium">
+                          {item.user.fullName}
+                        </span>
+                        <span className="block truncate text-[11px] text-muted-foreground">
+                          {item.user.email}
+                        </span>
+                      </span>
+                    </>
+                  )}
+                </button>
+              );
+            })}
           </div>
         )}
 

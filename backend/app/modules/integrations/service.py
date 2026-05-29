@@ -1,7 +1,8 @@
 """Сервис интеграции с hh.ru.
 
-Связывает HTTP-клиент `app.integrations.hh` с БД (таблица integration_tokens)
-и сервисом кандидатов: импорт резюме = parse_id → fetch → map → create_candidate.
+Связывает HTTP-клиент `app.integrations.hh` с БД (таблица integration_tokens,
+per-user — `uq(provider, user_id)`) и сервисом кандидатов: импорт резюме =
+parse_id → fetch → map → create_candidate, всё под токеном текущего пользователя.
 
 Refresh-логика: при каждом fetch_resume проверяем, не истёк ли access_token
 (с запасом 5 минут). Если истёк — обновляем через refresh_token прежде чем
@@ -35,7 +36,7 @@ from app.modules.candidates.schemas import CreateCandidateRequest
 from app.modules.integrations.hh_mapper import map_hh_resume_to_candidate
 from app.modules.integrations.models import IntegrationToken
 from app.modules.matching.models import VacancyCandidate
-from app.modules.users.models import Role, User
+from app.modules.users.models import User
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,8 @@ def _state_key(state: str) -> str:
 
 
 async def issue_oauth_state(user: User) -> str:
-    """Сгенерить state и положить в Redis (TTL 10 минут) — для CSRF-защиты."""
+    """Сгенерить state и положить в Redis (TTL 10 минут) — для CSRF-защиты
+    и для привязки callback'а к user'у, который начал OAuth."""
     state = secrets.token_urlsafe(24)
     redis = get_redis()
     await redis.setex(_state_key(state), _STATE_TTL_SECONDS, str(user.id))
@@ -78,12 +80,15 @@ async def consume_oauth_state(state: str) -> uuid.UUID:
         ) from exc
 
 
-# ───────────────────────── Token storage ─────────────────────────
+# ───────────────────────── Token storage (per-user) ─────────────────────────
 
-async def get_token(db: AsyncSession) -> IntegrationToken | None:
+async def get_token(db: AsyncSession, user_id: uuid.UUID) -> IntegrationToken | None:
     return (
         await db.execute(
-            select(IntegrationToken).where(IntegrationToken.provider == _PROVIDER)
+            select(IntegrationToken).where(
+                IntegrationToken.provider == _PROVIDER,
+                IntegrationToken.user_id == user_id,
+            )
         )
     ).scalar_one_or_none()
 
@@ -91,16 +96,18 @@ async def get_token(db: AsyncSession) -> IntegrationToken | None:
 async def save_token(
     db: AsyncSession,
     *,
+    user_id: uuid.UUID,
     payload: hh_client.HhTokenPayload,
     account_label: str | None,
     connected_by_id: uuid.UUID | None,
 ) -> IntegrationToken:
-    """Upsert строки `provider='hh'`."""
-    token = await get_token(db)
+    """Upsert строки `(provider='hh', user_id)`."""
+    token = await get_token(db, user_id)
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=payload.expires_in or 0)
     if token is None:
         token = IntegrationToken(
             provider=_PROVIDER,
+            user_id=user_id,
             access_token=payload.access_token,
             refresh_token=payload.refresh_token,
             expires_at=expires_at,
@@ -134,7 +141,6 @@ async def _ensure_fresh_access(db: AsyncSession, token: IntegrationToken) -> str
     try:
         new_payload = await hh_client.refresh_token(token.refresh_token)
     except HhAuthError as exc:
-        # refresh_token протух — пользователю нужно перепривязать аккаунт.
         logger.warning("hh refresh failed (reauth needed): %s", exc)
         raise ApiError(
             status.HTTP_401_UNAUTHORIZED,
@@ -149,6 +155,7 @@ async def _ensure_fresh_access(db: AsyncSession, token: IntegrationToken) -> str
         ) from exc
     await save_token(
         db,
+        user_id=token.user_id,
         payload=new_payload,
         account_label=token.account_label,
         connected_by_id=token.connected_by_id,
@@ -172,13 +179,11 @@ def build_authorize_url_for_state(state: str) -> str:
 async def exchange_code_and_save(
     db: AsyncSession, *, code: str, user: User
 ) -> IntegrationToken:
-    """Обмен code → токены и сохранение в БД. Дёргает /me для лейбла аккаунта."""
-    if user.role != Role.admin:
-        raise ApiError(
-            status.HTTP_403_FORBIDDEN,
-            "forbidden",
-            "Подключать hh может только админ.",
-        )
+    """Обмен code → токены и сохранение в БД под user.id.
+
+    Любой авторизованный пользователь может подключить СВОЙ аккаунт hh —
+    больше не требует роли admin.
+    """
     try:
         payload = await hh_client.exchange_code(code)
     except HhAuthError as exc:
@@ -213,6 +218,7 @@ async def exchange_code_and_save(
 
     return await save_token(
         db,
+        user_id=user.id,
         payload=payload,
         account_label=label,
         connected_by_id=user.id,
@@ -220,11 +226,8 @@ async def exchange_code_and_save(
 
 
 async def disconnect(db: AsyncSession, *, user: User) -> None:
-    if user.role != Role.admin:
-        raise ApiError(
-            status.HTTP_403_FORBIDDEN, "forbidden", "Отключать hh может только админ."
-        )
-    token = await get_token(db)
+    """Отвязать ТОЛЬКО свой hh-аккаунт. Чужие токены не трогаем."""
+    token = await get_token(db, user.id)
     if token is None:
         return
     await db.delete(token)
@@ -241,18 +244,19 @@ async def import_resume(
     vacancy_id: uuid.UUID | None,
     recruiter_id: uuid.UUID | None,
 ) -> tuple[Candidate, list[uuid.UUID]]:
-    """Парсим id → тянем резюме у hh → создаём Candidate.
+    """Импорт резюме под ТОКЕНОМ ТЕКУЩЕГО ПОЛЬЗОВАТЕЛЯ.
 
-    При указании `vacancy_id` сразу прикрепляем кандидата к вакансии (он попадёт
-    в первую колонку канбана этой вакансии) — это и есть основной user flow:
-    «вижу резюме на hh → импорт → моментально на канбане вакансии».
+    Если пришли через Chrome-расширение (auth = `lg_…`-токен), `user` — это
+    владелец `lg_…`-токена, и его же hh-аккаунт используется для просмотра.
+    Так просмотры списываются с правильной квоты hh.
     """
-    token = await get_token(db)
+    token = await get_token(db, user.id)
     if token is None:
         raise ApiError(
             status.HTTP_412_PRECONDITION_FAILED,
             "hh_not_connected",
-            "hh.ru не подключён. Подключите аккаунт в Настройки → Интеграции.",
+            "Ваш hh-аккаунт не подключён. Откройте Настройки → Интеграции и "
+            "подключите свой hh.",
         )
 
     try:
@@ -272,7 +276,7 @@ async def import_resume(
         raise ApiError(
             status.HTTP_404_NOT_FOUND,
             "hh_resume_not_found",
-            "Резюме не найдено или недоступно этому работодателю.",
+            "Резюме не найдено или недоступно вашему аккаунту hh.",
         ) from exc
     except HhAuthError as exc:
         raise ApiError(
@@ -284,7 +288,7 @@ async def import_resume(
         raise ApiError(
             status.HTTP_429_TOO_MANY_REQUESTS,
             "hh_rate_limited",
-            "Достигнут дневной лимит просмотров резюме на hh.ru. "
+            "Достигнут дневной лимит просмотров резюме на вашем hh-аккаунте. "
             "Попробуйте завтра или увеличьте тариф.",
         ) from exc
     except HhUnavailableError as exc:
@@ -297,14 +301,11 @@ async def import_resume(
     create_req: CreateCandidateRequest = map_hh_resume_to_candidate(payload)
     if recruiter_id is not None:
         create_req = create_req.model_copy(update={"recruiter_id": recruiter_id})
-    # Прикрепляем к вакансии — статус кандидата ставим 'new', чтобы попал
-    # в первую колонку канбана.
     create_req = create_req.model_copy(update={"status": CandidateStatus.new})
 
     try:
         cand, _ = await candidates_service.create_candidate(db, user, create_req)
     except ApiError as exc:
-        # Дубль по email/phone — это валидный сценарий, проксируем как есть.
         if exc.code == "duplicate_candidate":
             raise
         raise
@@ -342,11 +343,12 @@ async def _attach_to_vacancy(
     await db.commit()
 
 
-# ───────────────────────── Status DTO ─────────────────────────
+# ───────────────────────── Status DTO (per-user) ─────────────────────────
 
-async def status_dto(db: AsyncSession) -> dict[str, Any]:
+async def status_dto(db: AsyncSession, user: User) -> dict[str, Any]:
+    """Статус подключения именно ТЕКУЩЕГО пользователя."""
     settings = get_settings()
-    token = await get_token(db)
+    token = await get_token(db, user.id)
     configured = bool(settings.hh_client_id and settings.hh_client_secret)
     if token is None:
         return {

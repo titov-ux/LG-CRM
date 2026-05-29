@@ -82,7 +82,8 @@ export function HhIntegrationCard() {
             )}
           </CardTitle>
           <CardDescription>
-            Импорт резюме по ссылке. Один аккаунт работодателя на всю команду.
+            Подключите свой рабочий аккаунт hh — просмотры резюме будут идти
+            с вашей квоты. У каждого сотрудника свой токен.
           </CardDescription>
         </div>
       </CardHeader>

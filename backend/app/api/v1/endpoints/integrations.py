@@ -40,13 +40,13 @@ router = APIRouter(prefix="/integrations/hh", tags=["integrations"])
 @router.get(
     "/status",
     response_model=HhStatusResponse,
-    summary="Статус подключения hh.ru",
+    summary="Статус подключения hh.ru текущего пользователя",
 )
 async def get_status(
-    _: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> HhStatusResponse:
-    data = await service.status_dto(db)
+    data = await service.status_dto(db, user)
     return HhStatusResponse(
         configured=data["configured"],
         connected=data["connected"],
@@ -82,7 +82,7 @@ async def oauth_exchange(
     # CSRF: state должен быть тем, что мы сами выдавали ≤10 минут назад.
     await service.consume_oauth_state(payload.state)
     await service.exchange_code_and_save(db, code=payload.code, user=user)
-    data = await service.status_dto(db)
+    data = await service.status_dto(db, user)
     return HhStatusResponse(
         configured=data["configured"],
         connected=data["connected"],

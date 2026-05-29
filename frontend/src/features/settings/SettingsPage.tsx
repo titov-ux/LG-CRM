@@ -3,13 +3,15 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
 import { useUIStore } from '@/stores/ui';
+import { HhIntegrationCard } from '@/features/integrations/HhIntegrationCard';
+import { ApiTokensCard } from './ApiTokensCard';
 
 export function SettingsPage() {
   const collapsed = useUIStore((s) => s.sidebarCollapsed);
   const toggle = useUIStore((s) => s.toggleSidebar);
 
   return (
-    <div className="flex-1 overflow-auto px-6 pb-6 pt-5">
+    <div className="flex-1 space-y-4 overflow-auto px-6 pb-6 pt-5">
       <Card>
         <CardHeader>
           <CardTitle>Настройки</CardTitle>
@@ -29,6 +31,20 @@ export function SettingsPage() {
           </div>
         </CardContent>
       </Card>
+
+      <div>
+        <h2 className="mb-2 px-1 text-sm font-medium text-muted-foreground">
+          Интеграции
+        </h2>
+        <HhIntegrationCard />
+      </div>
+
+      <div>
+        <h2 className="mb-2 px-1 text-sm font-medium text-muted-foreground">
+          Расширение для hh.ru
+        </h2>
+        <ApiTokensCard />
+      </div>
     </div>
   );
 }

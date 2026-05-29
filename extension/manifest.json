@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "Candidate Capture — резюме в один клик",
+  "short_name": "Candidate Capture",
+  "version": "0.1.0",
+  "description": "Сохраняет резюме с открытой страницы hh.ru в подключённый рекрутинговый сервис. Требуется API-токен — выдаётся администратором.",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_title": "Candidate Capture",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "48": "icons/icon-48.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "permissions": ["storage", "activeTab", "notifications"],
+  "host_permissions": [
+    "https://hh.ru/*",
+    "https://*.hh.ru/*",
+    "https://crm.lachevsky.ru/*",
+    "https://staging.lachevsky.ru/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://hh.ru/resume/*", "https://*.hh.ru/resume/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}

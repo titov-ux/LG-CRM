@@ -3,6 +3,7 @@ from fastapi import APIRouter
 
 from app.api.v1.endpoints import (
     analytics,
+    api_tokens,
     audit,
     auth,
     candidates,
@@ -12,6 +13,7 @@ from app.api.v1.endpoints import (
     contacts,
     documents,
     files,
+    integrations,
     matching,
     notifications,
     permissions,
@@ -39,3 +41,5 @@ api_router.include_router(analytics.router)
 api_router.include_router(permissions.router)
 api_router.include_router(chat.router)
 api_router.include_router(realtime.router)
+api_router.include_router(integrations.router)
+api_router.include_router(api_tokens.router)

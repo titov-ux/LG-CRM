@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Candidate Capture</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Candidate Capture</h1>
+      <p class="subtitle">Сохранение резюме с hh.ru в один клик.</p>
+    </header>
+
+    <form id="form">
+      <label>
+        <span class="label">API-токен</span>
+        <input
+          id="apiToken"
+          type="password"
+          autocomplete="off"
+          spellcheck="false"
+          required
+          placeholder="lg_…"
+        />
+        <span class="hint">
+          Токен выдаётся администратором. Без него расширение не работает.
+        </span>
+      </label>
+
+      <div class="row">
+        <button type="submit" id="save">Сохранить</button>
+        <button type="button" id="test" class="ghost">Проверить</button>
+      </div>
+
+      <p id="status" class="status" role="status"></p>
+    </form>
+  </body>
+</html>

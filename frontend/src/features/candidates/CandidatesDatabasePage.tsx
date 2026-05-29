@@ -6,6 +6,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Database,
+  FileDown,
   FileSignature,
   GraduationCap,
   Handshake,
@@ -14,6 +15,7 @@ import {
   Trash2,
   User as UserIcon,
 } from 'lucide-react';
+import { HhImportDialog } from '@/features/integrations/HhImportDialog';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -96,6 +98,7 @@ export function CandidatesDatabasePage() {
   const navigate = useNavigate();
   const [scope, setScope] = useState<Scope>('all');
   const [page, setPage] = useState(1);
+  const [hhImportOpen, setHhImportOpen] = useState(false);
   const search = useFiltersStore((s) => s.search);
   const grade = useFiltersStore((s) => s.grade);
   const recruiterId = useFiltersStore((s) => s.recruiterId);
@@ -178,7 +181,8 @@ export function CandidatesDatabasePage() {
           пиллы показывается только у активного скоупа — это его общий total
           (с учётом фильтров). Для остальных скоупов пришлось бы делать
           доп. запросы, и в Notion-стиле визуально аккуратнее без них. */}
-      <div className="mb-4 inline-flex rounded-lg border bg-muted/40 p-0.5">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="inline-flex rounded-lg border bg-muted/40 p-0.5">
         {SCOPE_OPTIONS.map((opt) => {
           const isActive = scope === opt.id;
           return (
@@ -206,6 +210,17 @@ export function CandidatesDatabasePage() {
             </button>
           );
         })}
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-8 gap-1.5"
+          onClick={() => setHhImportOpen(true)}
+        >
+          <FileDown className="h-3.5 w-3.5" />
+          Импорт с hh.ru
+        </Button>
       </div>
 
         <FilterBar
@@ -618,6 +633,12 @@ export function CandidatesDatabasePage() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        <HhImportDialog
+          open={hhImportOpen}
+          onOpenChange={setHhImportOpen}
+          onImported={(id) => navigate({ to: '/candidates/$id', params: { id } })}
+        />
     </div>
   );
 }

@@ -106,6 +106,12 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
+        # Запросы из Chrome-расширения hh.ru приходят с Origin
+        # `chrome-extension://<extension_id>`. Идентификатор расширения
+        # меняется (dev vs Web Store), поэтому регексп вместо whitelist.
+        # allow_credentials=True требует, чтобы Access-Control-Allow-Origin
+        # эхоировал конкретный Origin — что middleware и делает в regex-режиме.
+        allow_origin_regex=r"^chrome-extension://[a-zA-Z0-9]+$",
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

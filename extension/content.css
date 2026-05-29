@@ -1,0 +1,117 @@
+/* Плавающая кнопка «Сохранить в ЛГ» поверх страницы hh.ru.
+   Стили скоупим через префикс .lg-ext, чтобы не пересекаться с hh.css. */
+
+.lg-ext-fab {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 2147483646; /* hh поднимает свои оверлеи до ~1000; берём максимум int32-1 */
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: 999px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
+    Arial, sans-serif;
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: #fff;
+  background: linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%);
+  border: 1px solid #1d4ed8;
+  box-shadow: 0 8px 24px rgba(29, 78, 216, 0.32), 0 1px 2px rgba(0, 0, 0, 0.08);
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
+}
+
+.lg-ext-fab:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 28px rgba(29, 78, 216, 0.36);
+}
+
+.lg-ext-fab:active {
+  transform: translateY(0);
+}
+
+.lg-ext-fab[disabled] {
+  opacity: 0.7;
+  cursor: progress;
+}
+
+.lg-ext-fab__icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.lg-ext-fab__spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: lg-ext-spin 700ms linear infinite;
+}
+
+@keyframes lg-ext-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Toast — короткое сообщение в правом верхнем углу. */
+.lg-ext-toast {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  z-index: 2147483647;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  max-width: 340px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
+    Arial, sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #0f172a;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.14);
+  animation: lg-ext-toast-in 180ms ease-out;
+}
+
+.lg-ext-toast--error {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #7f1d1d;
+}
+
+.lg-ext-toast--success {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #14532d;
+}
+
+.lg-ext-toast__title {
+  font-weight: 600;
+  margin: 0 0 2px 0;
+}
+
+.lg-ext-toast__desc {
+  margin: 0;
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+@keyframes lg-ext-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

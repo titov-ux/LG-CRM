@@ -91,6 +91,27 @@ class Settings(BaseSettings):
     # в 32к-контекст yandexgpt/rc вместе с system-промптом и schema.
     yandex_ai_max_input_chars: int = 40000
 
+    # ── hh.ru integration ───────────────────────────────────
+    # Регистрируется на https://dev.hh.ru. Один аккаунт работодателя на весь CRM —
+    # access_token + refresh_token хранятся в БД (таблица integration_tokens,
+    # provider='hh'). Без `hh_client_id`/`hh_client_secret` импорт резюме
+    # вернёт 503 hh_unavailable, кнопка «Подключить hh» будет показывать,
+    # что приложение не сконфигурировано.
+    hh_client_id: str = ""
+    hh_client_secret: str = ""
+    # Куда hh редиректит после авторизации работодателя. Должен совпадать с тем,
+    # что прописан в карточке приложения на dev.hh.ru. На каждом контуре свой:
+    #   dev     = http://localhost:5173/settings/integrations/hh/callback
+    #   staging = https://staging.lachevsky.ru/settings/integrations/hh/callback
+    #   prod    = https://crm.lachevsky.ru/settings/integrations/hh/callback
+    # Фронт принимает code, отдаёт его на бэк в POST /integrations/hh/oauth/exchange.
+    hh_redirect_uri: str = "http://localhost:5173/settings/integrations/hh/callback"
+    hh_api_base_url: str = "https://api.hh.ru"
+    hh_oauth_base_url: str = "https://hh.ru"
+    hh_request_timeout_seconds: float = 20.0
+    # User-Agent обязателен для hh API (иначе 400). Пишем контактный email.
+    hh_user_agent: str = "CRM-LG/1.0 (titovalexeys@gmail.com)"
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

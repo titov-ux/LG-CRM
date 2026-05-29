@@ -17,7 +17,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import ApiError
 from app.core.schemas import CamelModel
 from app.db.session import get_db
-from app.modules.auth.dependencies import get_current_user
+from app.modules.auth.dependencies import (
+    get_current_user,
+    get_current_user_or_api_token,
+)
 from app.modules.auth.schemas import OkResponse
 from app.modules.users.api_tokens import (
     UserApiToken,
@@ -50,6 +53,26 @@ class CreateApiTokenResponse(CamelModel):
     item: ApiTokenItem
     # Plain-токен показываем ОДИН раз при выпуске; восстановить нельзя.
     raw_token: str
+
+
+class VerifyTokenResponse(CamelModel):
+    ok: bool = True
+    user_id: uuid.UUID
+    email: str
+
+
+@router.get(
+    "/verify",
+    response_model=VerifyTokenResponse,
+    summary="Проверить токен (принимает JWT и lg_-токен расширения)",
+)
+async def verify_token(
+    # В отличие от остальных /me/api-tokens этот эндпоинт принимает И personal
+    # `lg_`-токен — его дёргает кнопка «Проверить» в Chrome-расширении, где
+    # JWT нет. Раньше расширение било в GET "" (JWT-only) и всегда ловило 401.
+    user: User = Depends(get_current_user_or_api_token),
+) -> VerifyTokenResponse:
+    return VerifyTokenResponse(user_id=user.id, email=user.email)
 
 
 @router.get("", response_model=list[ApiTokenItem], summary="Список моих API-токенов")

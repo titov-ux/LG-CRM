@@ -3,8 +3,9 @@
  * chrome.storage.local. URL бэка захардкожен в background.js, посторонним
  * подменить его нельзя.
  *
- * Кнопка «Проверить» — GET /me/api-tokens с тем же Bearer-токеном:
- * 200 = валиден, 401 = неверный/отозван.
+ * Кнопка «Проверить» — GET /me/api-tokens/verify с тем же Bearer-токеном:
+ * 200 = валиден, 401 = неверный/отозван. Именно /verify, т.к. он принимает
+ * personal lg_-токен (обычный GET /me/api-tokens — JWT-only и всегда даёт 401).
  */
 const API_BASE_URL = 'https://crm.lachevsky.ru/api/v1';
 
@@ -53,7 +54,7 @@ els.test.addEventListener('click', async () => {
   els.test.disabled = true;
   setStatus('Проверяем…');
   try {
-    const resp = await fetch(`${API_BASE_URL}/me/api-tokens`, {
+    const resp = await fetch(`${API_BASE_URL}/me/api-tokens/verify`, {
       headers: { Authorization: `Bearer ${apiToken}` },
     });
     if (resp.ok) {

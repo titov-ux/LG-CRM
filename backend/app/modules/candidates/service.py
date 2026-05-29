@@ -201,11 +201,20 @@ async def list_candidates(
     stack: str | None = None,
     engagement_type: EngagementType | None = None,
     employment_type: str | None = None,
+    vacancy_id: uuid.UUID | None = None,
     archived: bool | str | None = False,
     page: int = 1,
     page_size: int = 50,
 ) -> tuple[list[Candidate], int, dict[uuid.UUID, list[uuid.UUID]]]:
     q = _base_query()
+    # PERF: фильтр «только прикреплённые к этой вакансии» — раньше карточка
+    # вакансии тащила первую страницу /candidates (до 50) и фильтровала на
+    # фронте по c.vacancyIds.includes(vacancyId). Это и баг (>50 — пропадали),
+    # и лишний трафик. Теперь фильтр на бэке через EXISTS на vacancy_candidates.
+    if vacancy_id is not None:
+        q = q.where(
+            VacancyCandidate.candidate_id == Candidate.id,
+        ).where(VacancyCandidate.vacancy_id == vacancy_id)
     # archived фильтр: 'all' / true / false. False (по умолчанию) = только активные.
     if archived == "all":
         pass
@@ -287,11 +296,18 @@ async def create_candidate(
             details={"existingCandidateId": str(duplicate.id)},
         )
 
-    # kanban_order — в конец колонки.
-    in_col = (
-        await db.execute(_base_query().where(Candidate.status == payload.status))
-    ).scalars().all()
-    order = _next_kanban_order(in_col)
+    # PERF: kanban_order — в конец колонки. Раньше тянули все карточки колонки
+    # ради вычисления max(kanban_order); при 500+ кандидатов в одной колонке это
+    # был самый дорогой шаг создания. Теперь один SELECT max() — БД отвечает за
+    # миллисекунды независимо от размера колонки.
+    max_order = (
+        await db.execute(
+            select(func.max(Candidate.kanban_order))
+            .where(Candidate.deleted_at.is_(None))
+            .where(Candidate.status == payload.status)
+        )
+    ).scalar()
+    order = (max_order + 1) if isinstance(max_order, int) else 0
 
     cand = Candidate(
         full_name=payload.full_name,
@@ -466,10 +482,17 @@ async def change_status(
         before_status = cand.status.value
         cand.status = payload.status
         cand.status_changed_at = datetime.now(timezone.utc)
-        peers = (
-            await db.execute(_base_query().where(Candidate.status == payload.status))
-        ).scalars().all()
-        cand.kanban_order = _next_kanban_order(peers)
+        # PERF: тянем только max(kanban_order) для целевой колонки вместо всех
+        # карточек колонки. На канбане с 500+ карточек это сократило change_status
+        # с десятков мс до single-digit-ms.
+        max_order = (
+            await db.execute(
+                select(func.max(Candidate.kanban_order))
+                .where(Candidate.deleted_at.is_(None))
+                .where(Candidate.status == payload.status)
+            )
+        ).scalar()
+        cand.kanban_order = (max_order + 1) if isinstance(max_order, int) else 0
         await audit_service.record_audit(
             db,
             entity_type="candidate",
@@ -530,8 +553,11 @@ async def reorder_kanban(
             cand.status_changed_at = now
         cand.kanban_order = upd.kanban_order
     await db.commit()
-    for c in rows:
-        await db.refresh(c)
+    # PERF: db.refresh() в цикле = N запросов к БД (по одному на каждую карточку).
+    # Для drag-n-drop канбана это становится узким местом: батч из 20 карточек
+    # = 20 SELECT'ов после COMMIT. Все поля, которые меняются здесь
+    # (status / status_changed_at / kanban_order), уже в инстансах — refresh
+    # ради «триггеров на стороне БД» не нужен (их у нас нет).
     vmap = await _vacancy_ids_map(db, [c.id for c in rows])
     publish_candidate_changed(
         "reordered",

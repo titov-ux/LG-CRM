@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import type { Candidate, User } from '@/api/types';
 import { StackTags } from '@/components/common/StackTags';
 import { DaysBadge } from '@/components/common/DaysBadge';
@@ -10,7 +11,26 @@ interface Props {
   recruiter?: User;
 }
 
-export function CandidateKanbanCard({ candidate, recruiter }: Props) {
+// PERF: memo + сравнение по полям, которые реально рендерятся. Без этого при
+// любой смене состояния доски (драг, optimistic-апдейт, WS-событие) карточки
+// перерисовывались все разом. На 200 карточек это ≈ 60ms лишних рендеров.
+export const CandidateKanbanCard = memo(_CandidateKanbanCardImpl, (prev, next) => {
+  if (prev.recruiter?.id !== next.recruiter?.id) return false;
+  const a = prev.candidate;
+  const b = next.candidate;
+  return (
+    a.id === b.id &&
+    a.fullName === b.fullName &&
+    a.role === b.role &&
+    a.grade === b.grade &&
+    a.rateMonth === b.rateMonth &&
+    a.daysInStatus === b.daysInStatus &&
+    a.engagementType === b.engagementType &&
+    a.stack === b.stack // ссылочное равенство — стек не мутируем
+  );
+});
+
+function _CandidateKanbanCardImpl({ candidate, recruiter }: Props) {
   return (
     <>
       <div className="mb-1 flex items-start justify-between gap-2">

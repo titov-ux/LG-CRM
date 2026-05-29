@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Literal
@@ -617,8 +618,9 @@ async def recruiter_performance(
 
     period = period or default_period()
 
-    # 1) Список рекрутеров (recruiter + admin не считаем «рекрутерами»;
-    #    для AM тоже не считаем — но если у кого-то есть кандидаты, добавим)
+    # 1) Список рекрутеров (recruiter — основная роль; admin тоже может быть
+    #    указан как «ответственный» при создании кандидата — см.
+    #    _ensure_valid_recruiter_id, поэтому admin'ов тоже включаем).
     recruiter_rows = (
         await db.execute(
             select(UserModel.id, UserModel.full_name).where(
@@ -642,17 +644,44 @@ async def recruiter_performance(
         for rid, name in recruiter_rows
     }
 
-    def _ensure(rid: str | None) -> dict | None:
+    # admin'ы (и любые другие активные пользователи, которые могли быть
+    # указаны как ответственные) — подгружаем имена лениво, чтобы не
+    # засорять таблицу теми, у кого нет ни одного кандидата.
+    name_cache: dict[str, str | None] = {}
+
+    async def _lookup_name(rid: str) -> str | None:
+        if rid in name_cache:
+            return name_cache[rid]
+        try:
+            uid = uuid.UUID(rid)
+        except (ValueError, AttributeError):
+            name_cache[rid] = None
+            return None
+        row = (
+            await db.execute(
+                select(UserModel.full_name, UserModel.is_active).where(UserModel.id == uid)
+            )
+        ).first()
+        if row is None:
+            name_cache[rid] = None
+            return None
+        full_name, is_active = row
+        name_cache[rid] = full_name if is_active else None
+        return name_cache[rid]
+
+    async def _ensure(rid: str | None) -> dict | None:
         # rid может прийти как None (FK SET NULL) или как строка "None" —
         # «безхозного» рекрутера в аналитике не показываем.
         if not rid or rid == "None":
             return None
         if rid not in recruiters:
-            # рекрутер мог быть деактивирован, но у него есть исторические
-            # кандидаты — всё равно покажем строку
+            # Пользователь не recruiter (например, admin) — берём его имя
+            # из БД. Если пользователь существует и активен — показываем
+            # его настоящее ФИО; иначе считаем деактивированным.
+            real_name = await _lookup_name(rid)
             recruiters[rid] = {
                 "recruiter_id": rid,
-                "full_name": "(деактивирован)",
+                "full_name": real_name or "(деактивирован)",
                 "candidates_created": 0,
                 "presented": 0,
                 "hired": 0,
@@ -676,7 +705,7 @@ async def recruiter_performance(
         )
     ).all()
     for rid, cnt in created_rows:
-        row = _ensure(str(rid))
+        row = await _ensure(str(rid))
         if row is not None:
             row["candidates_created"] = int(cnt)
 
@@ -701,7 +730,7 @@ async def recruiter_performance(
         )
     ).all()
     for rid, cnt in presented_rows:
-        row = _ensure(str(rid))
+        row = await _ensure(str(rid))
         if row is not None:
             row["presented"] = int(cnt)
 
@@ -719,7 +748,7 @@ async def recruiter_performance(
         )
     ).all()
     for rid, cnt in hired_rows:
-        row = _ensure(str(rid))
+        row = await _ensure(str(rid))
         if row is not None:
             row["hired"] = int(cnt)
 
@@ -755,7 +784,7 @@ async def recruiter_performance(
     tth_by_rec: dict[str, list[float]] = {}
     for rid, _cid, rate_month, hired_at, vac_created, rate_client in hired_detail:
         key = str(rid)
-        row = _ensure(key)
+        row = await _ensure(key)
         if row is None:
             continue
         # маржа (если есть привязанная вакансия)

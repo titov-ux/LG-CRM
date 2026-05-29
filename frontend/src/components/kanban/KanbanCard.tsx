@@ -7,6 +7,13 @@ interface Props {
   id: string;
   onClick?: () => void;
   /**
+   * Hover-prefetch для карточки. Колбэк дёргается на pointerenter — успеваем
+   * прогреть кэш react-query за ту долю секунды, пока пользователь ведёт
+   * курсор от карточки до клика. На медленной сети это превращает «открыть
+   * карточку → 300мс» в «открыть карточку → мгновенно».
+   */
+  onPrefetch?: () => void;
+  /**
    * Цвет левого акцента карточки (3px). Используется для маркировки типа
    * сделки (см. EngagementBadge / lib/engagement). Если не передан — без полоски.
    */
@@ -14,7 +21,7 @@ interface Props {
   children: ReactNode;
 }
 
-export function KanbanCard({ id, onClick, accentColor, children }: Props) {
+export function KanbanCard({ id, onClick, onPrefetch, accentColor, children }: Props) {
   const { setNodeRef, transform, transition, isDragging, attributes, listeners } = useSortable({ id });
   const style = {
     transform: CSS.Translate.toString(transform),
@@ -39,6 +46,8 @@ export function KanbanCard({ id, onClick, accentColor, children }: Props) {
       {...attributes}
       {...listeners}
       onClick={onClick}
+      onPointerEnter={onPrefetch}
+      onFocus={onPrefetch}
       className={cn(
         'group relative cursor-grab overflow-hidden rounded-md border bg-background p-2.5 shadow-[0_1px_0_rgba(15,23,42,0.02)] transition-all hover:border-slate-300 hover:shadow-[0_2px_4px_rgba(15,23,42,0.04)] active:cursor-grabbing',
       )}

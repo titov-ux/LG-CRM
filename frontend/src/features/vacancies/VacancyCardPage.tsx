@@ -42,7 +42,7 @@ import { useUsers } from '@/features/users/hooks';
 import { useCandidates } from '@/features/candidates/hooks';
 import { vacancyStatuses } from '@/mocks/db/vacancies';
 import { formatDateRu, formatMoneyRub } from '@/lib/utils';
-import type { Candidate, Vacancy } from '@/api/types';
+import type { Candidate, UUID, Vacancy } from '@/api/types';
 import { useAuthStore } from '@/stores/auth';
 import { useCan } from '@/lib/permissions';
 import { CommentsSection } from '@/features/comments/CommentsSection';
@@ -167,7 +167,15 @@ export function VacancyCardPage() {
   const { data: activity, isLoading: activityLoading, isError: activityError } = useVacancyActivity(id);
   const { data: clientsData } = useClients();
   const { data: usersData } = useUsers();
-  const { data: candidatesData } = useCandidates();
+  // PERF/BUG: раньше тянули первую страницу /candidates (до 50 шт) и фильтровали
+  // на клиенте по c.vacancyIds.includes(vacancy.id). Это и баг (на больших
+  // базах прикреплённые кандидаты пропадали), и лишний трафик. Теперь сервер
+  // отдаёт сразу нужное подмножество через vacancyId=, pageSize 200 — потолок
+  // прикреплённых к одной вакансии в любых реалистичных сценариях.
+  const { data: candidatesData } = useCandidates({
+    vacancyId: id as UUID,
+    pageSize: 200,
+  });
   const currentUser = useAuthStore((s) => s.user);
   const updateVacancy = useUpdateVacancy();
   const createVacancy = useCreateVacancy();
@@ -190,7 +198,12 @@ export function VacancyCardPage() {
   // АМ берётся с самой вакансии; на старых записях без поля — fallback на АМ клиента.
   const accountManagerId = vacancy?.accountManagerId || client?.accountManagerId;
   const accountManager = usersData?.find((u) => u.id === accountManagerId);
-  const attached = (candidatesData?.items ?? []).filter((c) => vacancy && c.vacancyIds.includes(vacancy.id));
+  // PERF: candidatesData теперь и так пришёл с сервера отфильтрованным по
+  // vacancyId — клиентский filter оставлен только как страховка от гонки
+  // запросов (id из URL ещё не совпал с id вакансии в data).
+  const attached = (candidatesData?.items ?? []).filter(
+    (c) => vacancy && c.vacancyIds.includes(vacancy.id),
+  );
   const activityItems = activity ?? [];
   const hiddenActivityCount = Math.max(activityItems.length - ACTIVITY_PREVIEW_LIMIT, 0);
   const visibleActivity = activityExpanded ? activityItems : activityItems.slice(0, ACTIVITY_PREVIEW_LIMIT);

@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { useNavigate } from '@tanstack/react-router';
+import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   Briefcase,
@@ -18,7 +19,8 @@ import type {
   VacancyStatus,
 } from '@/api/types';
 import { vacancyStatuses } from '@/mocks/db/vacancies';
-import { useVacancies, useReorderVacanciesKanban } from './hooks';
+import { vacanciesApi } from '@/api/vacancies';
+import { useVacancies, useReorderVacanciesKanban, vacancyKeys } from './hooks';
 import { useClients } from '@/features/clients/hooks';
 import { useUsers } from '@/features/users/hooks';
 import { VacancyKanbanCard } from './VacancyKanbanCard';
@@ -80,10 +82,14 @@ export function VacanciesKanbanPage() {
     recruiterId: recruiterId ?? undefined,
     accountManagerId: accountManagerId ?? undefined,
     engagementType: engagementType ?? undefined,
+    // PERF/BUG: тот же фикс, что и у кандидатского канбана — дефолт pageSize=50
+    // тихо обрезал доску при >50 вакансий. 200 покрывает реалистичные нагрузки.
+    pageSize: 200,
   });
   const { data: usersData } = useUsers();
   const { data: clientsData } = useClients();
   const reorder = useReorderVacanciesKanban();
+  const queryClient = useQueryClient();
 
   const userMap = useMemo(() => new Map((usersData ?? []).map((u) => [u.id, u])), [usersData]);
   const clientMap = useMemo(
@@ -316,6 +322,15 @@ export function VacanciesKanbanPage() {
           statuses={STATUSES}
           items={items}
           onCardClick={(v) => navigate({ to: '/vacancies/$id', params: { id: v.id } })}
+          onCardHover={(v) => {
+            // PERF: прогрев кэша карточки вакансии на hover. Карточка тяжёлая
+            // (вакансия + activity + кандидаты), prefetch экономит видимый latency.
+            queryClient.prefetchQuery({
+              queryKey: vacancyKeys.byId(v.id),
+              queryFn: () => vacanciesApi.byId(v.id),
+              staleTime: 30_000,
+            });
+          }}
           onReorder={(updates) => {
             const statusChanged = updates.find((u) => {
               const original = items.find((x) => x.id === u.id);

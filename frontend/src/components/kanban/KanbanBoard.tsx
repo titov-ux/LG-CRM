@@ -32,6 +32,12 @@ interface Props<TStatus extends string, TItem extends KanbanItem<TStatus>> {
    */
   getAccentColor?: (item: TItem) => string | undefined;
   onCardClick?: (item: TItem) => void;
+  /**
+   * Прокидывается на pointerenter карточки. Используем для prefetch'a
+   * данных карточки (react-query.prefetchQuery) — за время, что курсор
+   * идёт к клику, успеваем прогреть кэш и открытие становится мгновенным.
+   */
+  onCardHover?: (item: TItem) => void;
   onReorder: (updates: KanbanReorderUpdate<TStatus>[]) => void;
   onCreate?: (status: TStatus) => void;
 }
@@ -43,6 +49,7 @@ export function KanbanBoard<TStatus extends string, TItem extends KanbanItem<TSt
   renderOverlay,
   getAccentColor,
   onCardClick,
+  onCardHover,
   onReorder,
   onCreate,
 }: Props<TStatus, TItem>) {
@@ -146,6 +153,7 @@ export function KanbanBoard<TStatus extends string, TItem extends KanbanItem<TSt
                   key={item.id}
                   id={item.id}
                   onClick={() => onCardClick?.(item)}
+                  onPrefetch={onCardHover ? () => onCardHover(item) : undefined}
                   accentColor={getAccentColor?.(item)}
                 >
                   {renderCard(item)}

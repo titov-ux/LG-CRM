@@ -18,6 +18,12 @@ export interface CandidatesListParams {
   engagementType?: EngagementType;
   employmentType?: EmploymentType;
   /**
+   * Сузить выдачу до кандидатов, прикреплённых к конкретной вакансии.
+   * Используется в карточке вакансии вместо клиентского фильтра по
+   * c.vacancyIds.includes(...) — раньше это давало баг с потолком 50.
+   */
+  vacancyId?: UUID;
+  /**
    * Фильтр по «архивности» кандидата.
    *  - false / undefined — только активные (на канбан-доске);
    *  - true             — только архивные (убраны с доски, но в базе);

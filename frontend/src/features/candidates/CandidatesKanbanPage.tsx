@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { useNavigate } from '@tanstack/react-router';
+import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   FileSignature,
@@ -16,7 +17,8 @@ import type {
   Grade,
 } from '@/api/types';
 import { candidateStatuses } from '@/mocks/db/candidates';
-import { useCandidates, useReorderCandidatesKanban } from './hooks';
+import { candidatesApi } from '@/api/candidates';
+import { useCandidates, useReorderCandidatesKanban, candidateKeys } from './hooks';
 import { useUsers } from '@/features/users/hooks';
 import { CandidateKanbanCard } from './CandidateKanbanCard';
 import { useFiltersStore } from '@/stores/filters';
@@ -62,9 +64,15 @@ export function CandidatesKanbanPage() {
     // На канбан-доску архивированных кандидатов не показываем — они живут
     // в разделе «База кандидатов».
     archived: false,
+    // PERF/BUG: дефолтный pageSize=50 на бэке давал баг — при >50 активных
+    // кандидатов часть тихо пропадала с доски. Поднимаем потолок до 200:
+    // это покрывает реалистичные команды (10 рекрутеров × 20 активных).
+    // Для команд побольше следующий шаг — стрим по колонкам/виртуализация.
+    pageSize: 200,
   });
   const { data: usersData } = useUsers();
   const reorder = useReorderCandidatesKanban();
+  const queryClient = useQueryClient();
 
   const userMap = useMemo(() => new Map((usersData ?? []).map((u) => [u.id, u])), [usersData]);
 
@@ -223,6 +231,15 @@ export function CandidatesKanbanPage() {
           statuses={STATUSES}
           items={items}
           onCardClick={(c) => navigate({ to: '/candidates/$id', params: { id: c.id } })}
+          onCardHover={(c) => {
+            // PERF: прогреваем кэш карточки кандидата на hover. К моменту клика
+            // данные уже лежат в react-query, открытие карточки — мгновенное.
+            queryClient.prefetchQuery({
+              queryKey: candidateKeys.byId(c.id),
+              queryFn: () => candidatesApi.byId(c.id),
+              staleTime: 30_000,
+            });
+          }}
           onReorder={(updates) => {
             const statusChanged = updates.find((u) => {
               const original = items.find((x) => x.id === u.id);

@@ -383,8 +383,8 @@ export function CandidatesDatabasePage() {
                         navigate({ to: '/database/$id', params: { id: c.id } })
                       }
                     >
-                      <TableCell className="py-2.5 align-top">
-                        <div className="flex items-start gap-2.5">
+                      <TableCell className="py-2.5 align-middle">
+                        <div className="flex items-center gap-2.5">
                           <UserAvatar
                             user={{
                               fullName: c.fullName,
@@ -397,8 +397,8 @@ export function CandidatesDatabasePage() {
                             }}
                             size={28}
                           />
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex min-w-0 items-center gap-1.5">
                               <span
                                 className={cn(
                                   'truncate text-[13.5px] font-semibold leading-tight',
@@ -407,9 +407,12 @@ export function CandidatesDatabasePage() {
                               >
                                 {c.fullName}
                               </span>
+                              <span className="shrink-0 truncate text-[12px] text-muted-foreground">
+                                · {c.role} · {c.grade}
+                              </span>
                               {c.archived && (
                                 <span
-                                  className="inline-flex items-center gap-1 rounded border border-amber-300/60 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200"
+                                  className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-300/60 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200"
                                   title={
                                     c.archivedAt
                                       ? `Убран ${new Date(c.archivedAt).toLocaleDateString('ru-RU')}`
@@ -420,9 +423,6 @@ export function CandidatesDatabasePage() {
                                   Архив
                                 </span>
                               )}
-                            </div>
-                            <div className="mt-0.5 truncate text-[12px] text-muted-foreground">
-                              {c.role} · {c.grade}
                             </div>
                           </div>
                         </div>

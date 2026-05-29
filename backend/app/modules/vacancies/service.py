@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Iterable
 
 from fastapi import status
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -167,9 +167,17 @@ async def create_vacancy(
             "forbidden",
             "Аккаунт-менеджер может создавать вакансии только на себя",
         )
-    # Авто-вычисление kanban_order — в конец колонки своего status.
-    existing = (await db.execute(_scope(_base_query(), user))).scalars().all()
-    order = _next_kanban_order(existing, payload.status)
+    # PERF: kanban_order — в конец колонки. Раньше тянули ВСЕ вакансии scope+selectinload(recruiters)
+    # только ради max(kanban_order) одной колонки. Один SELECT max() с фильтром по status.
+    max_q = (
+        select(func.max(Vacancy.kanban_order))
+        .where(Vacancy.deleted_at.is_(None))
+        .where(Vacancy.status == payload.status)
+    )
+    if user.role == Role.account_manager:
+        max_q = max_q.where(Vacancy.account_manager_id == user.id)
+    max_order = (await db.execute(max_q)).scalar()
+    order = (max_order + 1) if isinstance(max_order, int) else 0
     vac = Vacancy(
         title=payload.title,
         client_id=payload.client_id,
@@ -306,13 +314,17 @@ async def change_status(
         before_status = vac.status.value
         vac.status = payload.status
         vac.status_changed_at = datetime.now(timezone.utc)
-        # При смене колонки сбрасываем kanban_order — пересчёт в конец новой колонки.
-        peers = (
-            await db.execute(
-                _scope(_base_query(), user).where(Vacancy.status == payload.status)
-            )
-        ).scalars().all()
-        vac.kanban_order = (max((p.kanban_order for p in peers), default=-1)) + 1
+        # PERF: при смене колонки берём только max(kanban_order) целевой колонки.
+        # Раньше тянули весь scope + selectinload(recruiters) только ради max'а.
+        max_q = (
+            select(func.max(Vacancy.kanban_order))
+            .where(Vacancy.deleted_at.is_(None))
+            .where(Vacancy.status == payload.status)
+        )
+        if user.role == Role.account_manager:
+            max_q = max_q.where(Vacancy.account_manager_id == user.id)
+        max_order = (await db.execute(max_q)).scalar()
+        vac.kanban_order = (max_order + 1) if isinstance(max_order, int) else 0
         # Запись в audit + activity синхронно (в той же транзакции).
         await audit_service.record_audit(
             db,
@@ -419,8 +431,10 @@ async def reorder_kanban(
         v.kanban_order = upd.kanban_order
 
     await db.commit()
-    for v in rows:
-        await db.refresh(v, attribute_names=["recruiters"])
+    # PERF: db.refresh() в цикле = N запросов на батч. Здесь после COMMIT инстансы
+    # уже содержат актуальные status / kanban_order; recruiters мы загружали
+    # eager-ом в _base_query() и в этой транзакции не меняли — перечитывать
+    # из БД не нужно.
     publish_vacancy_changed(
         "reordered",
         ids=[v.id for v in rows],

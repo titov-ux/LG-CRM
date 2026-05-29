@@ -430,8 +430,10 @@ export function CandidatesDatabasePage() {
                       <TableCell className="py-2.5 align-top">
                         <EngagementBadge type={c.engagementType} variant="chip" />
                       </TableCell>
-                      <TableCell className="py-2.5 align-top">
-                        <StackTags stack={c.stack} max={3} variant="accent" />
+                      <TableCell className="max-w-[220px] py-2.5 align-middle">
+                        {/* singleLine: теги в одну строку, длинные — обрезаются «…»,
+                            «+N» всегда виден. Без этого ряды плыли в высоту. */}
+                        <StackTags stack={c.stack} max={3} variant="accent" singleLine />
                       </TableCell>
                       <TableCell className="py-2.5 align-top">
                         <span className="inline-flex items-center gap-1.5 text-[12.5px]">

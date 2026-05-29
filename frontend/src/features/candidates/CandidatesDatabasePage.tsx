@@ -383,8 +383,13 @@ export function CandidatesDatabasePage() {
                         navigate({ to: '/database/$id', params: { id: c.id } })
                       }
                     >
-                      <TableCell className="py-2.5 align-middle">
-                        <div className="flex items-center gap-2.5">
+                      <TableCell className="w-[42%] max-w-0 py-2.5 align-middle">
+                        {/* w-[42%] + max-w-0 — фикс ширины колонки, иначе длинные
+                            названия ролей растягивали таблицу и заставляли
+                            скроллить горизонтально. min-w-0 на детях + truncate
+                            гарантируют, что ФИО и роль обрезаются «…», а не
+                            выталкивают соседние колонки. */}
+                        <div className="flex min-w-0 items-center gap-2.5">
                           <UserAvatar
                             user={{
                               fullName: c.fullName,
@@ -398,16 +403,23 @@ export function CandidatesDatabasePage() {
                             size={28}
                           />
                           <div className="min-w-0 flex-1">
-                            <div className="flex min-w-0 items-center gap-1.5">
+                            <div
+                              className="flex min-w-0 items-baseline gap-1.5"
+                              title={`${c.fullName} · ${c.role} · ${c.grade}`}
+                            >
                               <span
                                 className={cn(
-                                  'truncate text-[13.5px] font-semibold leading-tight',
+                                  'shrink-0 truncate text-[13.5px] font-semibold leading-tight',
+                                  // ФИО ограничиваем 40% ширины ячейки —
+                                  // достаточно для большинства Фамилия+Имя+Отчество,
+                                  // длинные роли получают остальное место.
+                                  'max-w-[55%]',
                                   c.archived && 'text-muted-foreground',
                                 )}
                               >
                                 {c.fullName}
                               </span>
-                              <span className="shrink-0 truncate text-[12px] text-muted-foreground">
+                              <span className="min-w-0 flex-1 truncate text-[12px] text-muted-foreground">
                                 · {c.role} · {c.grade}
                               </span>
                               {c.archived && (

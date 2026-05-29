@@ -335,7 +335,7 @@ export function CandidatesDatabasePage() {
                 <TableHead className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground/80">
                   Рекрутер
                 </TableHead>
-                <TableHead className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground/80">
+                <TableHead className="whitespace-nowrap text-[11px] font-medium uppercase tracking-wider text-muted-foreground/80">
                   В статусе
                 </TableHead>
                 <TableHead className="w-16" />
@@ -447,10 +447,12 @@ export function CandidatesDatabasePage() {
                             «+N» всегда виден. Без этого ряды плыли в высоту. */}
                         <StackTags stack={c.stack} max={3} variant="accent" singleLine />
                       </TableCell>
-                      <TableCell className="py-2.5 align-top">
+                      <TableCell className="whitespace-nowrap py-2.5 align-middle">
+                        {/* nowrap — иначе «Отказ клиента» переносился и строки
+                            становились разной высоты. */}
                         <span className="inline-flex items-center gap-1.5 text-[12.5px]">
                           <span
-                            className="h-2 w-2 rounded-full"
+                            className="h-2 w-2 shrink-0 rounded-full"
                             style={{ background: meta?.color ?? '#94a3b8' }}
                           />
                           {meta?.label ?? c.status}

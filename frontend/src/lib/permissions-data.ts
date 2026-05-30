@@ -21,6 +21,10 @@ export type Action =
   | 'candidate:delete_permanent'
   | 'audit:view'
   | 'analytics:view'
+  | 'event:create'
+  | 'event:edit'
+  | 'event:set_outcome'
+  | 'event:delete'
   | 'user:manage';
 
 /** Одна строка матрицы доступов. `id` — стабильный slug, под него завязаны мутации. */
@@ -128,6 +132,30 @@ export const DEFAULT_PERMISSIONS: MatrixPermission[] = [
       'Полное удаление кандидата из базы без возможности восстановления. Действует поверх «убрать с доски».',
     actions: ['candidate:delete_permanent'],
     matrix: { admin: true, account_manager: false, recruiter: false, viewer: false },
+  },
+  {
+    id: 'calendar.view',
+    group: 'Календарь',
+    permission: 'Доступ к календарю',
+    description: 'Видеть события календаря и собеседования.',
+    actions: [],
+    matrix: { admin: true, account_manager: true, recruiter: true, viewer: true },
+  },
+  {
+    id: 'calendar.manage',
+    group: 'Календарь',
+    permission: 'Создание / редактирование событий',
+    description: 'Назначать собеседования, переносить и отмечать их исход.',
+    actions: ['event:create', 'event:edit', 'event:set_outcome'],
+    matrix: { admin: true, account_manager: true, recruiter: true, viewer: false },
+  },
+  {
+    id: 'calendar.delete',
+    group: 'Календарь',
+    permission: 'Удаление событий',
+    description: 'Удалять события календаря.',
+    actions: ['event:delete'],
+    matrix: { admin: true, account_manager: true, recruiter: false, viewer: false },
   },
   {
     id: 'analytics.view',

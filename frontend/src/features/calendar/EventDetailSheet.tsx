@@ -1,0 +1,180 @@
+import { useState } from 'react';
+import { format } from 'date-fns';
+import { ru } from 'date-fns/locale';
+import { CalendarClock, MapPin, Users, X, Check, Ban, Pencil, Trash2 } from 'lucide-react';
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Textarea } from '@/components/ui/textarea';
+import { Separator } from '@/components/ui/separator';
+import { toast } from 'sonner';
+import type { CalendarEvent, EventStatus } from '@/api/types';
+import { useCan } from '@/lib/permissions';
+import { useCancelEvent, useDeleteEvent, useSetOutcome } from './hooks';
+
+interface Props {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  event: CalendarEvent | null;
+  onEdit: (event: CalendarEvent) => void;
+}
+
+const STATUS_LABEL: Record<EventStatus, string> = {
+  scheduled: 'Запланировано',
+  held: 'Состоялось',
+  no_show: 'Не пришёл',
+  canceled: 'Отменено',
+};
+
+const STATUS_VARIANT: Record<EventStatus, 'default' | 'secondary' | 'destructive' | 'outline'> = {
+  scheduled: 'default',
+  held: 'secondary',
+  no_show: 'destructive',
+  canceled: 'outline',
+};
+
+const LOCATION_LABEL = { online: 'Онлайн', onsite: 'В офисе', phone: 'Телефон' } as const;
+
+export function EventDetailSheet({ open, onOpenChange, event, onEdit }: Props) {
+  const canManage = useCan('event:set_outcome');
+  const canDelete = useCan('event:delete');
+  const setOutcome = useSetOutcome();
+  const cancelEvent = useCancelEvent();
+  const deleteEvent = useDeleteEvent();
+  const [outcome, setOutcomeText] = useState('');
+
+  if (!event) return null;
+
+  const start = new Date(event.startsAt);
+  const isOpen = event.status === 'scheduled';
+
+  async function mark(status: 'held' | 'no_show') {
+    try {
+      await setOutcome.mutateAsync({ id: event!.id, payload: { status, outcome: outcome || undefined } });
+      toast.success(status === 'held' ? 'Отмечено: состоялось' : 'Отмечено: не пришёл');
+      onOpenChange(false);
+    } catch {
+      toast.error('Не удалось отметить исход');
+    }
+  }
+
+  async function doCancel() {
+    try {
+      await cancelEvent.mutateAsync({ id: event!.id, reason: outcome || undefined });
+      toast.success('Событие отменено');
+      onOpenChange(false);
+    } catch {
+      toast.error('Не удалось отменить');
+    }
+  }
+
+  async function doDelete() {
+    try {
+      await deleteEvent.mutateAsync(event!.id);
+      toast.success('Событие удалено');
+      onOpenChange(false);
+    } catch {
+      toast.error('Не удалось удалить');
+    }
+  }
+
+  const busy = setOutcome.isPending || cancelEvent.isPending || deleteEvent.isPending;
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent className="flex w-full flex-col sm:max-w-md">
+        <SheetHeader>
+          <div className="flex items-start justify-between gap-3">
+            <SheetTitle className="pr-6">{event.title}</SheetTitle>
+            <Badge variant={STATUS_VARIANT[event.status]}>{STATUS_LABEL[event.status]}</Badge>
+          </div>
+        </SheetHeader>
+
+        <div className="flex-1 space-y-4 py-4 text-sm">
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <CalendarClock className="h-4 w-4" />
+            <span>
+              {format(start, 'd MMMM yyyy, HH:mm', { locale: ru })}
+              {event.endsAt ? ` – ${format(new Date(event.endsAt), 'HH:mm', { locale: ru })}` : ''}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <MapPin className="h-4 w-4" />
+            <span>
+              {LOCATION_LABEL[event.locationKind]}
+              {event.location ? ` · ${event.location}` : ''}
+            </span>
+          </div>
+
+          {(event.candidateName || event.vacancyTitle) && (
+            <div className="rounded-md border bg-muted/30 px-3 py-2">
+              {event.candidateName && <div className="font-medium">{event.candidateName}</div>}
+              {event.vacancyTitle && (
+                <div className="text-muted-foreground">{event.vacancyTitle}</div>
+              )}
+            </div>
+          )}
+
+          {event.attendees.length > 0 && (
+            <div className="flex items-start gap-2 text-muted-foreground">
+              <Users className="mt-0.5 h-4 w-4" />
+              <span>{event.attendees.map((a) => a.name ?? a.userId).join(', ')}</span>
+            </div>
+          )}
+
+          {event.outcome && (
+            <div className="rounded-md border-l-2 border-border bg-muted/20 px-3 py-2 text-muted-foreground">
+              {event.outcome}
+            </div>
+          )}
+
+          {isOpen && canManage && (
+            <>
+              <Separator />
+              <div className="space-y-2">
+                <Textarea
+                  placeholder="Заметка по итогу (необязательно)"
+                  value={outcome}
+                  onChange={(e) => setOutcomeText(e.target.value)}
+                  rows={3}
+                />
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" onClick={() => mark('held')} disabled={busy}>
+                    <Check className="mr-1.5 h-4 w-4" /> Состоялось
+                  </Button>
+                  <Button size="sm" variant="secondary" onClick={() => mark('no_show')} disabled={busy}>
+                    <X className="mr-1.5 h-4 w-4" /> Не пришёл
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={doCancel} disabled={busy}>
+                    <Ban className="mr-1.5 h-4 w-4" /> Отменить
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between gap-2 border-t pt-4">
+          {canManage ? (
+            <Button variant="ghost" size="sm" onClick={() => onEdit(event)} disabled={busy}>
+              <Pencil className="mr-1.5 h-4 w-4" /> Изменить
+            </Button>
+          ) : (
+            <span />
+          )}
+          {canDelete && (
+            <Button variant="ghost" size="sm" onClick={doDelete} disabled={busy} className="text-destructive">
+              <Trash2 className="mr-1.5 h-4 w-4" /> Удалить
+            </Button>
+          )}
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}

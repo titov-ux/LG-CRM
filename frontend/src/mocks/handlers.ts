@@ -2,6 +2,7 @@ import { http, HttpResponse } from 'msw';
 import { API_BASE_URL } from '@/lib/constants';
 import type {
   ActivityEntry,
+  CalendarEvent,
   Candidate,
   CandidateStatus,
   Client,
@@ -9,6 +10,7 @@ import type {
   Comment,
   CommentEntityType,
   ContactListItem,
+  EventStatus,
   Notification,
   User,
   Vacancy,
@@ -35,6 +37,117 @@ import {
 import type { Role } from '@/api/types';
 
 const url = (path: string) => `${API_BASE_URL}${path.startsWith('/') ? '' : '/'}${path}`;
+
+// ─── Календарь: in-memory события (мок-режим) ───
+function atHour(dayOffset: number, hour: number, minute = 0): string {
+  const d = new Date();
+  d.setDate(d.getDate() + dayOffset);
+  d.setHours(hour, minute, 0, 0);
+  return d.toISOString();
+}
+
+let calendarSeq = 1;
+const nextEventId = () => `ev-${calendarSeq++}`;
+
+function seedCalendar(): CalendarEvent[] {
+  const cand = candidatesDb;
+  const rec = usersDb.filter((u) => u.role === 'recruiter');
+  const pick = <T,>(arr: T[], i: number): T | undefined => arr[i % Math.max(1, arr.length)];
+  const mk = (
+    dayOffset: number,
+    hour: number,
+    candIdx: number,
+    status: EventStatus,
+  ): CalendarEvent => {
+    const c = pick(cand, candIdx);
+    const r = pick(rec, candIdx);
+    const startsAt = atHour(dayOffset, hour);
+    return {
+      id: nextEventId(),
+      type: 'interview',
+      title: c ? `Собес: ${c.fullName}` : 'Собеседование',
+      startsAt,
+      endsAt: new Date(new Date(startsAt).getTime() + 60 * 60_000).toISOString(),
+      allDay: false,
+      locationKind: 'online',
+      location: 'https://telemost.yandex.ru/j/000',
+      status,
+      candidateId: c?.id ?? null,
+      vacancyId: null,
+      matchId: null,
+      createdById: usersDb[0]?.id ?? null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      attendees: r ? [{ userId: r.id, response: 'invited', name: r.fullName }] : [],
+      candidateName: c?.fullName ?? null,
+      vacancyTitle: null,
+    };
+  };
+  return [
+    mk(0, 11, 0, 'scheduled'),
+    mk(0, 15, 1, 'scheduled'),
+    mk(1, 10, 2, 'scheduled'),
+    mk(-1, 12, 3, 'held'),
+    mk(2, 14, 4, 'scheduled'),
+  ];
+}
+
+const calendarDb: CalendarEvent[] = seedCalendar();
+
+function makeCalendarEvent(
+  body: Partial<CalendarEvent> & { attendeeIds?: string[] },
+): CalendarEvent {
+  const startsAt = body.startsAt ?? new Date().toISOString();
+  const cand = body.candidateId ? candidatesDb.find((c) => c.id === body.candidateId) : undefined;
+  const vac = body.vacancyId ? vacanciesDb.find((v) => v.id === body.vacancyId) : undefined;
+  const attendees = (body.attendeeIds ?? []).map((uid) => ({
+    userId: uid,
+    response: 'invited' as const,
+    name: usersDb.find((u) => u.id === uid)?.fullName ?? null,
+  }));
+  const title =
+    body.title || (cand ? `Собес: ${cand.fullName}${vac ? ` — ${vac.title}` : ''}` : 'Событие');
+  return {
+    id: nextEventId(),
+    type: body.type ?? 'interview',
+    title,
+    startsAt,
+    endsAt: body.endsAt ?? new Date(new Date(startsAt).getTime() + 60 * 60_000).toISOString(),
+    allDay: body.allDay ?? false,
+    locationKind: body.locationKind ?? 'online',
+    location: body.location ?? null,
+    status: 'scheduled',
+    candidateId: body.candidateId ?? null,
+    vacancyId: body.vacancyId ?? null,
+    matchId: body.matchId ?? null,
+    createdById: usersDb[0]?.id ?? null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    attendees,
+    candidateName: cand?.fullName ?? null,
+    vacancyTitle: vac?.title ?? null,
+  };
+}
+
+function patchCalendarEvent(
+  body: Partial<CalendarEvent> & { attendeeIds?: string[] },
+): Partial<CalendarEvent> {
+  const patch: Partial<CalendarEvent> = { updatedAt: new Date().toISOString() };
+  if (body.title != null) patch.title = body.title;
+  if (body.startsAt != null) patch.startsAt = body.startsAt;
+  if (body.endsAt !== undefined) patch.endsAt = body.endsAt;
+  if (body.allDay != null) patch.allDay = body.allDay;
+  if (body.locationKind != null) patch.locationKind = body.locationKind;
+  if (body.location !== undefined) patch.location = body.location;
+  if (body.attendeeIds != null) {
+    patch.attendees = body.attendeeIds.map((uid) => ({
+      userId: uid,
+      response: 'invited' as const,
+      name: usersDb.find((u) => u.id === uid)?.fullName ?? null,
+    }));
+  }
+  return patch;
+}
 
 function paginate<T>(items: T[], pageRaw?: string | null, pageSizeRaw?: string | null) {
   const page = Number(pageRaw ?? 1);
@@ -1442,6 +1555,62 @@ export const handlers = [
   http.post(url('/permissions-matrix/reset'), () => {
     const items = resetPermissionsMatrix();
     return HttpResponse.json({ items });
+  }),
+
+  // ─── Календарь собеседований ───
+  http.get(url('/calendar/events'), ({ request }) => {
+    const u = new URL(request.url);
+    const from = u.searchParams.get('from');
+    const to = u.searchParams.get('to');
+    const recruiterId = u.searchParams.get('recruiterId');
+    const status = u.searchParams.get('status');
+    let items = [...calendarDb];
+    if (from) items = items.filter((e) => e.startsAt >= from);
+    if (to) items = items.filter((e) => e.startsAt < to);
+    if (recruiterId) items = items.filter((e) => e.attendees.some((a) => a.userId === recruiterId));
+    if (status) items = items.filter((e) => e.status === status);
+    items.sort((a, b) => a.startsAt.localeCompare(b.startsAt));
+    return HttpResponse.json(items);
+  }),
+  http.post(url('/calendar/events'), async ({ request }) => {
+    const body = (await request.json()) as Partial<CalendarEvent> & { attendeeIds?: string[] };
+    const ev = makeCalendarEvent(body);
+    calendarDb.push(ev);
+    return HttpResponse.json(ev, { status: 201 });
+  }),
+  http.get(url('/calendar/events/:id'), ({ params }) => {
+    const ev = calendarDb.find((e) => e.id === params.id);
+    return ev ? HttpResponse.json(ev) : new HttpResponse('Not found', { status: 404 });
+  }),
+  http.patch(url('/calendar/events/:id'), async ({ params, request }) => {
+    const ev = calendarDb.find((e) => e.id === params.id);
+    if (!ev) return new HttpResponse('Not found', { status: 404 });
+    const body = (await request.json()) as Partial<CalendarEvent> & { attendeeIds?: string[] };
+    Object.assign(ev, patchCalendarEvent(body));
+    return HttpResponse.json(ev);
+  }),
+  http.post(url('/calendar/events/:id/outcome'), async ({ params, request }) => {
+    const ev = calendarDb.find((e) => e.id === params.id);
+    if (!ev) return new HttpResponse('Not found', { status: 404 });
+    const body = (await request.json()) as { status: EventStatus; outcome?: string };
+    ev.status = body.status;
+    if (body.outcome != null) ev.outcome = body.outcome;
+    ev.updatedAt = new Date().toISOString();
+    return HttpResponse.json(ev);
+  }),
+  http.post(url('/calendar/events/:id/cancel'), async ({ params, request }) => {
+    const ev = calendarDb.find((e) => e.id === params.id);
+    if (!ev) return new HttpResponse('Not found', { status: 404 });
+    const body = (await request.json()) as { reason?: string };
+    ev.status = 'canceled';
+    if (body.reason) ev.outcome = body.reason;
+    ev.updatedAt = new Date().toISOString();
+    return HttpResponse.json(ev);
+  }),
+  http.delete(url('/calendar/events/:id'), ({ params }) => {
+    const i = calendarDb.findIndex((e) => e.id === params.id);
+    if (i >= 0) calendarDb.splice(i, 1);
+    return HttpResponse.json({ ok: true });
   }),
 ];
 

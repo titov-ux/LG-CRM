@@ -6,6 +6,7 @@ from app.api.v1.endpoints import (
     api_tokens,
     audit,
     auth,
+    calendar,
     candidates,
     chat,
     clients,
@@ -43,3 +44,4 @@ api_router.include_router(chat.router)
 api_router.include_router(realtime.router)
 api_router.include_router(integrations.router)
 api_router.include_router(api_tokens.router)
+api_router.include_router(calendar.router)

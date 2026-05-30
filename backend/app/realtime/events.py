@@ -152,6 +152,39 @@ def publish_chat_event(
         logger.exception("publish_chat_event failed (suppressed)")
 
 
+# === Календарь ===============================================================
+# События календаря приватные: их видят только участники и автор. Audience —
+# список user_id — кладётся в само событие, фильтрация на стороне `_pump_events`.
+CalendarEventKind = Literal["created", "updated", "canceled", "deleted"]
+
+
+def publish_calendar_event(
+    kind: CalendarEventKind,
+    *,
+    event_id: uuid.UUID,
+    audience: Iterable[uuid.UUID | str],
+    actor_id: uuid.UUID | None = None,
+) -> None:
+    """Опубликовать событие об изменении календарного события.
+
+    `audience` — участники + автор. Безопасно для вызова из любого места —
+    не бросает исключений.
+    """
+    try:
+        event: dict[str, Any] = {
+            "type": "calendar.event_changed",
+            "kind": kind,
+            "id": _safe_uuid(event_id),
+            "audience": [str(u) for u in audience],
+            "actorId": _safe_uuid(actor_id),
+            "clientId": current_client_id_var.get(""),
+            "ts": _now_iso(),
+        }
+        get_bus().publish(event)
+    except Exception:
+        logger.exception("publish_calendar_event failed (suppressed)")
+
+
 def publish_user_presence_event(*, user_id: uuid.UUID | str, online: bool) -> None:
     """Опубликовать событие presence (online/offline) для пользователя.
 

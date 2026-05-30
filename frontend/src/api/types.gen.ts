@@ -1574,6 +1574,101 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/candidates/extract-doc": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Извлечение текста из бинарного .doc (Word 97-2003)
+         * @description Принимает multipart-файл .doc и возвращает plain-текст через
+         *     системный antiword. Нужен только для .doc — .docx/.pdf/.rtf/.txt
+         *     парсятся на клиенте. Размер файла ≤ 10 МБ.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "multipart/form-data": {
+                        /** Format: binary */
+                        file: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Извлечённый plain-текст */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            text: string;
+                        };
+                    };
+                };
+                /** @description Не .doc файл или пустой upload */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description Файл больше 10 МБ */
+                413: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description Парсер не смог обработать файл (повреждён/защищён) */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description antiword не установлен на сервере */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description Парсер не уложился в 30 секунд */
+                504: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/candidates/{id}": {
         parameters: {
             query?: never;
@@ -4284,6 +4379,275 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/calendar/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * События календаря в диапазоне дат
+         * @description Возвращает «толстые» события (с именем кандидата и названием вакансии),
+         *     начало которых попадает в полуинтервал [from, to). Видимость: admin и
+         *     account_manager видят все события, остальные — только те, где они
+         *     участники, автор или ответственны по вакансии события.
+         */
+        get: {
+            parameters: {
+                query: {
+                    from: string;
+                    to: string;
+                    recruiterId?: components["schemas"]["UUID"];
+                    vacancyId?: components["schemas"]["UUID"];
+                    candidateId?: components["schemas"]["UUID"];
+                    status?: components["schemas"]["EventStatus"];
+                    type?: components["schemas"]["EventType"];
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Список событий */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CalendarEvent"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Создать событие (собеседование)
+         * @description Если `title` не передан — генерируется автоматически («Собес: ФИО —
+         *     Вакансия»). При `matchId` и `type=interview` связка кандидат↔вакансия
+         *     переводится в стадию `interview` (если была раньше по воронке).
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CreateEventRequest"];
+                };
+            };
+            responses: {
+                /** @description CalendarEvent */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CalendarEvent"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/calendar/events/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        /** Получить событие */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description CalendarEvent */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CalendarEvent"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        post?: never;
+        /** Удалить событие */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: components["responses"]["Ok"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        options?: never;
+        head?: never;
+        /** Обновить / перенести событие */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["UpdateEventRequest"];
+                };
+            };
+            responses: {
+                /** @description CalendarEvent */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CalendarEvent"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        trace?: never;
+    };
+    "/calendar/events/{id}/outcome": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Отметить исход (состоялось / не пришёл)
+         * @description `status` ожидается `held` или `no_show`. При наличии `matchId` у события
+         *     `outcome` пишется в `feedback` связки, а `nextMatchStatus` (если задан)
+         *     переводит связку в новый статус.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["OutcomeRequest"];
+                };
+            };
+            responses: {
+                /** @description CalendarEvent */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CalendarEvent"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+                /** @description invalid_outcome */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/calendar/events/{id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Отменить событие */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        reason?: string | null;
+                    };
+                };
+            };
+            responses: {
+                /** @description CalendarEvent */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CalendarEvent"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -5228,6 +5592,77 @@ export interface components {
         };
         CandidatePage: components["schemas"]["Page"] & {
             items?: components["schemas"]["Candidate"][];
+        };
+        /** @enum {string} */
+        EventType: "interview" | "meeting" | "reminder";
+        /** @enum {string} */
+        EventLocationKind: "online" | "onsite" | "phone";
+        /** @enum {string} */
+        EventStatus: "scheduled" | "held" | "no_show" | "canceled";
+        /** @enum {string} */
+        AttendeeResponse: "invited" | "accepted" | "declined";
+        EventAttendee: {
+            userId: components["schemas"]["UUID"];
+            response: components["schemas"]["AttendeeResponse"];
+            name?: string | null;
+        };
+        CalendarEvent: {
+            id: components["schemas"]["UUID"];
+            type: components["schemas"]["EventType"];
+            title: string;
+            /** Format: date-time */
+            startsAt: string;
+            /** Format: date-time */
+            endsAt?: string | null;
+            allDay: boolean;
+            locationKind: components["schemas"]["EventLocationKind"];
+            location?: string | null;
+            status: components["schemas"]["EventStatus"];
+            outcome?: string | null;
+            candidateId?: components["schemas"]["UUID"];
+            vacancyId?: components["schemas"]["UUID"];
+            matchId?: components["schemas"]["UUID"];
+            createdById?: components["schemas"]["UUID"];
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+            attendees: components["schemas"]["EventAttendee"][];
+            candidateName?: string | null;
+            vacancyTitle?: string | null;
+        };
+        CreateEventRequest: {
+            type?: components["schemas"]["EventType"];
+            title?: string | null;
+            /** Format: date-time */
+            startsAt: string;
+            /** Format: date-time */
+            endsAt?: string | null;
+            /** @default false */
+            allDay: boolean;
+            locationKind?: components["schemas"]["EventLocationKind"];
+            location?: string | null;
+            candidateId?: components["schemas"]["UUID"];
+            vacancyId?: components["schemas"]["UUID"];
+            matchId?: components["schemas"]["UUID"];
+            attendeeIds?: components["schemas"]["UUID"][];
+        };
+        UpdateEventRequest: {
+            title?: string | null;
+            /** Format: date-time */
+            startsAt?: string | null;
+            /** Format: date-time */
+            endsAt?: string | null;
+            allDay?: boolean | null;
+            locationKind?: components["schemas"]["EventLocationKind"];
+            location?: string | null;
+            attendeeIds?: components["schemas"]["UUID"][] | null;
+        };
+        OutcomeRequest: {
+            /** @enum {string} */
+            status: "held" | "no_show";
+            outcome?: string | null;
+            nextMatchStatus?: components["schemas"]["MatchStatus"];
         };
     };
     responses: {

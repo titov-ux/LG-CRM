@@ -2010,6 +2010,131 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/MatrixPermission' }
 
+  /calendar/events:
+    get:
+      tags: [calendar]
+      summary: События календаря в диапазоне дат
+      description: |
+        Возвращает «толстые» события (с именем кандидата и названием вакансии),
+        начало которых попадает в полуинтервал [from, to). Видимость: admin и
+        account_manager видят все события, остальные — только те, где они
+        участники, автор или ответственны по вакансии события.
+      parameters:
+        - { in: query, name: from, required: true, schema: { type: string, format: date-time } }
+        - { in: query, name: to,   required: true, schema: { type: string, format: date-time } }
+        - { in: query, name: recruiterId, schema: { $ref: '#/components/schemas/UUID' } }
+        - { in: query, name: vacancyId,   schema: { $ref: '#/components/schemas/UUID' } }
+        - { in: query, name: candidateId, schema: { $ref: '#/components/schemas/UUID' } }
+        - { in: query, name: status, schema: { $ref: '#/components/schemas/EventStatus' } }
+        - { in: query, name: type,   schema: { $ref: '#/components/schemas/EventType' } }
+      responses:
+        '200':
+          description: Список событий
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/CalendarEvent' } }
+    post:
+      tags: [calendar]
+      summary: Создать событие (собеседование)
+      description: |
+        Если `title` не передан — генерируется автоматически («Собес: ФИО —
+        Вакансия»). При `matchId` и `type=interview` связка кандидат↔вакансия
+        переводится в стадию `interview` (если была раньше по воронке).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateEventRequest' }
+      responses:
+        '201':
+          description: CalendarEvent
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CalendarEvent' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /calendar/events/{id}:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    get:
+      tags: [calendar]
+      summary: Получить событие
+      responses:
+        '200':
+          description: CalendarEvent
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CalendarEvent' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [calendar]
+      summary: Обновить / перенести событие
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateEventRequest' }
+      responses:
+        '200':
+          description: CalendarEvent
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CalendarEvent' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [calendar]
+      summary: Удалить событие
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /calendar/events/{id}/outcome:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [calendar]
+      summary: Отметить исход (состоялось / не пришёл)
+      description: |
+        `status` ожидается `held` или `no_show`. При наличии `matchId` у события
+        `outcome` пишется в `feedback` связки, а `nextMatchStatus` (если задан)
+        переводит связку в новый статус.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OutcomeRequest' }
+      responses:
+        '200':
+          description: CalendarEvent
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CalendarEvent' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: invalid_outcome
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+  /calendar/events/{id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [calendar]
+      summary: Отменить событие
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, nullable: true }
+      responses:
+        '200':
+          description: CalendarEvent
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CalendarEvent' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
 # ───────────────────────────────────────────────────────────
 components:
   securitySchemes:
@@ -3425,3 +3550,78 @@ components:
         - type: object
           properties:
             items: { type: array, items: { $ref: '#/components/schemas/Candidate' } }
+
+    EventType:
+      type: string
+      enum: [interview, meeting, reminder]
+    EventLocationKind:
+      type: string
+      enum: [online, onsite, phone]
+    EventStatus:
+      type: string
+      enum: [scheduled, held, no_show, canceled]
+    AttendeeResponse:
+      type: string
+      enum: [invited, accepted, declined]
+    EventAttendee:
+      type: object
+      required: [userId, response]
+      properties:
+        userId:   { $ref: '#/components/schemas/UUID' }
+        response: { $ref: '#/components/schemas/AttendeeResponse' }
+        name:     { type: string, nullable: true }
+    CalendarEvent:
+      type: object
+      required: [id, type, title, startsAt, allDay, locationKind, status, createdAt, updatedAt, attendees]
+      properties:
+        id:            { $ref: '#/components/schemas/UUID' }
+        type:          { $ref: '#/components/schemas/EventType' }
+        title:         { type: string }
+        startsAt:      { type: string, format: date-time }
+        endsAt:        { type: string, format: date-time, nullable: true }
+        allDay:        { type: boolean }
+        locationKind:  { $ref: '#/components/schemas/EventLocationKind' }
+        location:      { type: string, nullable: true }
+        status:        { $ref: '#/components/schemas/EventStatus' }
+        outcome:       { type: string, nullable: true }
+        candidateId:   { $ref: '#/components/schemas/UUID', nullable: true }
+        vacancyId:     { $ref: '#/components/schemas/UUID', nullable: true }
+        matchId:       { $ref: '#/components/schemas/UUID', nullable: true }
+        createdById:   { $ref: '#/components/schemas/UUID', nullable: true }
+        createdAt:     { type: string, format: date-time }
+        updatedAt:     { type: string, format: date-time }
+        attendees:     { type: array, items: { $ref: '#/components/schemas/EventAttendee' } }
+        candidateName: { type: string, nullable: true }
+        vacancyTitle:  { type: string, nullable: true }
+    CreateEventRequest:
+      type: object
+      required: [startsAt]
+      properties:
+        type:         { $ref: '#/components/schemas/EventType' }
+        title:        { type: string, nullable: true }
+        startsAt:     { type: string, format: date-time }
+        endsAt:       { type: string, format: date-time, nullable: true }
+        allDay:       { type: boolean, default: false }
+        locationKind: { $ref: '#/components/schemas/EventLocationKind' }
+        location:     { type: string, nullable: true }
+        candidateId:  { $ref: '#/components/schemas/UUID', nullable: true }
+        vacancyId:    { $ref: '#/components/schemas/UUID', nullable: true }
+        matchId:      { $ref: '#/components/schemas/UUID', nullable: true }
+        attendeeIds:  { type: array, items: { $ref: '#/components/schemas/UUID' } }
+    UpdateEventRequest:
+      type: object
+      properties:
+        title:        { type: string, nullable: true }
+        startsAt:     { type: string, format: date-time, nullable: true }
+        endsAt:       { type: string, format: date-time, nullable: true }
+        allDay:       { type: boolean, nullable: true }
+        locationKind: { $ref: '#/components/schemas/EventLocationKind' }
+        location:     { type: string, nullable: true }
+        attendeeIds:  { type: array, items: { $ref: '#/components/schemas/UUID' }, nullable: true }
+    OutcomeRequest:
+      type: object
+      required: [status]
+      properties:
+        status:          { type: string, enum: [held, no_show] }
+        outcome:         { type: string, nullable: true }
+        nextMatchStatus: { $ref: '#/components/schemas/MatchStatus' }

@@ -17,6 +17,7 @@ from app.core.config import get_settings
 from app.realtime.bus import get_bus
 from app.realtime.events import current_client_id_var, publish_user_presence_event
 from app.realtime.presence import start_sweeper, stop_sweeper
+from app.modules.calendar.reminders import start_reminders, stop_reminders
 
 logger = logging.getLogger(__name__)
 
@@ -75,8 +76,17 @@ async def _lifespan(_app: FastAPI):
         logger.exception("presence: failed to start sweeper (continuing)")
 
     try:
+        await start_reminders()
+    except Exception:
+        logger.exception("calendar: failed to start reminders (continuing)")
+
+    try:
         yield
     finally:
+        try:
+            await stop_reminders()
+        except Exception:
+            logger.exception("calendar: error while stopping reminders")
         try:
             await stop_sweeper()
         except Exception:

@@ -39,6 +39,10 @@ from app.modules.chat.models import (  # noqa: F401
 )
 from app.modules.integrations.models import IntegrationToken  # noqa: F401
 from app.modules.users.api_tokens import UserApiToken  # noqa: F401
+from app.modules.calendar.models import (  # noqa: F401
+    CalendarEvent,
+    CalendarEventAttendee,
+)
 
 config = context.config
 if config.config_file_name is not None:

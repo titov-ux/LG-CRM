@@ -342,6 +342,70 @@ export interface VacancyCandidate {
   feedback?: string;
 }
 
+// === Calendar / Interviews ===
+export type EventType = 'interview' | 'meeting' | 'reminder';
+export type EventLocationKind = 'online' | 'onsite' | 'phone';
+export type EventStatus = 'scheduled' | 'held' | 'no_show' | 'canceled';
+export type AttendeeResponse = 'invited' | 'accepted' | 'declined';
+
+export interface EventAttendee {
+  userId: UUID;
+  response: AttendeeResponse;
+  name?: string | null;
+}
+
+export interface CalendarEvent {
+  id: UUID;
+  type: EventType;
+  title: string;
+  startsAt: string;
+  endsAt?: string | null;
+  allDay: boolean;
+  locationKind: EventLocationKind;
+  location?: string | null;
+  status: EventStatus;
+  outcome?: string | null;
+  candidateId?: UUID | null;
+  vacancyId?: UUID | null;
+  matchId?: UUID | null;
+  createdById?: UUID | null;
+  createdAt: string;
+  updatedAt: string;
+  attendees: EventAttendee[];
+  candidateName?: string | null;
+  vacancyTitle?: string | null;
+}
+
+export interface CreateEventRequest {
+  type?: EventType;
+  title?: string;
+  startsAt: string;
+  endsAt?: string | null;
+  allDay?: boolean;
+  locationKind?: EventLocationKind;
+  location?: string | null;
+  candidateId?: UUID | null;
+  vacancyId?: UUID | null;
+  matchId?: UUID | null;
+  attendeeIds?: UUID[];
+}
+
+export interface UpdateEventRequest {
+  title?: string;
+  startsAt?: string;
+  endsAt?: string | null;
+  allDay?: boolean;
+  locationKind?: EventLocationKind;
+  location?: string | null;
+  attendeeIds?: UUID[];
+}
+
+export interface OutcomeRequest {
+  status: Extract<EventStatus, 'held' | 'no_show'>;
+  outcome?: string;
+  nextMatchStatus?: MatchStatus;
+}
+
 // === Notifications ===
 export interface Notification {
   id: UUID;

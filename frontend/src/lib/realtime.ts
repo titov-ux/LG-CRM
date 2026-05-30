@@ -67,10 +67,17 @@ export interface PresenceRealtimeEvent extends RealtimeEventBase {
   onlineUserIds: string[];
 }
 
+export interface CalendarRealtimeEvent extends RealtimeEventBase {
+  type: 'calendar.event_changed';
+  kind: 'created' | 'updated' | 'canceled' | 'deleted';
+  id: string | null;
+}
+
 export type RealtimeEvent =
   | DomainRealtimeEvent
   | ChatRealtimeEvent
-  | PresenceRealtimeEvent;
+  | PresenceRealtimeEvent
+  | CalendarRealtimeEvent;
 
 type Listener = (e: RealtimeEvent) => void;
 type PresenceListener = (onlineUserIds: Set<string>) => void;
@@ -226,6 +233,16 @@ function openSocket(): void {
         kind: (obj.kind as RealtimeKind) ?? 'updated',
         id: typeof obj.id === 'string' ? obj.id : null,
         ids: Array.isArray(obj.ids) ? (obj.ids as string[]) : [],
+      });
+      return;
+    }
+
+    if (type === 'calendar.event_changed') {
+      emit({
+        ...base,
+        type: 'calendar.event_changed',
+        kind: (obj.kind as CalendarRealtimeEvent['kind']) ?? 'updated',
+        id: typeof obj.id === 'string' ? obj.id : null,
       });
       return;
     }

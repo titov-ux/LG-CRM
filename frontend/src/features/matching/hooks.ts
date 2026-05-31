@@ -121,6 +121,24 @@ export const previewKeys = {
     ['matches', 'preview', vacancyId, candidateId] as const,
 };
 
+export const rankKeys = {
+  byVacancy: (vacancyId: UUID, limit: number, enrich: boolean) =>
+    ['matches', 'rank', vacancyId, limit, enrich] as const,
+};
+
+/** Подбор кандидатов из базы под вакансию (ранжирование). enabled — при открытии диалога. */
+export function useRankCandidates(
+  vacancyId: UUID | undefined,
+  { limit = 20, enrich = false, enabled }: { limit?: number; enrich?: boolean; enabled: boolean },
+) {
+  return useQuery({
+    queryKey: rankKeys.byVacancy(vacancyId ?? '', limit, enrich),
+    queryFn: () => matchingApi.rank(vacancyId as UUID, limit, enrich),
+    enabled: enabled && !!vacancyId,
+    staleTime: 60 * 1000,
+  });
+}
+
 /**
  * Превью-скор кандидата под вакансию БЕЗ прикрепления (ленивый, on-demand).
  * Кэшируется по паре vacancy+candidate, чтобы не пересчитывать при ререндерах.

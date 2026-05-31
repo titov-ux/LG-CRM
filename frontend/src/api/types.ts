@@ -357,6 +357,23 @@ export interface CriterionScore {
   note: string;
 }
 
+/** Кандидат из базы, отранжированный под вакансию (подбор пула). */
+export interface RankedCandidate {
+  candidateId: UUID;
+  fullName: string;
+  role: string;
+  grade?: string | null;
+  engagementType?: string | null;
+  status?: string | null;
+  stack: string[];
+  score: number;
+  recommendation: MatchRecommendation;
+  breakdown: Record<string, CriterionScore>;
+  summary?: string | null;
+  /** true = верхний результат дообогащён LLM. */
+  aiEnriched: boolean;
+}
+
 /** Полный результат AI-скоринга связки (разбивка + вердикт). */
 export interface MatchScore {
   matchId?: UUID | null;

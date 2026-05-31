@@ -175,6 +175,79 @@ async def test_score_match_falls_back_to_cheap_on_unavailable(monkeypatch):
         await ai.score_match(_cand(), _vac())
 
 
+# === Ранжирование базы под вакансию =========================================
+async def test_rank_candidates_orders_by_cheap_score():
+    import uuid
+
+    from app.modules.candidates.models import Candidate, CandidateStatus
+    from app.modules.matching import service
+    from app.modules.vacancies.models import (
+        EngagementType,
+        Grade,
+        Vacancy,
+        WorkFormat,
+    )
+
+    def mk(name, grade, stack):
+        c = Candidate()
+        c.id = uuid.uuid4()
+        c.full_name = name
+        c.role = "ML"
+        c.grade = grade
+        c.experience_years = 4
+        c.stack = stack
+        c.format_ = WorkFormat.remote
+        c.engagement_type = EngagementType.outstaff
+        c.status = CandidateStatus.ready
+        c.rate_month = 200000
+        c.location = ""
+        c.summary = None
+        c.resume = {}
+        c.archived = False
+        return c
+
+    vac = Vacancy()
+    vac.id = uuid.uuid4()
+    vac.title = "ML"
+    vac.grade = Grade.middle
+    vac.stack = ["Python", "ML", "Airflow", "NLP"]
+    vac.format_ = WorkFormat.remote
+    vac.engagement_type = EngagementType.outstaff
+    vac.rate_client = 3000
+    vac.description = ""
+    vac.requirements = ""
+
+    pool = [
+        mk("Слабо", Grade.junior, ["Java"]),
+        mk("Сильно", Grade.middle, ["Python", "ML", "Airflow", "NLP"]),
+        mk("Средне", Grade.middle, ["Python", "ML"]),
+    ]
+
+    class _Scalars:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def all(self):
+            return self._rows
+
+    class _Res:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def scalars(self):
+            return _Scalars(self._rows)
+
+    class _FakeDB:
+        async def execute(self, _q):
+            return _Res(pool)
+
+    rows = await service.rank_candidates(_FakeDB(), vac, limit=10, enrich=False)
+    assert [r["fullName"] for r in rows] == ["Сильно", "Средне", "Слабо"]
+    assert rows[0]["score"] >= rows[1]["score"] >= rows[2]["score"]
+    assert all(r["aiEnriched"] is False for r in rows)
+    assert "rate" not in rows[0]["breakdown"]
+
+
 # === Метрики =================================================================
 def test_metrics_counters():
     from app.modules.matching import metrics as m

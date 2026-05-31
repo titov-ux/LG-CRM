@@ -180,7 +180,7 @@ export function AiScoreBreakdown({ vacancyId, candidateId, open }: BreakdownProp
       <div className="flex flex-col gap-1.5">
         {criteria.map(([key, c]) => (
           <div key={key} className="flex items-start gap-2 text-[11.5px]">
-            <span className="w-[58px] shrink-0 text-muted-foreground">
+            <span className="w-[92px] shrink-0 text-muted-foreground">
               {CRITERION_LABEL[key] ?? key}
             </span>
             <span className="tnum w-[52px] shrink-0 text-right font-semibold tabular-nums">

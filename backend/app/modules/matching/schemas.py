@@ -65,3 +65,21 @@ class ScoreCandidateRequest(CamelModel):
     """Превью-скор кандидата под вакансию без прикрепления и записи в БД."""
 
     candidate_id: uuid.UUID
+
+
+class RankedCandidate(CamelModel):
+    """Кандидат из базы, отранжированный под вакансию (подбор пула)."""
+
+    candidate_id: uuid.UUID
+    full_name: str
+    role: str
+    grade: str | None = None
+    engagement_type: str | None = None
+    status: str | None = None
+    stack: list[str] = []
+    score: int
+    recommendation: MatchRecommendation
+    breakdown: dict[str, CriterionScore]
+    summary: str | None = None
+    # true = верхний результат дообогащён LLM (релевантность + вердикт).
+    ai_enriched: bool = False

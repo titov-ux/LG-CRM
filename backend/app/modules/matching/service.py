@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ApiError
-from app.modules.candidates.models import Candidate
+from app.modules.candidates.models import Candidate, CandidateStatus
 from app.modules.matching import ai as matching_ai
 from app.modules.matching import metrics as scoring_metrics
 from app.modules.matching.models import (
@@ -231,3 +231,138 @@ async def score_and_store(
     )
     result = _result_from_match(match)
     return result, False, ai_enriched
+
+
+# === Payload-билдеры (используются эндпоинтами и ранжированием) ==============
+def candidate_payload(cand: Candidate) -> dict[str, Any]:
+    """camelCase-словарь кандидата для брифа скоринга (resume — плоско)."""
+    return {
+        "fullName": cand.full_name,
+        "role": cand.role,
+        "grade": cand.grade.value if cand.grade else None,
+        "experienceYears": float(cand.experience_years) if cand.experience_years is not None else None,
+        "format": cand.format_.value if cand.format_ else None,
+        "location": cand.location,
+        "summary": cand.summary,
+        "stack": list(cand.stack or []),
+        "engagementType": cand.engagement_type.value if cand.engagement_type else None,
+        "rateMonth": float(cand.rate_month) if cand.rate_month is not None else None,
+        **(cand.resume or {}),
+    }
+
+
+def vacancy_payload(vac: Vacancy) -> dict[str, Any]:
+    return {
+        "title": vac.title,
+        "grade": vac.grade.value if vac.grade else None,
+        "stack": list(vac.stack or []),
+        "format": vac.format_.value if vac.format_ else None,
+        "rateClient": float(vac.rate_client) if vac.rate_client is not None else None,
+        "engagementType": vac.engagement_type.value if vac.engagement_type else None,
+        "description": vac.description,
+        "requirements": vac.requirements,
+    }
+
+
+# === Подбор из базы под вакансию (ранжирование пула) ========================
+# Финальные статусы исключаем из подбора — таких кандидатов предлагать незачем.
+_INELIGIBLE_STATUSES = {
+    CandidateStatus.hired,
+    CandidateStatus.rejected_client,
+    CandidateStatus.rejected_candidate,
+}
+# Сколько кандидатов максимум тащим из базы под ранжирование (cheap — дёшево,
+# но грузить десятки тысяч ORM-объектов не нужно).
+_RANK_POOL_CAP = 1000
+# Сколько верхних кандидатов максимум обогащаем LLM при enrich=true (стоимость).
+_RANK_ENRICH_CAP = 12
+
+
+async def rank_candidates(
+    db: AsyncSession,
+    vacancy: Vacancy,
+    *,
+    limit: int = 20,
+    enrich: bool = False,
+) -> list[dict[str, Any]]:
+    """Подобрать кандидатов из базы под вакансию, ранжируя по соответствию.
+
+    Быстрый путь: cheap_score по всему подходящему пулу (тип сделки совпадает,
+    не архив, статус не финальный, ещё не прикреплён) — мгновенно и бесплатно.
+    При `enrich=true` верхние `limit` (но не больше `_RANK_ENRICH_CAP`)
+    дообогащаются оценкой LLM (релевантность + вердикт).
+
+    Возвращает список словарей, готовых под `RankedCandidate` DTO.
+    """
+    attached_subq = select(VacancyCandidate.candidate_id).where(
+        VacancyCandidate.vacancy_id == vacancy.id
+    )
+    pool_q = (
+        select(Candidate)
+        .where(
+            Candidate.archived.is_(False),
+            Candidate.engagement_type == vacancy.engagement_type,
+            Candidate.status.notin_(_INELIGIBLE_STATUSES),
+            Candidate.id.notin_(attached_subq),
+        )
+        .order_by(Candidate.updated_at.desc())
+        .limit(_RANK_POOL_CAP)
+    )
+    pool = list((await db.execute(pool_q)).scalars().all())
+
+    vac_payload = vacancy_payload(vacancy)
+    scored: list[tuple[float, Candidate, dict[str, Any]]] = []
+    for cand in pool:
+        cand_payload = candidate_payload(cand)
+        breakdown = matching_ai.cheap_score(cand_payload, vac_payload)
+        score = matching_ai.weighted_total(breakdown)
+        scored.append((score, cand, breakdown))
+
+    scored.sort(key=lambda t: t[0], reverse=True)
+    top = scored[: max(0, limit)]
+
+    results: list[dict[str, Any]] = []
+    enrich_budget = _RANK_ENRICH_CAP if enrich else 0
+    ai_down = False
+    for score, cand, breakdown in top:
+        cand_payload = candidate_payload(cand)
+        recommendation = matching_ai.recommendation_from_score(score)
+        summary: str | None = None
+        ai_enriched = False
+
+        if enrich_budget > 0 and not ai_down:
+            started = time.perf_counter()
+            try:
+                full = await matching_ai.score_match(cand_payload, vac_payload)
+                breakdown = full["breakdown"]
+                score = full["score"]
+                recommendation = full["recommendation"]
+                summary = full.get("summary")
+                ai_enriched = True
+                enrich_budget -= 1
+                scoring_metrics.record_llm((time.perf_counter() - started) * 1000)
+            except matching_ai.AiUnavailableError:
+                # AI лёг — дальше не пытаемся, остаёмся на cheap для всех.
+                ai_down = True
+                scoring_metrics.record_cheap_fallback((time.perf_counter() - started) * 1000)
+            except (matching_ai.AiBadRequestError, matching_ai.AiTruncatedJsonError):
+                scoring_metrics.record_error()  # этого пропускаем, остальных считаем
+
+        results.append(
+            {
+                "candidateId": cand.id,
+                "fullName": cand.full_name,
+                "role": cand.role,
+                "grade": cand.grade.value if cand.grade else None,
+                "engagementType": cand.engagement_type.value if cand.engagement_type else None,
+                "status": cand.status.value if cand.status else None,
+                "stack": list(cand.stack or []),
+                "score": score,
+                "recommendation": recommendation,
+                "breakdown": breakdown,
+                "summary": summary,
+                "aiEnriched": ai_enriched,
+            }
+        )
+
+    return results

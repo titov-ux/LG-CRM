@@ -1,5 +1,5 @@
 import { api } from './client';
-import type { MatchScore, MatchStatus, UUID, VacancyCandidate } from './types';
+import type { MatchScore, MatchStatus, RankedCandidate, UUID, VacancyCandidate } from './types';
 
 export const matchingApi = {
   byVacancy: (vacancyId: UUID) => api.get(`vacancies/${vacancyId}/candidates`).json<VacancyCandidate[]>(),
@@ -23,4 +23,11 @@ export const matchingApi = {
   /** Превью-скор кандидата под вакансию без прикрепления. */
   scorePreview: (vacancyId: UUID, candidateId: UUID) =>
     api.post(`vacancies/${vacancyId}/candidates/score-preview`, { json: { candidateId } }).json<MatchScore>(),
+  /** Подбор кандидатов из базы под вакансию (ранжирование). enrich — дообогатить топ LLM. */
+  rank: (vacancyId: UUID, limit = 20, enrich = false) =>
+    api
+      .get(`vacancies/${vacancyId}/candidates/rank`, {
+        searchParams: { limit: String(limit), enrich: enrich ? 'true' : 'false' },
+      })
+      .json<RankedCandidate[]>(),
 };

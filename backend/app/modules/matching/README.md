@@ -22,6 +22,8 @@ experience/format/rate) фиксированы в `ai.WEIGHTS`; LLM выстав
 - `GET  /matches/{matchId}/score` — сохранённая разбивка (404 `not_scored`).
 - `POST /vacancies/{id}/candidates/score?force=` — батч (частичный успех).
 - `POST /vacancies/{id}/candidates/score-preview` — превью без прикрепления.
+- `GET  /vacancies/{id}/candidates/rank?limit=&enrich=` — подбор из базы:
+  ранжирование подходящего пула по cheap_score, опц. LLM-обогащение топа.
 
 Ошибки: 413 `input_too_long`, 502 `ai_bad_request`. При недоступности LLM —
 graceful-фоллбэк на cheap (200, `aiEnriched=false`), а не 503.

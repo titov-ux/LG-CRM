@@ -20,6 +20,7 @@ from app.modules.matching.models import VacancyCandidate
 from app.modules.matching.schemas import (
     AttachRequest,
     MatchScoreResponse,
+    RankedCandidate,
     ScoreCandidateRequest,
     UpdateMatchRequest,
     VacancyCandidateResponse,
@@ -136,36 +137,6 @@ async def detach_candidate(
 
 
 # === AI-скоринг ==============================================================
-def _candidate_payload(cand: Candidate) -> dict[str, Any]:
-    """Собрать camelCase-словарь кандидата для брифа скоринга (resume — плоско)."""
-    return {
-        "fullName": cand.full_name,
-        "role": cand.role,
-        "grade": cand.grade.value if cand.grade else None,
-        "experienceYears": float(cand.experience_years) if cand.experience_years is not None else None,
-        "format": cand.format_.value if cand.format_ else None,
-        "location": cand.location,
-        "summary": cand.summary,
-        "stack": list(cand.stack or []),
-        "engagementType": cand.engagement_type.value if cand.engagement_type else None,
-        "rateMonth": float(cand.rate_month) if cand.rate_month is not None else None,
-        **(cand.resume or {}),
-    }
-
-
-def _vacancy_payload(vac: Vacancy) -> dict[str, Any]:
-    return {
-        "title": vac.title,
-        "grade": vac.grade.value if vac.grade else None,
-        "stack": list(vac.stack or []),
-        "format": vac.format_.value if vac.format_ else None,
-        "rateClient": float(vac.rate_client) if vac.rate_client is not None else None,
-        "engagementType": vac.engagement_type.value if vac.engagement_type else None,
-        "description": vac.description,
-        "requirements": vac.requirements,
-    }
-
-
 async def _load_payloads(
     db: AsyncSession, vacancy_id: uuid.UUID, candidate_id: uuid.UUID
 ) -> tuple[Vacancy, Candidate, dict[str, Any], dict[str, Any]]:
@@ -173,7 +144,7 @@ async def _load_payloads(
     cand = await db.get(Candidate, candidate_id)
     if vac is None or cand is None:
         raise ApiError(status.HTTP_404_NOT_FOUND, "not_found", "Вакансия или кандидат не найдены")
-    return vac, cand, _candidate_payload(cand), _vacancy_payload(vac)
+    return vac, cand, service.candidate_payload(cand), service.vacancy_payload(vac)
 
 
 def _score_dto(
@@ -364,6 +335,25 @@ async def score_candidate_preview(
         current_hash=current_hash,
         ai_enriched=ai_enriched,
     )
+
+
+@vacancy_matches_router.get(
+    "/rank",
+    response_model=list[RankedCandidate],
+    summary="Подобрать кандидатов из базы под вакансию (ранжирование)",
+)
+async def rank_candidates_endpoint(
+    vacancy_id: uuid.UUID,
+    limit: int = Query(default=20, ge=1, le=100),
+    enrich: bool = Query(default=False),
+    _: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[RankedCandidate]:
+    vac = await db.get(Vacancy, vacancy_id)
+    if vac is None:
+        raise ApiError(status.HTTP_404_NOT_FOUND, "not_found", "Вакансия не найдена")
+    rows = await service.rank_candidates(db, vac, limit=limit, enrich=enrich)
+    return [RankedCandidate.model_validate(r) for r in rows]
 
 
 # Альяс для include_router: внешний api_router включит обе.

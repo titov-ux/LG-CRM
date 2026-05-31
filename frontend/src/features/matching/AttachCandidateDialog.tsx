@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { MapPin, AlertTriangle } from 'lucide-react';
+import { MapPin, AlertTriangle, Sparkles } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -24,6 +24,7 @@ import { engagementLabel } from '@/lib/engagement';
 import { useAttachCandidate } from './hooks';
 import { AiPreviewBadge } from './AiScoreBadge';
 import { MarginBadge } from './MarginBadge';
+import { MatchCandidatesList } from './MatchCandidatesList';
 import {
   DEFAULT_HOURS_PER_MONTH,
   candidateSalaryExceedsVacancyMax,
@@ -38,6 +39,8 @@ interface Props {
   /** ID кандидатов, которые уже прикреплены — их не показываем в списке */
   excludeIds?: UUID[];
 }
+
+type AttachMode = 'manual' | 'ai';
 
 // Кого имеет смысл предлагать на вакансию: активные статусы без финальных исходов.
 const ACTIVE_STATUSES: CandidateStatus[] = [
@@ -91,6 +94,8 @@ function readSavedHoursPerMonth(): number {
 }
 
 export function AttachCandidateDialog({ open, onOpenChange, vacancyId, excludeIds = [] }: Props) {
+  // Режим: ручной поиск по базе vs AI-подбор (ранжирование) — в одной модалке.
+  const [mode, setMode] = useState<AttachMode>('manual');
   const [search, setSearch] = useState('');
   // По умолчанию скрываем кандидатов другого типа — в 99% случаев это нужное поведение.
   // Тумблер позволяет рекрутеру при необходимости увидеть всех (например, чтобы понять,
@@ -178,77 +183,116 @@ export function AttachCandidateDialog({ open, onOpenChange, vacancyId, excludeId
     <Dialog
       open={open}
       onOpenChange={(o) => {
-        if (!o) setSearch('');
+        if (!o) {
+          setSearch('');
+          setMode('manual');
+        }
         onOpenChange(o);
       }}
     >
       <DialogContent className="max-w-2xl gap-3 p-0">
         <DialogHeader className="border-b px-5 py-4">
-          <DialogTitle className="text-[15px]">
-            Прикрепить кандидата
-            {vacancy && (
-              <span className="ml-2 align-middle">
-                <EngagementBadge type={vacancy.engagementType} variant="chip" />
-              </span>
-            )}
+          <DialogTitle className="flex items-center justify-between gap-3 text-[15px]">
+            <span className="inline-flex items-center">
+              Прикрепить кандидата
+              {vacancy && (
+                <span className="ml-2 align-middle">
+                  <EngagementBadge type={vacancy.engagementType} variant="chip" />
+                </span>
+              )}
+            </span>
+            {/* Сегментированный переключатель: ручной поиск vs AI-подбор. */}
+            <div className="inline-flex shrink-0 items-center gap-0.5 rounded-md border p-0.5">
+              <button
+                type="button"
+                onClick={() => setMode('manual')}
+                className={cn(
+                  'rounded px-2 py-1 text-[11.5px] font-medium transition-colors',
+                  mode === 'manual'
+                    ? 'bg-muted text-foreground'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                Поиск
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode('ai')}
+                className={cn(
+                  'inline-flex items-center gap-1 rounded px-2 py-1 text-[11.5px] font-medium transition-colors',
+                  mode === 'ai'
+                    ? 'bg-muted text-foreground'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                <Sparkles className="h-3 w-3 text-amber-500" />
+                ИИ-подбор
+              </button>
+            </div>
           </DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-2.5 px-5">
-          <Input
-            placeholder="Поиск по имени / стеку…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            autoFocus
-            className="h-9"
-          />
-          <div className="flex items-center justify-between gap-2 text-[11.5px] text-muted-foreground">
-            <label className="inline-flex cursor-pointer items-center gap-2">
-              <Switch checked={showAllTypes} onCheckedChange={setShowAllTypes} />
-              <span>
-                Показать все типы
-                {hiddenByTypeCount > 0 && !showAllTypes && (
-                  <span className="ml-1 text-muted-foreground/70">
-                    (скрыто {hiddenByTypeCount})
+        {mode === 'ai' ? (
+          <MatchCandidatesList vacancyId={vacancyId} active={open && mode === 'ai'} />
+        ) : (
+          <>
+            <div className="space-y-2.5 px-5">
+              <Input
+                placeholder="Поиск по имени / стеку…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                autoFocus
+                className="h-9"
+              />
+              <div className="flex items-center justify-between gap-2 text-[11.5px] text-muted-foreground">
+                <label className="inline-flex cursor-pointer items-center gap-2">
+                  <Switch checked={showAllTypes} onCheckedChange={setShowAllTypes} />
+                  <span>
+                    Показать все типы
+                    {hiddenByTypeCount > 0 && !showAllTypes && (
+                      <span className="ml-1 text-muted-foreground/70">
+                        (скрыто {hiddenByTypeCount})
+                      </span>
+                    )}
                   </span>
-                )}
-              </span>
-            </label>
-            <span className="tnum">
-              {items.length} {pluralize(items.length, 'кандидат', 'кандидата', 'кандидатов')}
-            </span>
-          </div>
-        </div>
-
-        <div className="max-h-[480px] space-y-1.5 overflow-y-auto px-5 pb-5">
-          {isLoading ? (
-            <div className="py-10 text-center text-xs text-muted-foreground">Загрузка…</div>
-          ) : items.length === 0 ? (
-            <div className="py-10 text-center text-xs text-muted-foreground">
-              {search
-                ? 'Никого не нашли по этому запросу'
-                : 'Активных кандидатов нет'}
+                </label>
+                <span className="tnum">
+                  {items.length} {pluralize(items.length, 'кандидат', 'кандидата', 'кандидатов')}
+                </span>
+              </div>
             </div>
-          ) : (
-            <TooltipProvider delayDuration={150}>
-              {items.map(({ candidate: c, matches, gradeMatch, typeMismatch }) => (
-                <CandidateRow
-                  key={c.id}
-                  candidate={c}
-                  vacancy={vacancy}
-                  hoursPerMonth={hoursPerMonth}
-                  matches={matches}
-                  vacancyStackSet={vacancyStackSet}
-                  gradeMatch={gradeMatch}
-                  typeMismatch={typeMismatch}
-                  salaryExceeded={!!vacancy && candidateSalaryExceedsVacancyMax(vacancy, c)}
-                  pending={attach.isPending}
-                  onAttach={() => handleAttachClick(c)}
-                />
-              ))}
-            </TooltipProvider>
-          )}
-        </div>
+
+            <div className="max-h-[480px] space-y-1.5 overflow-y-auto px-5 pb-5">
+              {isLoading ? (
+                <div className="py-10 text-center text-xs text-muted-foreground">Загрузка…</div>
+              ) : items.length === 0 ? (
+                <div className="py-10 text-center text-xs text-muted-foreground">
+                  {search
+                    ? 'Никого не нашли по этому запросу'
+                    : 'Активных кандидатов нет'}
+                </div>
+              ) : (
+                <TooltipProvider delayDuration={150}>
+                  {items.map(({ candidate: c, matches, gradeMatch, typeMismatch }) => (
+                    <CandidateRow
+                      key={c.id}
+                      candidate={c}
+                      vacancy={vacancy}
+                      hoursPerMonth={hoursPerMonth}
+                      matches={matches}
+                      vacancyStackSet={vacancyStackSet}
+                      gradeMatch={gradeMatch}
+                      typeMismatch={typeMismatch}
+                      salaryExceeded={!!vacancy && candidateSalaryExceedsVacancyMax(vacancy, c)}
+                      pending={attach.isPending}
+                      onAttach={() => handleAttachClick(c)}
+                    />
+                  ))}
+                </TooltipProvider>
+              )}
+            </div>
+          </>
+        )}
       </DialogContent>
 
       {/* Подтверждение: оклад кандидата выше «Оклад до» по агентской вакансии. */}

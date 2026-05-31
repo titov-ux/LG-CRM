@@ -47,7 +47,6 @@ import { useAuthStore } from '@/stores/auth';
 import { useCan } from '@/lib/permissions';
 import { CommentsSection } from '@/features/comments/CommentsSection';
 import { AttachCandidateDialog } from '@/features/matching/AttachCandidateDialog';
-import { MatchCandidatesDialog } from '@/features/matching/MatchCandidatesDialog';
 import {
   useAttachCandidate,
   useDetachCandidate,
@@ -196,7 +195,6 @@ export function VacancyCardPage() {
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
-  const [matchOpen, setMatchOpen] = useState(false);
   const [hhImportOpen, setHhImportOpen] = useState(false);
   const [activityExpanded, setActivityExpanded] = useState(false);
   const [downloadingResumes, setDownloadingResumes] = useState(false);
@@ -730,15 +728,6 @@ export function VacancyCardPage() {
                     variant="ghost"
                     size="sm"
                     className="h-7 gap-1 px-2 text-xs"
-                    onClick={() => setMatchOpen(true)}
-                  >
-                    <Sparkles className="h-3.5 w-3.5" />
-                    Подобрать
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 gap-1 px-2 text-xs"
                     onClick={() => setAttachOpen(true)}
                   >
                     <Plus className="h-3.5 w-3.5" />
@@ -922,9 +911,6 @@ export function VacancyCardPage() {
         vacancyId={vacancy.id}
         excludeIds={attached.map((c) => c.id)}
       />
-    )}
-    {vacancy && (
-      <MatchCandidatesDialog open={matchOpen} onOpenChange={setMatchOpen} vacancy={vacancy} />
     )}
     {vacancy && (
       <HhImportDialog

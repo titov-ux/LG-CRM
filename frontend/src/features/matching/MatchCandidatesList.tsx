@@ -1,13 +1,12 @@
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { Loader2, Sparkles } from 'lucide-react';
-import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { UserAvatar } from '@/components/common/UserAvatar';
 import { StackTags } from '@/components/common/StackTags';
 import { cn } from '@/lib/utils';
-import { useAttachCandidate, useRankCandidates } from './hooks';
+import { useAttachCandidate, useRankCandidates, useScorePreview } from './hooks';
 import type { MatchRecommendation, RankedCandidate, UUID } from '@/api/types';
 
 /**
@@ -38,10 +37,12 @@ interface Props {
 }
 
 export function MatchCandidatesList({ vacancyId, active }: Props) {
-  const [enrich, setEnrich] = useState(false);
+  // Список ранжируется ДЁШЕВО (без LLM) — мгновенно и бесплатно даже на сотнях
+  // кандидатов. Полное обогащение нейросетью — по требованию на конкретного
+  // кандидата (кнопка «Уточнить ИИ» в строке), а не для всех сразу.
   const { data, isFetching, isError, refetch } = useRankCandidates(vacancyId, {
     limit: 20,
-    enrich,
+    enrich: false,
     enabled: active,
   });
   const attach = useAttachCandidate();
@@ -61,20 +62,11 @@ export function MatchCandidatesList({ vacancyId, active }: Props) {
 
   return (
     <>
-      <div className="flex items-center justify-between gap-2 px-5 text-[11.5px] text-muted-foreground">
-        <label className="inline-flex cursor-pointer items-center gap-2">
-          <Switch checked={enrich} onCheckedChange={setEnrich} />
-          Уточнить ИИ
-          <span className="text-muted-foreground/70">— релевантность опыта от нейросети</span>
-        </label>
-        {data && <span className="tnum">топ {data.length}</span>}
-      </div>
-
-      <div className="max-h-[460px] space-y-1.5 overflow-y-auto px-5 pb-5">
+      <div className="max-h-[480px] space-y-1.5 overflow-y-auto px-5 pb-5 pt-1">
         {isFetching && (
           <div className="flex items-center justify-center gap-2 py-10 text-xs text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" />
-            {enrich ? 'Считаем оценки ИИ…' : 'Ранжируем базу…'}
+            Ранжируем базу…
           </div>
         )}
 
@@ -96,6 +88,7 @@ export function MatchCandidatesList({ vacancyId, active }: Props) {
               <RankRow
                 key={c.candidateId}
                 rank={i + 1}
+                vacancyId={vacancyId}
                 candidate={c}
                 pending={attach.isPending}
                 onAttach={() => handleAttach(c.candidateId, c.fullName)}
@@ -110,17 +103,33 @@ export function MatchCandidatesList({ vacancyId, active }: Props) {
 
 interface RowProps {
   rank: number;
+  vacancyId: UUID;
   candidate: RankedCandidate;
   pending: boolean;
   onAttach: () => void;
 }
 
-function RankRow({ rank, candidate: c, pending, onAttach }: RowProps) {
+function RankRow({ rank, vacancyId, candidate: c, pending, onAttach }: RowProps) {
+  // Обогащение нейросетью — лениво, только по клику «Уточнить ИИ» на этой строке.
+  const [enrich, setEnrich] = useState(false);
+  const { data: enriched, isFetching: enriching } = useScorePreview(
+    vacancyId,
+    c.candidateId,
+    enrich,
+  );
+
   const initials = c.fullName
     .split(' ')
     .map((p) => p[0])
     .slice(0, 2)
     .join('');
+
+  // Показываем обогащённую оценку, если посчитана; иначе — быструю из ранжирования.
+  const score = enriched?.score ?? c.score;
+  const recommendation = enriched?.recommendation ?? c.recommendation;
+  const breakdown = enriched?.breakdown ?? c.breakdown;
+  const summary = enriched?.summary ?? null;
+  const isEnriched = !!enriched;
 
   return (
     <div className="group flex items-center gap-3 rounded-md border bg-card px-3 py-2.5 hover:bg-muted/40">
@@ -133,23 +142,23 @@ function RankRow({ rank, candidate: c, pending, onAttach }: RowProps) {
           <span
             className={cn(
               'tnum inline-flex h-7 min-w-[40px] cursor-default items-center justify-center gap-1 rounded-md px-1.5 text-[12px] font-semibold',
-              REC_CLASS[c.recommendation],
+              REC_CLASS[recommendation],
             )}
           >
             <Sparkles className="h-3 w-3" />
-            {c.score}
+            {score}
           </span>
         </TooltipTrigger>
         <TooltipContent className="max-w-[260px]">
           <div className="space-y-1">
-            <div className="font-semibold">AI-оценка: {c.score}/100</div>
-            {!c.aiEnriched && (
+            <div className="font-semibold">Оценка: {score}/100</div>
+            {!isEnriched && (
               <div className="text-[10px] text-muted-foreground">
-                быстрая оценка · включите «Уточнить ИИ»
+                быстрая оценка · «Уточнить ИИ» добавит релевантность опыта
               </div>
             )}
             <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 pt-0.5">
-              {Object.entries(c.breakdown).map(([key, cr]) => (
+              {Object.entries(breakdown).map(([key, cr]) => (
                 <div key={key} className="contents">
                   <span className="text-muted-foreground">{CRITERION_LABEL[key] ?? key}</span>
                   <span className="tnum">
@@ -159,9 +168,9 @@ function RankRow({ rank, candidate: c, pending, onAttach }: RowProps) {
                 </div>
               ))}
             </div>
-            {c.summary && (
+            {summary && (
               <div className="border-t pt-1 text-[11px] leading-snug text-muted-foreground">
-                {c.summary}
+                {summary}
               </div>
             )}
           </div>
@@ -187,16 +196,34 @@ function RankRow({ rank, candidate: c, pending, onAttach }: RowProps) {
         )}
       </div>
 
-      <Button
-        size="sm"
-        variant="outline"
-        className="h-7 shrink-0 px-2.5 text-xs opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100 data-[pending=true]:opacity-100"
-        data-pending={pending}
-        onClick={onAttach}
-        disabled={pending}
-      >
-        Прикрепить
-      </Button>
+      <div className="flex shrink-0 items-center gap-1.5">
+        {!isEnriched && (
+          <button
+            type="button"
+            onClick={() => setEnrich(true)}
+            disabled={enriching}
+            title="Уточнить оценку нейросетью (релевантность опыта)"
+            className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-[11px] font-medium text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 disabled:opacity-100"
+          >
+            {enriching ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <Sparkles className="h-3 w-3 text-amber-500" />
+            )}
+            Уточнить ИИ
+          </button>
+        )}
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 px-2.5 text-xs opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100 data-[pending=true]:opacity-100"
+          data-pending={pending}
+          onClick={onAttach}
+          disabled={pending}
+        >
+          Прикрепить
+        </Button>
+      </div>
     </div>
   );
 }

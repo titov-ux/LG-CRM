@@ -53,7 +53,6 @@ import {
   useMatchesByVacancy,
   useScoreVacancy,
 } from '@/features/matching/hooks';
-import { HhImportDialog } from '@/features/integrations/HhImportDialog';
 import { MatchCompensationRow } from '@/features/matching/MatchCompensationRow';
 import { DEFAULT_HOURS_PER_MONTH, vacancyMaxNetSalary } from '@/lib/compensation';
 import { HTTPError } from 'ky';
@@ -195,7 +194,6 @@ export function VacancyCardPage() {
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
-  const [hhImportOpen, setHhImportOpen] = useState(false);
   const [activityExpanded, setActivityExpanded] = useState(false);
   const [downloadingResumes, setDownloadingResumes] = useState(false);
   // ID кандидата, для которого сейчас крутится AI-улучшение. Один за раз —
@@ -719,15 +717,6 @@ export function VacancyCardPage() {
                     variant="ghost"
                     size="sm"
                     className="h-7 gap-1 px-2 text-xs"
-                    onClick={() => setHhImportOpen(true)}
-                  >
-                    <FileDown className="h-3.5 w-3.5" />
-                    С hh.ru
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 gap-1 px-2 text-xs"
                     onClick={() => setAttachOpen(true)}
                   >
                     <Plus className="h-3.5 w-3.5" />
@@ -910,13 +899,6 @@ export function VacancyCardPage() {
         onOpenChange={setAttachOpen}
         vacancyId={vacancy.id}
         excludeIds={attached.map((c) => c.id)}
-      />
-    )}
-    {vacancy && (
-      <HhImportDialog
-        open={hhImportOpen}
-        onOpenChange={setHhImportOpen}
-        vacancyId={vacancy.id}
       />
     )}
     </>

@@ -192,7 +192,7 @@ export function AttachCandidateDialog({ open, onOpenChange, vacancyId, excludeId
     >
       <DialogContent className="max-w-2xl gap-3 p-0">
         <DialogHeader className="border-b px-5 py-4">
-          <DialogTitle className="flex items-center justify-between gap-3 text-[15px]">
+          <DialogTitle className="flex items-center justify-between gap-3 pr-8 text-[15px]">
             <span className="inline-flex items-center">
               Прикрепить кандидата
               {vacancy && (

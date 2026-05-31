@@ -15,6 +15,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/stores/auth';
 import { candidateKeys } from '@/features/candidates/hooks';
 import { vacancyKeys } from '@/features/vacancies/hooks';
+import { matchKeys } from '@/features/matching/hooks';
 import {
   startRealtime,
   stopRealtime,
@@ -47,6 +48,20 @@ export function useRealtimeSync(): void {
       if (event.echo) return; // своё же действие — оптимистично уже применили
       // Чат-события обрабатываются собственным хуком (useChatRealtime),
       // здесь ловим только домен vacancy/candidate.
+      if (event.type === 'match.scored') {
+        // Пересчитан AI-скор связки — обновляем список прикреплённых кандидатов
+        // (чип рисуется из него) и карточку вакансии.
+        if (event.vacancyId) {
+          queryClient.invalidateQueries({ queryKey: matchKeys.byVacancy(event.vacancyId) });
+          queryClient.invalidateQueries({ queryKey: vacancyKeys.byId(event.vacancyId) });
+        }
+        if (event.vacancyId && event.candidateId) {
+          queryClient.invalidateQueries({
+            queryKey: matchKeys.score(`m-${event.vacancyId}-${event.candidateId}`),
+          });
+        }
+        return;
+      }
       if (event.type !== 'vacancy.changed' && event.type !== 'candidate.changed') {
         return;
       }

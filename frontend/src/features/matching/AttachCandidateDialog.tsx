@@ -22,6 +22,7 @@ import { formatMoneyRub } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 import { engagementLabel } from '@/lib/engagement';
 import { useAttachCandidate } from './hooks';
+import { AiPreviewBadge } from './AiScoreBadge';
 import { MarginBadge } from './MarginBadge';
 import {
   DEFAULT_HOURS_PER_MONTH,
@@ -418,6 +419,9 @@ function CandidateRow({
             <span className="inline-flex items-center rounded bg-indigo-50 px-1.5 py-0.5 text-[10.5px] font-medium text-indigo-700">
               {c.grade}
             </span>
+          )}
+          {vacancy && !typeMismatch && (
+            <AiPreviewBadge vacancyId={vacancy.id} candidateId={c.id} />
           )}
         </div>
       </div>

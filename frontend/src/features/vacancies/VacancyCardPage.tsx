@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from '@tanstack/react-router';
-import { ArrowRight, ChevronLeft, ClipboardCopy, Copy, Edit3, FileDown, Mail, MessageCircle, MoreHorizontal, Phone, Plus, Share2, Trash2, UserPlus, X } from 'lucide-react';
+import { ArrowRight, ChevronLeft, ClipboardCopy, Copy, Edit3, FileDown, Loader2, Mail, MessageCircle, MoreHorizontal, Phone, Plus, Share2, Sparkles, Trash2, UserPlus, X } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -47,7 +47,12 @@ import { useAuthStore } from '@/stores/auth';
 import { useCan } from '@/lib/permissions';
 import { CommentsSection } from '@/features/comments/CommentsSection';
 import { AttachCandidateDialog } from '@/features/matching/AttachCandidateDialog';
-import { useAttachCandidate, useDetachCandidate } from '@/features/matching/hooks';
+import {
+  useAttachCandidate,
+  useDetachCandidate,
+  useMatchesByVacancy,
+  useScoreVacancy,
+} from '@/features/matching/hooks';
 import { HhImportDialog } from '@/features/integrations/HhImportDialog';
 import { MatchCompensationRow } from '@/features/matching/MatchCompensationRow';
 import { DEFAULT_HOURS_PER_MONTH, vacancyMaxNetSalary } from '@/lib/compensation';
@@ -184,6 +189,9 @@ export function VacancyCardPage() {
   const deleteVacancy = useDeleteVacancy();
   const detachCandidate = useDetachCandidate();
   const attachCandidate = useAttachCandidate();
+  const scoreVacancy = useScoreVacancy();
+  // Связки vacancy↔candidate несут AI-скор; ключуем по candidateId для строк.
+  const { data: matches } = useMatchesByVacancy(vacancy?.id);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
@@ -193,6 +201,9 @@ export function VacancyCardPage() {
   // ID кандидата, для которого сейчас крутится AI-улучшение. Один за раз —
   // чтобы не наплодить параллельных запросов к Yandex AI (квоты, цена).
   const [improvingCandidateId, setImprovingCandidateId] = useState<string | null>(null);
+  // Сортировка/фильтр прикреплённых по AI-скору.
+  const [sortByScore, setSortByScore] = useState(false);
+  const [onlyGoodFit, setOnlyGoodFit] = useState(false);
   const hoursPerMonth = DEFAULT_HOURS_PER_MONTH;
 
   const close = () => navigate({ to: '/vacancies' });
@@ -206,6 +217,25 @@ export function VacancyCardPage() {
   const attached = (candidatesData?.items ?? []).filter(
     (c) => vacancy && c.vacancyIds.includes(vacancy.id),
   );
+  const matchByCandidate = new Map((matches ?? []).map((m) => [m.candidateId, m]));
+  // Применяем фильтр «только подходящие» и сортировку по AI-скору (если включены).
+  const displayedAttached = (() => {
+    let rows = attached;
+    if (onlyGoodFit) {
+      rows = rows.filter((c) => {
+        const rec = matchByCandidate.get(c.id)?.aiRecommendation;
+        return rec === 'strong' || rec === 'good';
+      });
+    }
+    if (sortByScore) {
+      rows = [...rows].sort(
+        (a, b) =>
+          (matchByCandidate.get(b.id)?.aiScore ?? -1) -
+          (matchByCandidate.get(a.id)?.aiScore ?? -1),
+      );
+    }
+    return rows;
+  })();
   const activityItems = activity ?? [];
   const hiddenActivityCount = Math.max(activityItems.length - ACTIVITY_PREVIEW_LIMIT, 0);
   const visibleActivity = activityExpanded ? activityItems : activityItems.slice(0, ACTIVITY_PREVIEW_LIMIT);
@@ -661,6 +691,30 @@ export function VacancyCardPage() {
               title={`Прикреплённые кандидаты · ${attached.length}`}
               action={
                 <div className="flex items-center gap-1">
+                  {attached.length > 0 && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 gap-1 px-2 text-xs"
+                      disabled={scoreVacancy.isPending}
+                      onClick={() =>
+                        vacancy &&
+                        scoreVacancy.mutate(
+                          { vacancyId: vacancy.id },
+                          {
+                            onError: () => toast.error('Не удалось посчитать оценки.'),
+                          },
+                        )
+                      }
+                    >
+                      {scoreVacancy.isPending ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Sparkles className="h-3.5 w-3.5" />
+                      )}
+                      Оценить всех
+                    </Button>
+                  )}
                   <Button
                     variant="ghost"
                     size="sm"
@@ -686,12 +740,41 @@ export function VacancyCardPage() {
                 <div className="py-2 text-xs text-muted-foreground">Кандидаты пока не прикреплены.</div>
               ) : (
                 <>
+                  {attached.length > 1 && (
+                    <div className="mb-1.5 flex items-center gap-1.5">
+                      <Button
+                        type="button"
+                        variant={sortByScore ? 'secondary' : 'ghost'}
+                        size="sm"
+                        className="h-6 gap-1 px-2 text-[11px]"
+                        onClick={() => setSortByScore((v) => !v)}
+                      >
+                        <Sparkles className="h-3 w-3" />
+                        По AI-оценке
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={onlyGoodFit ? 'secondary' : 'ghost'}
+                        size="sm"
+                        className="h-6 px-2 text-[11px]"
+                        onClick={() => setOnlyGoodFit((v) => !v)}
+                      >
+                        Только подходящие
+                      </Button>
+                    </div>
+                  )}
                   <div className="space-y-1.5">
-                    {attached.map((c) => (
+                    {displayedAttached.length === 0 ? (
+                      <div className="py-2 text-xs text-muted-foreground">
+                        Нет кандидатов с оценкой «подходит». Снимите фильтр или нажмите «Оценить всех».
+                      </div>
+                    ) : (
+                      displayedAttached.map((c) => (
                       <MatchCompensationRow
                         key={c.id}
                         vacancy={vacancy}
                         candidate={c}
+                        match={matchByCandidate.get(c.id)}
                         hoursPerMonth={hoursPerMonth}
                         onOpen={() => navigate({ to: '/candidates/$id', params: { id: c.id } })}
                         onDetach={() => handleDetachCandidate(c.id, c.fullName)}
@@ -700,7 +783,8 @@ export function VacancyCardPage() {
                         onDownloadImproved={() => handleDownloadImprovedResume(c)}
                         improving={improvingCandidateId === c.id}
                       />
-                    ))}
+                      ))
+                    )}
                   </div>
                   <div className="pt-1">
                     <Button

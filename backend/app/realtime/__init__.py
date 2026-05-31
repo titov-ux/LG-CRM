@@ -8,6 +8,7 @@ from app.realtime.bus import EventBus, get_bus
 from app.realtime.events import (
     publish_candidate_changed,
     publish_chat_event,
+    publish_match_scored,
     publish_user_presence_event,
     publish_vacancy_changed,
     current_client_id_var,
@@ -25,6 +26,7 @@ __all__ = [
     "get_bus",
     "publish_candidate_changed",
     "publish_chat_event",
+    "publish_match_scored",
     "publish_user_presence_event",
     "publish_vacancy_changed",
     "current_client_id_var",

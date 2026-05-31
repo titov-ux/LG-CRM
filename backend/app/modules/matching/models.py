@@ -12,8 +12,17 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String, Text, UniqueConstraint, text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import (
+    DateTime,
+    Enum,
+    ForeignKey,
+    SmallInteger,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampsMixin
@@ -27,6 +36,18 @@ class MatchStatus(str, enum.Enum):
     accepted = "accepted"
     rejected_client = "rejected_client"
     rejected_internal = "rejected_internal"
+
+
+class MatchRecommendation(str, enum.Enum):
+    """Категория AI-скоринга — выводится из числа порогами (см. matching/ai.py).
+
+    strong ≥ 75 · good 50–74 · weak 25–49 · mismatch < 25.
+    """
+
+    strong = "strong"
+    good = "good"
+    weak = "weak"
+    mismatch = "mismatch"
 
 
 def _enum_values(e):
@@ -68,3 +89,28 @@ class VacancyCandidate(Base, TimestampsMixin):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
     feedback: Mapped[str | None] = mapped_column(Text(), nullable=True)
+
+    # === AI-скоринг соответствия (см. modules/matching/ai.py) ===============
+    # Все поля nullable: NULL = ещё не считали. Кэш дорогой LLM-оценки живёт
+    # прямо в связке; повторный расчёт пропускается, если ai_input_hash совпал
+    # с хэшем текущих данных кандидата+вакансии (поле stale на фронте).
+    ai_score: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    ai_recommendation: Mapped[MatchRecommendation | None] = mapped_column(
+        Enum(
+            MatchRecommendation,
+            name="match_recommendation",
+            values_callable=_enum_values,
+        ),
+        nullable=True,
+    )
+    # {"stack": {"score": 80, "weight": 0.35, "note": "..."}, ...}
+    ai_breakdown: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    ai_summary: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    ai_strengths: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    ai_gaps: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    ai_scored_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # 'yandexgpt/rc' для LLM-оценки или 'cheap' для детерминированного фоллбэка.
+    ai_model: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    ai_input_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)

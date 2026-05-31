@@ -332,6 +332,9 @@ export type MatchStatus =
   | 'rejected_client'
   | 'rejected_internal';
 
+/** Категория AI-скоринга: strong ≥75 · good 50–74 · weak 25–49 · mismatch <25. */
+export type MatchRecommendation = 'strong' | 'good' | 'weak' | 'mismatch';
+
 export interface VacancyCandidate {
   id: UUID;
   vacancyId: UUID;
@@ -340,6 +343,38 @@ export interface VacancyCandidate {
   addedById: UUID;
   addedAt: string;
   feedback?: string;
+  /** AI-скор 0–100; null/undefined = ещё не считали. */
+  aiScore?: number | null;
+  aiRecommendation?: MatchRecommendation | null;
+  aiScoredAt?: string | null;
+  aiModel?: string | null;
+}
+
+/** Один критерий разбивки AI-скоринга. */
+export interface CriterionScore {
+  score: number;
+  weight: number;
+  note: string;
+}
+
+/** Полный результат AI-скоринга связки (разбивка + вердикт). */
+export interface MatchScore {
+  matchId?: UUID | null;
+  vacancyId: UUID;
+  candidateId: UUID;
+  score: number;
+  recommendation: MatchRecommendation;
+  /** Ключи: stack, grade, experience, format, rate. */
+  breakdown: Record<string, CriterionScore>;
+  summary?: string | null;
+  strengths: string[];
+  gaps: string[];
+  model: string;
+  scoredAt: string;
+  /** Данные кандидата/вакансии изменились с момента расчёта. */
+  stale: boolean;
+  /** false = LLM был недоступен, показан детерминированный фоллбэк. */
+  aiEnriched: boolean;
 }
 
 // === Calendar / Interviews ===

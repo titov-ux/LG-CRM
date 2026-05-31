@@ -185,6 +185,37 @@ def publish_calendar_event(
         logger.exception("publish_calendar_event failed (suppressed)")
 
 
+def publish_match_scored(
+    *,
+    vacancy_id: uuid.UUID,
+    candidate_id: uuid.UUID,
+    match_id: uuid.UUID,
+    score: int,
+    recommendation: str,
+    actor_id: uuid.UUID | None = None,
+) -> None:
+    """Опубликовать событие о пересчёте AI-скоринга связки.
+
+    Публичное (как vacancy/candidate): фронт инвалидирует список прикреплённых
+    кандидатов вакансии. Безопасно для вызова из любого места — не бросает.
+    """
+    try:
+        event = {
+            "type": "match.scored",
+            "vacancyId": _safe_uuid(vacancy_id),
+            "candidateId": _safe_uuid(candidate_id),
+            "matchId": _safe_uuid(match_id),
+            "score": score,
+            "recommendation": recommendation,
+            "actorId": _safe_uuid(actor_id),
+            "clientId": current_client_id_var.get(""),
+            "ts": _now_iso(),
+        }
+        get_bus().publish(event)
+    except Exception:
+        logger.exception("publish_match_scored failed (suppressed)")
+
+
 def publish_user_presence_event(*, user_id: uuid.UUID | str, online: bool) -> None:
     """Опубликовать событие presence (online/offline) для пользователя.
 

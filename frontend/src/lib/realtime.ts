@@ -73,11 +73,19 @@ export interface CalendarRealtimeEvent extends RealtimeEventBase {
   id: string | null;
 }
 
+export interface MatchScoredRealtimeEvent extends RealtimeEventBase {
+  type: 'match.scored';
+  vacancyId: string | null;
+  candidateId: string | null;
+  matchId: string | null;
+}
+
 export type RealtimeEvent =
   | DomainRealtimeEvent
   | ChatRealtimeEvent
   | PresenceRealtimeEvent
-  | CalendarRealtimeEvent;
+  | CalendarRealtimeEvent
+  | MatchScoredRealtimeEvent;
 
 type Listener = (e: RealtimeEvent) => void;
 type PresenceListener = (onlineUserIds: Set<string>) => void;
@@ -243,6 +251,17 @@ function openSocket(): void {
         type: 'calendar.event_changed',
         kind: (obj.kind as CalendarRealtimeEvent['kind']) ?? 'updated',
         id: typeof obj.id === 'string' ? obj.id : null,
+      });
+      return;
+    }
+
+    if (type === 'match.scored') {
+      emit({
+        ...base,
+        type: 'match.scored',
+        vacancyId: typeof obj.vacancyId === 'string' ? obj.vacancyId : null,
+        candidateId: typeof obj.candidateId === 'string' ? obj.candidateId : null,
+        matchId: typeof obj.matchId === 'string' ? obj.matchId : null,
       });
       return;
     }

@@ -41,6 +41,7 @@ from app.integrations.yandex_gpt import (
     AiUnavailableError,
     YandexGptClient,
 )
+from app.modules.candidates.briefs import candidate_brief, vacancy_brief
 
 logger = logging.getLogger(__name__)
 
@@ -146,58 +147,10 @@ _SYSTEM_PROMPT = """\
 """
 
 
-def _candidate_brief(candidate_dict: dict[str, Any]) -> str:
-    """Сериализовать кандидата в компактный текстовый бриф для LLM.
-
-    Мы шлём не весь Candidate, а только релевантные для улучшения поля, чтобы
-    модель не отвлекалась на ratesMonth/recruiterId и т.п.
-    """
-    parts: list[str] = []
-    parts.append(f"ФИО: {candidate_dict.get('fullName', '')}")
-    parts.append(f"Должность: {candidate_dict.get('role', '')}")
-    if candidate_dict.get("grade"):
-        parts.append(f"Грейд: {candidate_dict['grade']}")
-    if candidate_dict.get("experienceYears") is not None:
-        parts.append(f"Опыт (лет): {candidate_dict['experienceYears']}")
-    if candidate_dict.get("summary"):
-        parts.append("Сопроводительное:\n" + candidate_dict["summary"])
-    if candidate_dict.get("stack"):
-        parts.append("Плоский стек: " + ", ".join(candidate_dict["stack"]))
-    if candidate_dict.get("skillCategories"):
-        sc_lines = []
-        for cat in candidate_dict["skillCategories"]:
-            sc_lines.append(f"  • {cat.get('name', '')}: {', '.join(cat.get('items', []))}")
-        parts.append("Категории навыков:\n" + "\n".join(sc_lines))
-    if candidate_dict.get("experience"):
-        exp_lines = []
-        for i, e in enumerate(candidate_dict["experience"]):
-            head = f"[{i}] {e.get('company', '')} — {e.get('position', '')}"
-            period = f"{e.get('startMonth', '')} … {e.get('endMonth') or 'сейчас'}"
-            exp_lines.append(f"{head} ({period})")
-            if e.get("project"):
-                exp_lines.append(f"    проект: {e['project']}")
-            if e.get("achievements"):
-                for a in e["achievements"]:
-                    exp_lines.append(f"    - {a}")
-            if e.get("stack"):
-                exp_lines.append(f"    стек: {', '.join(e['stack'])}")
-        parts.append("Опыт работы:\n" + "\n".join(exp_lines))
-    return "\n\n".join(parts)
-
-
-def _vacancy_brief(vacancy_dict: dict[str, Any]) -> str:
-    """Сериализовать вакансию в компактный текстовый бриф для LLM."""
-    parts: list[str] = []
-    parts.append(f"Должность: {vacancy_dict.get('title', '')}")
-    if vacancy_dict.get("grade"):
-        parts.append(f"Грейд: {vacancy_dict['grade']}")
-    if vacancy_dict.get("stack"):
-        parts.append("Требуемый стек: " + ", ".join(vacancy_dict["stack"]))
-    if vacancy_dict.get("description"):
-        parts.append("Описание:\n" + vacancy_dict["description"])
-    if vacancy_dict.get("requirements"):
-        parts.append("Требования:\n" + vacancy_dict["requirements"])
-    return "\n\n".join(parts)
+# Брифы кандидата/вакансии вынесены в общий модуль и переиспользуются скорингом
+# (`matching/ai.py`). Здесь оставлены приватные алиасы ради читаемости ниже.
+_candidate_brief = candidate_brief
+_vacancy_brief = vacancy_brief
 
 
 def _strip_em_dashes(value: Any) -> Any:

@@ -12,6 +12,7 @@ import {
   Handshake,
   Inbox,
   Layers,
+  Sparkles,
   Trash2,
   User as UserIcon,
 } from 'lucide-react';
@@ -42,6 +43,8 @@ import { StackTags } from '@/components/common/StackTags';
 import { DaysBadge } from '@/components/common/DaysBadge';
 import { useFiltersStore } from '@/stores/filters';
 import { useUsers } from '@/features/users/hooks';
+import { useVacancies } from '@/features/vacancies/hooks';
+import { AiPreviewBadge } from '@/features/matching/AiScoreBadge';
 import { ENGAGEMENT_META, ENGAGEMENT_OPTIONS } from '@/lib/engagement';
 import { candidateStatuses } from '@/mocks/db/candidates';
 import { cn } from '@/lib/utils';
@@ -51,6 +54,7 @@ import type {
   EmploymentType,
   EngagementType,
   Grade,
+  UUID,
 } from '@/api/types';
 import { useCandidates, useDeleteCandidatePermanent, useRestoreCandidate } from './hooks';
 import { useCan } from '@/lib/permissions';
@@ -99,6 +103,8 @@ export function CandidatesDatabasePage() {
   const [scope, setScope] = useState<Scope>('all');
   const [page, setPage] = useState(1);
   const [hhImportOpen, setHhImportOpen] = useState(false);
+  // Превью AI-скоринга под выбранную вакансию (null = колонка скрыта).
+  const [previewVacancyId, setPreviewVacancyId] = useState<UUID | null>(null);
   const search = useFiltersStore((s) => s.search);
   const grade = useFiltersStore((s) => s.grade);
   const recruiterId = useFiltersStore((s) => s.recruiterId);
@@ -130,6 +136,16 @@ export function CandidatesDatabasePage() {
     pageSize: PAGE_SIZE,
   });
   const { data: usersData } = useUsers();
+  // Список вакансий для пикера превью-скоринга (только незакрытые — их подбирают).
+  const { data: vacanciesData } = useVacancies();
+  const previewVacancies = useMemo(
+    () =>
+      (vacanciesData?.items ?? []).filter(
+        (v) => v.status !== 'closed' && v.status !== 'closed_success',
+      ),
+    [vacanciesData?.items],
+  );
+  const previewVacancy = previewVacancies.find((v) => v.id === previewVacancyId);
   const restoreCandidate = useRestoreCandidate();
   const deleteCandidatePermanent = useDeleteCandidatePermanent();
   const canDeletePermanent = useCan('candidate:delete_permanent');
@@ -327,6 +343,29 @@ export function CandidatesDatabasePage() {
               </MenuItem>
             ))}
           </FilterChip>
+
+          <FilterChip
+            active={!!previewVacancyId}
+            icon={Sparkles}
+            label="AI под вакансию"
+            value={previewVacancy?.title}
+            onClear={() => setPreviewVacancyId(null)}
+          >
+            <div className="max-h-64 overflow-y-auto">
+              <MenuItem selected={!previewVacancyId} onClick={() => setPreviewVacancyId(null)}>
+                Не оценивать
+              </MenuItem>
+              {previewVacancies.map((v) => (
+                <MenuItem
+                  key={v.id}
+                  selected={previewVacancyId === v.id}
+                  onClick={() => setPreviewVacancyId(v.id)}
+                >
+                  {v.title}
+                </MenuItem>
+              ))}
+            </div>
+          </FilterChip>
         </FilterBar>
 
         {/* Notion-стиль таблица: лёгкие границы, разрежённые строки, прозрачный
@@ -460,7 +499,18 @@ export function CandidatesDatabasePage() {
                       <TableCell className="max-w-[220px] py-2.5 align-middle">
                         {/* singleLine: теги в одну строку, длинные — обрезаются «…»,
                             «+N» всегда виден. Без этого ряды плыли в высоту. */}
-                        <StackTags stack={c.stack} max={3} variant="accent" singleLine />
+                        <div className="flex items-center gap-1.5">
+                          <StackTags stack={c.stack} max={3} variant="accent" singleLine />
+                          {previewVacancy &&
+                            previewVacancy.engagementType === c.engagementType && (
+                              <span onClick={(e) => e.stopPropagation()}>
+                                <AiPreviewBadge
+                                  vacancyId={previewVacancy.id}
+                                  candidateId={c.id}
+                                />
+                              </span>
+                            )}
+                        </div>
                       </TableCell>
                       <TableCell className="whitespace-nowrap py-2.5 align-middle">
                         {/* nowrap — иначе «Отказ клиента» переносился и строки

@@ -20,7 +20,40 @@ async def list_matrix(db: AsyncSession) -> list[PermissionRow]:
         # а seed-скрипт ещё не запускался (например, локально на чистой БД).
         await _seed_defaults(db)
         rows = (await db.execute(select(PermissionRow).order_by(PermissionRow.id))).scalars().all()
+    elif await _sync_missing_defaults(db, rows):
+        # Таблица уже засижена, но в дефолтах появились новые строки (например,
+        # `calendar.*` после добавления модуля календаря). Полный re-seed бывает
+        # только при пустой таблице и при /reset, поэтому новые права иначе
+        # никогда не доезжают до существующей БД, и фронт (deny-by-default)
+        # прячет соответствующие действия. Доинсёрчиваем недостающее, НЕ трогая
+        # уже настроенные администратором матрицы.
+        rows = (await db.execute(select(PermissionRow).order_by(PermissionRow.id))).scalars().all()
     return list(rows)
+
+
+async def _sync_missing_defaults(
+    db: AsyncSession, existing: list[PermissionRow]
+) -> bool:
+    """Вставить отсутствующие дефолтные строки. True — если что-то добавили."""
+    existing_ids = {r.id for r in existing}
+    added = False
+    for p in clone_defaults():
+        if p["id"] in existing_ids:
+            continue
+        db.add(
+            PermissionRow(
+                id=p["id"],
+                group=p["group"],
+                permission=p["permission"],
+                description=p["description"],
+                actions=list(p["actions"]),
+                matrix=dict(p["matrix"]),
+            )
+        )
+        added = True
+    if added:
+        await db.commit()
+    return added
 
 
 async def update_row(db: AsyncSession, row_id: str, matrix: dict[str, bool]) -> PermissionRow:

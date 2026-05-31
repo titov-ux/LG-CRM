@@ -17,10 +17,10 @@ def test_recruiter_can_read_matrix(client: TestClient, admin_user, recruiter_use
     r = client.get("/api/v1/permissions-matrix", headers=h)
     assert r.status_code == 200
     items = r.json()["items"]
-    assert len(items) == 14  # 14 строк дефолта
     ids = {p["id"] for p in items}
     assert "users.manage" in ids
     assert "candidates.delete_permanent" in ids
+    assert "calendar.manage" in ids
 
 
 def test_only_admin_can_update_row(client: TestClient, admin_user, recruiter_user) -> None:
@@ -102,3 +102,43 @@ def test_reset_requires_admin(client: TestClient, admin_user, recruiter_user) ->
     rec_h = auth_headers(client, recruiter_user.email)
     r = client.post("/api/v1/permissions-matrix/reset", headers=rec_h)
     assert r.status_code == 403
+
+
+async def test_list_backfills_new_default_rows(db, admin_user) -> None:
+    """Регресс: БД, засиженная ДО появления календаря (без `calendar.*`),
+    при чтении матрицы должна получить недостающие дефолтные строки —
+    иначе фронт (deny-by-default) прячет «Создать событие» и форма не
+    открывается. Существующие (настроенные) строки не перезаписываются.
+    """
+    from app.modules.permissions import service
+    from app.modules.permissions.defaults import clone_defaults
+    from app.modules.permissions.models import PermissionRow
+
+    # Сидируем «старую» матрицу без строк календаря и c кастомной правкой.
+    for p in clone_defaults():
+        if p["id"].startswith("calendar"):
+            continue
+        matrix = dict(p["matrix"])
+        if p["id"] == "audit.view":
+            matrix["account_manager"] = True  # «настройка администратора»
+        db.add(
+            PermissionRow(
+                id=p["id"], group=p["group"], permission=p["permission"],
+                description=p["description"], actions=list(p["actions"]), matrix=matrix,
+            )
+        )
+    await db.commit()
+
+    rows = await service.list_matrix(db)
+    by_id = {r.id: r for r in rows}
+
+    # Недостающие строки доинсёрчены.
+    assert "calendar.manage" in by_id
+    assert "event:create" in by_id["calendar.manage"].actions
+    assert by_id["calendar.manage"].matrix["recruiter"] is True
+    # Кастомная правка сохранена (не перезатёрта дефолтом).
+    assert by_id["audit.view"].matrix["account_manager"] is True
+
+    # Идемпотентность: повторный вызов не плодит дубли.
+    rows2 = await service.list_matrix(db)
+    assert len(rows2) == len(rows)

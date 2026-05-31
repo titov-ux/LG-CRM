@@ -19,6 +19,7 @@ from app.api.v1.endpoints import (
     notifications,
     permissions,
     realtime,
+    telegram,
     users,
     vacancies,
 )
@@ -43,5 +44,6 @@ api_router.include_router(permissions.router)
 api_router.include_router(chat.router)
 api_router.include_router(realtime.router)
 api_router.include_router(integrations.router)
+api_router.include_router(telegram.router)
 api_router.include_router(api_tokens.router)
 api_router.include_router(calendar.router)

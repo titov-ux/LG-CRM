@@ -5191,7 +5191,7 @@ export interface components {
             id: components["schemas"]["UUID"];
             userId: components["schemas"]["UUID"];
             /** @enum {string} */
-            kind: "mention" | "status_change" | "system";
+            kind: "mention" | "status_change" | "system" | "assignment" | "comment";
             text: string;
             /** @enum {string|null} */
             entityType?: "vacancy" | "candidate" | "client" | "contact" | null;

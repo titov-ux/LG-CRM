@@ -158,6 +158,36 @@ sudo cp scripts/cron-backup.example /etc/cron.d/crm-lg-backup
 
 ---
 
+## Telegram-бот уведомлений
+
+Уведомления (назначение вакансии, комментарии, смена статуса, упоминания)
+дублируются в Telegram сразу после коммита транзакции.
+
+Настройка:
+
+1. У @BotFather: `/newbot` → получить **токен** и **@username** бота.
+2. Придумать произвольный **секрет вебхука** (например, `openssl rand -hex 16`).
+3. Заполнить `.env` бэка:
+
+   ```
+   TELEGRAM_BOT_TOKEN=123456:ABC...
+   TELEGRAM_BOT_USERNAME=my_crm_bot
+   TELEGRAM_WEBHOOK_SECRET=<секрет>
+   # опционально, если домен API отличается от APP_BASE_URL:
+   TELEGRAM_WEBHOOK_URL=https://crm.lachevsky.ru/api/v1/integrations/telegram/webhook
+   ```
+
+4. Перезапустить бэк — на старте вызывается `setWebhook` (нужен публичный
+   https; на localhost вебхук не поднять без туннеля).
+5. Пользователь: Настройки → Telegram → «Подключить Telegram» → Start в боте.
+
+Диагностика: логи `telegram: webhook registered at …` на старте; ошибки
+доставки логируются (`telegram: failed to deliver…`), но не ломают запрос.
+Привязка хранится в `users.telegram_chat_id`; тумблер —
+`users.telegram_notifications_enabled`.
+
+---
+
 ## Полезные ссылки
 
 - Архитектура: `Архитектура_CRM_ЛГ_Интеграция.docx`

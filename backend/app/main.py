@@ -18,6 +18,11 @@ from app.realtime.bus import get_bus
 from app.realtime.events import current_client_id_var, publish_user_presence_event
 from app.realtime.presence import start_sweeper, stop_sweeper
 from app.modules.calendar.reminders import start_reminders, stop_reminders
+from app.modules.integrations import telegram_service
+# Импорт регистрирует SQLAlchemy-слушатели after_commit/after_rollback,
+# которые доставляют уведомления в Telegram (см. модуль). Должен произойти
+# до первого commit'а, поэтому импортируем на уровне модуля.
+from app.modules.notifications import telegram_dispatch  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +84,11 @@ async def _lifespan(_app: FastAPI):
         await start_reminders()
     except Exception:
         logger.exception("calendar: failed to start reminders (continuing)")
+
+    try:
+        await telegram_service.register_webhook_if_configured()
+    except Exception:
+        logger.exception("telegram: failed to register webhook (continuing)")
 
     try:
         yield

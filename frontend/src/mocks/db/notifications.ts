@@ -4,6 +4,8 @@ export const notificationsDb: Notification[] = [
   { id: 'n1', userId: 'u1', kind: 'mention', text: 'Анна Кузнецова упомянула вас в комментарии к вакансии Senior Frontend (React)', entityType: 'vacancy', entityId: 'v2', read: false, createdAt: '2026-05-19T08:42:00Z' },
   { id: 'n2', userId: 'u1', kind: 'status_change', text: 'Кандидат Алина Смирнова переведён в статус «На интервью у клиента»', entityType: 'candidate', entityId: 'k2', read: false, createdAt: '2026-05-19T07:21:00Z' },
   { id: 'n3', userId: 'u1', kind: 'system', text: 'Сегодня заканчивается deadline по вакансии Senior Frontend (React)', entityType: 'vacancy', entityId: 'v2', read: false, createdAt: '2026-05-19T06:00:00Z' },
+  { id: 'n4', userId: 'u1', kind: 'assignment', text: 'Вам назначена вакансия «Senior Frontend (React)»', entityType: 'vacancy', entityId: 'v2', read: false, createdAt: '2026-05-19T05:30:00Z' },
+  { id: 'n5', userId: 'u1', kind: 'comment', text: 'Анна Кузнецова оставила комментарий к вакансии «Senior Frontend (React)»', entityType: 'vacancy', entityId: 'v2', read: false, createdAt: '2026-05-19T05:00:00Z' },
 ];
 
 export const activityDb: ActivityEntry[] = [

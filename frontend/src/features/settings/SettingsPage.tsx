@@ -4,6 +4,7 @@ import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
 import { useUIStore } from '@/stores/ui';
 import { HhIntegrationCard } from '@/features/integrations/HhIntegrationCard';
+import { TelegramIntegrationCard } from '@/features/integrations/TelegramIntegrationCard';
 import { ApiTokensCard } from './ApiTokensCard';
 
 export function SettingsPage() {
@@ -36,7 +37,10 @@ export function SettingsPage() {
         <h2 className="mb-2 px-1 text-sm font-medium text-muted-foreground">
           Интеграции
         </h2>
-        <HhIntegrationCard />
+        <div className="space-y-4">
+          <TelegramIntegrationCard />
+          <HhIntegrationCard />
+        </div>
       </div>
 
       <div>

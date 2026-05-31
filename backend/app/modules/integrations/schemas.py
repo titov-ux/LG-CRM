@@ -31,3 +31,25 @@ class HhImportResumeRequest(CamelModel):
     url: str = Field(min_length=1, description="URL резюме hh.ru или его hex-id")
     vacancy_id: uuid.UUID | None = None
     recruiter_id: uuid.UUID | None = None
+
+
+# ── Telegram ─────────────────────────────────────────────────────────────
+
+
+class TelegramStatusResponse(CamelModel):
+    configured: bool          # на сервере задан telegram_bot_token
+    connected: bool           # у пользователя сохранён chat_id (бот привязан)
+    enabled: bool             # тумблер доставки уведомлений
+    bot_username: str | None = None
+
+
+class TelegramLinkResponse(CamelModel):
+    configured: bool
+    token: str
+    # deep_link = None, если не задан telegram_bot_username — фронт покажет
+    # инструкцию с токеном вручную.
+    deep_link: str | None = None
+
+
+class TelegramSettingsRequest(CamelModel):
+    enabled: bool

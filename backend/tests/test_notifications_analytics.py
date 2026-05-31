@@ -154,6 +154,89 @@ def test_self_status_change_does_not_notify(
     assert all("статус" not in n["text"] for n in items)
 
 
+def test_create_vacancy_notifies_assigned(
+    client: TestClient, admin_user, account_manager_user, recruiter_user
+) -> None:
+    h_admin = auth_headers(client, admin_user.email)
+    cid = client.post(
+        "/api/v1/clients", headers=h_admin, json=_client_payload(account_manager_user.id)
+    ).json()["id"]
+    # admin создаёт вакансию с рекрутером и AM → оба получают «назначение».
+    client.post(
+        "/api/v1/vacancies",
+        headers=h_admin,
+        json=_vac_payload(cid, account_manager_user.id, recruiterIds=[str(recruiter_user.id)]),
+    )
+
+    h_rec = auth_headers(client, recruiter_user.email)
+    rec_items = client.get("/api/v1/notifications", headers=h_rec).json()
+    assert any(
+        n["kind"] == "assignment" and "назначена" in n["text"] for n in rec_items
+    )
+
+    h_am = auth_headers(client, account_manager_user.email)
+    am_items = client.get("/api/v1/notifications", headers=h_am).json()
+    assert any(n["kind"] == "assignment" for n in am_items)
+
+
+def test_update_vacancy_notifies_only_new_recruiter(
+    client: TestClient, admin_user, account_manager_user, recruiter_user
+) -> None:
+    h_admin = auth_headers(client, admin_user.email)
+    cid = client.post(
+        "/api/v1/clients", headers=h_admin, json=_client_payload(account_manager_user.id)
+    ).json()["id"]
+    # Вакансия без рекрутеров.
+    vid = client.post(
+        "/api/v1/vacancies",
+        headers=h_admin,
+        json=_vac_payload(cid, account_manager_user.id, recruiterIds=[]),
+    ).json()["id"]
+
+    h_rec = auth_headers(client, recruiter_user.email)
+    assert not any(
+        n["kind"] == "assignment"
+        for n in client.get("/api/v1/notifications", headers=h_rec).json()
+    )
+
+    # Добавляем рекрутера через редактирование → он получает «назначение».
+    client.patch(
+        f"/api/v1/vacancies/{vid}",
+        headers=h_admin,
+        json={"recruiterIds": [str(recruiter_user.id)]},
+    )
+    rec_items = client.get("/api/v1/notifications", headers=h_rec).json()
+    assignments = [n for n in rec_items if n["kind"] == "assignment"]
+    assert len(assignments) == 1
+    assert assignments[0]["entityId"] == vid
+
+    # Повторный PATCH с тем же рекрутером не плодит дубль уведомления.
+    client.patch(
+        f"/api/v1/vacancies/{vid}",
+        headers=h_admin,
+        json={"recruiterIds": [str(recruiter_user.id)]},
+    )
+    rec_items = client.get("/api/v1/notifications", headers=h_rec).json()
+    assert len([n for n in rec_items if n["kind"] == "assignment"]) == 1
+
+
+def test_self_assignment_does_not_notify(
+    client: TestClient, admin_user, account_manager_user
+) -> None:
+    # AM создаёт вакансию на себя — уведомление о назначении себе не приходит.
+    h_am = auth_headers(client, account_manager_user.email)
+    cid = client.post(
+        "/api/v1/clients", headers=h_am, json=_client_payload(account_manager_user.id)
+    ).json()["id"]
+    client.post(
+        "/api/v1/vacancies",
+        headers=h_am,
+        json=_vac_payload(cid, account_manager_user.id, recruiterIds=[]),
+    )
+    items = client.get("/api/v1/notifications", headers=h_am).json()
+    assert not any(n["kind"] == "assignment" for n in items)
+
+
 # ───── analytics ─────
 
 

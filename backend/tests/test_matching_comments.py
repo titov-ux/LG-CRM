@@ -246,3 +246,145 @@ def test_comment_mentions_create_notification(
         and n["entityId"] == vid
         for n in items
     )
+
+
+def test_comment_on_vacancy_notifies_assigned_recruiter(
+    client: TestClient, admin_user, account_manager_user, recruiter_user
+) -> None:
+    h_admin = auth_headers(client, admin_user.email)
+    cid = client.post(
+        "/api/v1/clients", headers=h_admin, json=_client_payload(account_manager_user.id)
+    ).json()["id"]
+    vid = client.post(
+        "/api/v1/vacancies",
+        headers=h_admin,
+        json=_vac_payload(
+            cid, account_manager_user.id, recruiterIds=[str(recruiter_user.id)]
+        ),
+    ).json()["id"]
+
+    # admin комментирует → назначенный рекрутер получает уведомление kind=comment.
+    r = client.post(
+        "/api/v1/comments",
+        headers=h_admin,
+        json={"entityType": "vacancy", "entityId": vid, "text": "посмотри, пожалуйста"},
+    )
+    assert r.status_code == 201
+
+    h_rec = auth_headers(client, recruiter_user.email)
+    items = client.get("/api/v1/notifications", headers=h_rec).json()
+    assert any(
+        n["kind"] == "comment" and n["entityType"] == "vacancy" and n["entityId"] == vid
+        for n in items
+    )
+
+
+def test_comment_on_vacancy_notifies_account_manager(
+    client: TestClient, admin_user, account_manager_user, recruiter_user
+) -> None:
+    h_admin = auth_headers(client, admin_user.email)
+    cid = client.post(
+        "/api/v1/clients", headers=h_admin, json=_client_payload(account_manager_user.id)
+    ).json()["id"]
+    vid = client.post(
+        "/api/v1/vacancies",
+        headers=h_admin,
+        json=_vac_payload(
+            cid, account_manager_user.id, recruiterIds=[str(recruiter_user.id)]
+        ),
+    ).json()["id"]
+
+    # admin комментирует → ответственный AM тоже получает kind=comment.
+    client.post(
+        "/api/v1/comments",
+        headers=h_admin,
+        json={"entityType": "vacancy", "entityId": vid, "text": "вопрос по ставке"},
+    )
+
+    h_am = auth_headers(client, account_manager_user.email)
+    items = client.get("/api/v1/notifications", headers=h_am).json()
+    assert any(
+        n["kind"] == "comment" and n["entityType"] == "vacancy" and n["entityId"] == vid
+        for n in items
+    )
+
+
+def test_comment_on_candidate_notifies_assigned_recruiter(
+    client: TestClient, admin_user, recruiter_user
+) -> None:
+    h_admin = auth_headers(client, admin_user.email)
+    cand_id = client.post(
+        "/api/v1/candidates", headers=h_admin, json=_cand_payload(recruiter_user.id)
+    ).json()["id"]
+
+    r = client.post(
+        "/api/v1/comments",
+        headers=h_admin,
+        json={"entityType": "candidate", "entityId": cand_id, "text": "сильный профиль"},
+    )
+    assert r.status_code == 201
+
+    h_rec = auth_headers(client, recruiter_user.email)
+    items = client.get("/api/v1/notifications", headers=h_rec).json()
+    assert any(
+        n["kind"] == "comment"
+        and n["entityType"] == "candidate"
+        and n["entityId"] == cand_id
+        for n in items
+    )
+
+
+def test_comment_mention_does_not_duplicate_recruiter_notification(
+    client: TestClient, admin_user, account_manager_user, recruiter_user
+) -> None:
+    """Если назначенный рекрутер ещё и @-упомянут — он получает только mention,
+    дубль kind=comment не создаётся."""
+    h_admin = auth_headers(client, admin_user.email)
+    cid = client.post(
+        "/api/v1/clients", headers=h_admin, json=_client_payload(account_manager_user.id)
+    ).json()["id"]
+    vid = client.post(
+        "/api/v1/vacancies",
+        headers=h_admin,
+        json=_vac_payload(
+            cid, account_manager_user.id, recruiterIds=[str(recruiter_user.id)]
+        ),
+    ).json()["id"]
+
+    client.post(
+        "/api/v1/comments",
+        headers=h_admin,
+        json={
+            "entityType": "vacancy",
+            "entityId": vid,
+            "text": "@рекрутер глянь",
+            "mentions": [str(recruiter_user.id)],
+        },
+    )
+
+    h_rec = auth_headers(client, recruiter_user.email)
+    items = [
+        n
+        for n in client.get("/api/v1/notifications", headers=h_rec).json()
+        if n["entityType"] == "vacancy" and n["entityId"] == vid
+    ]
+    assert any(n["kind"] == "mention" for n in items)
+    assert not any(n["kind"] == "comment" for n in items)
+
+
+def test_comment_by_assigned_recruiter_does_not_notify_self(
+    client: TestClient, admin_user, recruiter_user
+) -> None:
+    h_rec = auth_headers(client, recruiter_user.email)
+    cand_id = client.post(
+        "/api/v1/candidates", headers=h_rec, json=_cand_payload(recruiter_user.id)
+    ).json()["id"]
+
+    # сам назначенный рекрутер комментирует своего кандидата — себе не шлём.
+    client.post(
+        "/api/v1/comments",
+        headers=h_rec,
+        json={"entityType": "candidate", "entityId": cand_id, "text": "мой коммент"},
+    )
+    items = client.get("/api/v1/notifications", headers=h_rec).json()
+    assert not any(n["kind"] == "comment" for n in items)

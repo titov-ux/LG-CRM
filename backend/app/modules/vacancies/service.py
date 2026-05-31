@@ -83,6 +83,33 @@ def _recruiter_ids(vac: Vacancy) -> list[uuid.UUID]:
     return [r.user_id for r in vac.recruiters]
 
 
+async def _notify_assigned(
+    db: AsyncSession,
+    *,
+    vac: Vacancy,
+    recipient_ids: Iterable[uuid.UUID],
+    actor_id: uuid.UUID,
+) -> None:
+    """Уведомить пользователей о назначении на вакансию.
+
+    Рассылается рекрутерам, которых добавили в вакансию, и ответственному
+    (account_manager). Сам инициатор изменения не уведомляется; None в списке
+    (FK SET NULL после удаления пользователя) отбрасывается дедупликацией set'а.
+    """
+    recipients = {rid for rid in recipient_ids if rid is not None}
+    recipients.discard(actor_id)
+    if not recipients:
+        return
+    await notify_service.notify_many(
+        db,
+        recipient_ids=recipients,
+        kind=NotificationKind.assignment,
+        text=f"Вам назначена вакансия «{vac.title}»",
+        entity_type=NotificationEntityType.vacancy,
+        entity_id=vac.id,
+    )
+
+
 def _next_kanban_order(rows: Iterable[Vacancy], target_status: VacancyStatus) -> int:
     in_column = [v.kanban_order for v in rows if v.status == target_status]
     return max(in_column) + 1 if in_column else 0
@@ -210,6 +237,13 @@ async def create_vacancy(
         kind=ActivityKind.create,
         text=f"Вакансия «{vac.title}» создана",
     )
+    # Уведомить назначенных рекрутеров и ответственного (кроме создателя).
+    await _notify_assigned(
+        db,
+        vac=vac,
+        recipient_ids=[*payload.recruiter_ids, payload.account_manager_id],
+        actor_id=user.id,
+    )
     await db.commit()
     await db.refresh(vac, attribute_names=["recruiters"])
     publish_vacancy_changed("created", id=vac.id, actor_id=user.id)
@@ -247,6 +281,10 @@ async def update_vacancy(
     if "salary_max" in data:
         v = data["salary_max"]
         vac.salary_max = float(v) if v is not None else None
+    # Кого нужно уведомить о новом назначении (новый AM и/или добавленные
+    # рекрутеры). Собираем по ходу мутаций, рассылаем перед commit.
+    newly_assigned: set[uuid.UUID] = set()
+
     if "account_manager_id" in data:
         # Допускаем null: фронт может «отвязать» ответственного.
         new_am = data["account_manager_id"]
@@ -254,9 +292,18 @@ async def update_vacancy(
             raise ApiError(
                 status.HTTP_403_FORBIDDEN, "forbidden", "Сменить AM может только админ"
             )
+        if new_am is not None and new_am != vac.account_manager_id:
+            newly_assigned.add(new_am)
         vac.account_manager_id = new_am
     if "recruiter_ids" in data and data["recruiter_ids"] is not None:
+        before_recruiters = {r.user_id for r in vac.recruiters}
+        target_recruiters = set(data["recruiter_ids"])
+        newly_assigned |= target_recruiters - before_recruiters
         _replace_recruiters(vac, list(data["recruiter_ids"]))
+
+    await _notify_assigned(
+        db, vac=vac, recipient_ids=newly_assigned, actor_id=user.id
+    )
 
     await db.commit()
     await db.refresh(vac, attribute_names=["recruiters"])

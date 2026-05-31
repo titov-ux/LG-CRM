@@ -10,7 +10,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, Enum, String, text
+from sqlalchemy import BigInteger, Boolean, Enum, String, text
 from sqlalchemy.dialects.postgresql import CITEXT
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -42,7 +42,14 @@ class User(Base, TimestampsMixin):
         default=Role.recruiter,
     )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # `telegram` — это @username, который пользователь указывает в профиле (контакт).
+    # Для рассылки уведомлений нужен chat_id переписки с ботом — он проставляется
+    # при привязке через /start (см. modules/integrations/telegram_service.py).
     telegram: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    telegram_chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    telegram_notifications_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
 
     # initials/color — производные UI-поля, фронт получает их в DTO.
     # Хранятся в БД, чтобы не пересчитывать на каждый ответ и чтобы UI мог их

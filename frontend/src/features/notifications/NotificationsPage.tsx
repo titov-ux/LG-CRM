@@ -8,6 +8,8 @@ import {
   Search,
   Tag,
   Eye,
+  UserPlus,
+  MessageSquare,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -26,15 +28,25 @@ const KIND_ICON = {
   mention: AtSign,
   status_change: Bell,
   system: Bell,
+  assignment: UserPlus,
+  comment: MessageSquare,
 };
 
 const KIND_LABEL: Record<Notification['kind'], string> = {
   mention: 'Упоминания',
   status_change: 'Смена статуса',
   system: 'Системные',
+  assignment: 'Назначения',
+  comment: 'Комментарии',
 };
 
-const KIND_OPTIONS: Notification['kind'][] = ['mention', 'status_change', 'system'];
+const KIND_OPTIONS: Notification['kind'][] = [
+  'mention',
+  'comment',
+  'status_change',
+  'assignment',
+  'system',
+];
 
 const ENTITY_LABEL: Record<string, string> = {
   candidate: 'Кандидат',

@@ -42,6 +42,11 @@ async def notify(
     )
     db.add(n)
     await db.flush()
+    # Доставка в Telegram — после коммита транзакции (см. telegram_dispatch).
+    # Локальный импорт, чтобы не тянуть зависимость при простом чтении модуля.
+    from app.modules.notifications import telegram_dispatch
+
+    telegram_dispatch.enqueue(db.sync_session, user_id=recipient_id, text=text)
     return n
 
 

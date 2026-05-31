@@ -112,6 +112,23 @@ class Settings(BaseSettings):
     # User-Agent обязателен для hh API (иначе 400). Пишем контактный email.
     hh_user_agent: str = "CRM-LG/1.0 (titovalexeys@gmail.com)"
 
+    # ── Telegram-бот (уведомления) ──────────────────────────
+    # Бот создаётся через @BotFather, токен кладётся в `telegram_bot_token`.
+    # Без токена интеграция выключена: ничего не шлётся, кнопка «Подключить
+    # Telegram» в настройках показывает, что приложение не сконфигурировано.
+    telegram_bot_token: str = ""
+    # @username бота (без @) — нужен для deep-link `https://t.me/<username>?start=<token>`.
+    telegram_bot_username: str = ""
+    # Секрет вебхука: Telegram возвращает его в заголовке
+    # `X-Telegram-Bot-Api-Secret-Token` на каждый апдейт — проверяем, чтобы
+    # никто не дёргал наш вебхук напрямую. Генерируется один раз (любая строка).
+    telegram_webhook_secret: str = ""
+    # Полный URL вебхука. Если пуст — собираем из app_base_url + api_v1_prefix.
+    # Регистрируется на старте приложения (setWebhook). На localhost оставить
+    # пустым и не задавать токен — вебхук недоступен без публичного HTTPS.
+    telegram_webhook_url: str = ""
+    telegram_request_timeout_seconds: float = 15.0
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

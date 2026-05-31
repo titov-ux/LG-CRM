@@ -34,6 +34,38 @@ export function useHhDisconnect() {
   });
 }
 
+const TG_KEY = ['integrations', 'telegram', 'status'] as const;
+
+export function useTelegramStatus() {
+  return useQuery({
+    queryKey: TG_KEY,
+    queryFn: () => integrationsApi.telegram.status(),
+    staleTime: 30_000,
+  });
+}
+
+export function useTelegramLinkStart() {
+  return useMutation({
+    mutationFn: () => integrationsApi.telegram.linkStart(),
+  });
+}
+
+export function useTelegramSetEnabled() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (enabled: boolean) => integrationsApi.telegram.setEnabled(enabled),
+    onSuccess: (data) => qc.setQueryData(TG_KEY, data),
+  });
+}
+
+export function useTelegramDisconnect() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => integrationsApi.telegram.disconnect(),
+    onSuccess: () => qc.invalidateQueries({ queryKey: TG_KEY }),
+  });
+}
+
 export function useHhImportResume() {
   const qc = useQueryClient();
   return useMutation({

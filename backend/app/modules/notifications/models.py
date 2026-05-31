@@ -27,6 +27,12 @@ class NotificationKind(str, enum.Enum):
     mention = "mention"
     status_change = "status_change"
     system = "system"
+    # Добавлено миграцией 0025_notification_assignment — назначение вакансии
+    # рекрутеру/ответственному (см. vacancies/service.py).
+    assignment = "assignment"
+    # Добавлено миграцией 0026_notification_comment — новый комментарий к
+    # кандидату/вакансии для назначенного рекрутера (см. comments/service.py).
+    comment = "comment"
 
 
 class NotificationEntityType(str, enum.Enum):

@@ -57,6 +57,66 @@ async def _notify_mentions(
     )
 
 
+async def _notify_comment_recipients(
+    db: AsyncSession,
+    *,
+    author: User,
+    entity_type: CommentEntityType,
+    entity_id: uuid.UUID,
+    mention_ids: set[uuid.UUID],
+) -> None:
+    """Уведомить заинтересованных о новом комментарии.
+
+    Для кандидата — его ответственный рекрутер (`recruiter_id`); для вакансии —
+    все прикреплённые рекрутеры (M2M) И ответственный аккаунт-менеджер
+    (`account_manager_id`). Автор и уже @-упомянутые исключаются — последние
+    и так получат `mention`-уведомление, дублировать не нужно. Для
+    client/contact заинтересованных не выводим — пропускаем.
+    """
+    # Локальные импорты, чтобы не создавать циклических зависимостей модулей.
+    from app.modules.candidates.models import Candidate
+    from app.modules.vacancies.models import Vacancy, VacancyRecruiter
+
+    recipients: set[uuid.UUID] = set()
+    label = ""
+    if entity_type == CommentEntityType.candidate:
+        cand = await db.get(Candidate, entity_id)
+        if cand is None:
+            return
+        if cand.recruiter_id is not None:
+            recipients.add(cand.recruiter_id)
+        label = f"кандидату {cand.full_name}"
+    elif entity_type == CommentEntityType.vacancy:
+        vac = await db.get(Vacancy, entity_id)
+        if vac is None:
+            return
+        rows = await db.execute(
+            select(VacancyRecruiter.user_id).where(
+                VacancyRecruiter.vacancy_id == entity_id
+            )
+        )
+        recipients.update(rows.scalars().all())
+        if vac.account_manager_id is not None:
+            recipients.add(vac.account_manager_id)
+        label = f"вакансии «{vac.title}»"
+    else:
+        return
+
+    recipients.discard(author.id)
+    recipients -= mention_ids
+    recipients = await _existing_user_ids(db, recipients)
+    if not recipients:
+        return
+    await notify_service.notify_many(
+        db,
+        recipient_ids=recipients,
+        kind=NotificationKind.comment,
+        text=f"{author.full_name} оставил(а) комментарий к {label}",
+        entity_type=_to_notification_entity_type(entity_type),
+        entity_id=entity_id,
+    )
+
+
 async def list_for_entity(
     db: AsyncSession, entity_type: CommentEntityType, entity_id: uuid.UUID
 ) -> list[Comment]:
@@ -81,12 +141,20 @@ async def create_comment(
     )
     db.add(comment)
     await db.flush()
+    mention_ids = set(payload.mentions)
     await _notify_mentions(
         db,
         author=user,
-        mention_ids=set(payload.mentions),
+        mention_ids=mention_ids,
         entity_type=payload.entity_type,
         entity_id=payload.entity_id,
+    )
+    await _notify_comment_recipients(
+        db,
+        author=user,
+        entity_type=payload.entity_type,
+        entity_id=payload.entity_id,
+        mention_ids=mention_ids,
     )
     await db.commit()
     await db.refresh(comment)

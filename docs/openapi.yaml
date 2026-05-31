@@ -3007,7 +3007,7 @@ components:
         userId:    { $ref: '#/components/schemas/UUID' }
         kind:
           type: string
-          enum: [mention, status_change, system]
+          enum: [mention, status_change, system, assignment, comment]
         text:      { type: string }
         entityType:
           type: string

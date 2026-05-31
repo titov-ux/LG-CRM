@@ -97,6 +97,7 @@ async def attach(
     recipients = {r for r in recipients_q.scalars().all()}
     recipients.add(vac.account_manager_id)
     recipients.discard(user.id)
+    recipients.discard(None)  # AM мог быть отвязан (FK SET NULL) — не шлём в NULL
     if recipients:
         await notify_service.notify_many(
             db,

@@ -76,18 +76,17 @@ def test_format_matrix():
     assert ai.cheap_score(_cand(format="Удалённо"), _vac(format="Офис"))["format"]["score"] == 40
 
 
-# === Ставка ==================================================================
-def test_rate_dropped_for_agency():
-    bd = ai.cheap_score(
-        _cand(engagementType="agency"), _vac(engagementType="agency")
-    )
-    assert "rate" not in bd
+# === Релевантность и ставка =================================================
+def test_rate_never_scored():
+    # Ставку калькулятор закрывает — в скоринге её быть не должно.
+    assert "rate" not in ai.cheap_score(_cand(), _vac())
+    assert "rate" not in ai.WEIGHTS
 
 
-def test_rate_within_budget():
-    # revenue = 3000*160 = 480000, budget_net = 360000; rateMonth 250000 ≤ → 100.
-    bd = ai.cheap_score(_cand(rateMonth=250000), _vac(rateClient=3000))
-    assert bd["rate"]["score"] == 100
+def test_relevance_is_llm_only():
+    # relevance детерминированно не считается (нет в cheap_score), но есть в весах.
+    assert "relevance" not in ai.cheap_score(_cand(), _vac())
+    assert "relevance" in ai.WEIGHTS
 
 
 # === Взвешенный итог =========================================================
@@ -130,6 +129,7 @@ async def test_score_match_merges_llm(monkeypatch):
     async def fake_json_completion(self, **kwargs):
         return {
             "stack": {"score": 90, "note": "почти весь стек"},
+            "relevance": {"score": 70, "note": "похожий домен"},
             "grade": {"score": 100, "note": "совпадает"},
             "strengths": ["Сильный Java"],
             "gaps": ["Нет Kafka"],
@@ -149,6 +149,9 @@ async def test_score_match_merges_llm(monkeypatch):
     res = await ai.score_match(_cand(), _vac())
     # Веса наши, score стека взят у LLM (90, а не 75 из cheap).
     assert res["breakdown"]["stack"]["score"] == 90
+    # relevance детерминированно не считается — добавлен из ответа LLM со своим весом.
+    assert res["breakdown"]["relevance"]["score"] == 70
+    assert res["breakdown"]["relevance"]["weight"] == ai.WEIGHTS["relevance"]
     assert res["summary"] == "Хороший матч."
     assert res["strengths"] == ["Сильный Java"]
     assert res["gaps"] == ["Нет Kafka"]

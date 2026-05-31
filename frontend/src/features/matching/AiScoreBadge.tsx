@@ -32,10 +32,10 @@ const REC_LABEL: Record<MatchRecommendation, string> = {
 
 const CRITERION_LABEL: Record<string, string> = {
   stack: 'Стек',
+  relevance: 'Релевантность',
   grade: 'Грейд',
   experience: 'Опыт',
   format: 'Формат',
-  rate: 'Ставка',
 };
 
 interface BadgeProps {

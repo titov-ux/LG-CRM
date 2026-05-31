@@ -33,28 +33,29 @@ logger = logging.getLogger(__name__)
 
 # Фиксированные веса критериев (сумма = 1.0). Если критерий неприменим (нет
 # данных), он отбрасывается, а веса оставшихся ренормализуются.
+#
+# `relevance` (релевантность реального опыта задачам/отрасли вакансии) считает
+# ТОЛЬКО LLM — детерминированно его не вычислить. Ставку не оцениваем: её
+# закрывает калькулятор маржи (lib/compensation), дублировать смысла нет.
 WEIGHTS: dict[str, float] = {
-    "stack": 0.35,
-    "grade": 0.20,
-    "experience": 0.20,
+    "stack": 0.30,
+    "relevance": 0.25,
+    "grade": 0.15,
+    "experience": 0.15,
     "format": 0.15,
-    "rate": 0.10,
 }
 
 CRITERION_LABELS: dict[str, str] = {
     "stack": "Стек",
+    "relevance": "Релевантность",
     "grade": "Грейд",
     "experience": "Опыт",
     "format": "Формат",
-    "rate": "Ставка",
 }
 
 _GRADE_ORDER = {"Junior": 0, "Middle": 1, "Senior": 2, "Lead": 3}
 # Ожидаемый опыт (лет) под грейд — грубая эвристика для критерия «опыт».
 _GRADE_EXPECTED_YEARS = {"Junior": 1.0, "Middle": 3.0, "Senior": 6.0, "Lead": 8.0}
-
-_DEFAULT_HOURS_PER_MONTH = 160
-_TARGET_MARGIN = 0.25
 
 _MAX_LIST_ITEMS = 6
 _MAX_NOTE_LEN = 200
@@ -132,43 +133,14 @@ def _score_format(cand: dict[str, Any], vac: dict[str, Any]) -> dict[str, Any] |
     return {"score": 40, "note": f"{c} vs {v} — формат расходится"}
 
 
-def _score_rate(cand: dict[str, Any], vac: dict[str, Any]) -> dict[str, Any] | None:
-    # Маржа осмысленна только для outstaff-пары; для агентских вакансий пропускаем.
-    if cand.get("engagementType") != "outstaff" or vac.get("engagementType") != "outstaff":
-        return None
-    rate_month = cand.get("rateMonth")
-    rate_client = vac.get("rateClient")
-    if not rate_month or not rate_client:
-        return None
-    try:
-        rate_month = float(rate_month)
-        rate_client = float(rate_client)
-    except (TypeError, ValueError):
-        return None
-    if rate_client <= 0:
-        return None
-    revenue = rate_client * _DEFAULT_HOURS_PER_MONTH
-    budget_net = revenue * (1 - _TARGET_MARGIN)
-    if budget_net <= 0:
-        return None
-    ratio = rate_month / budget_net
-    if ratio <= 1.0:
-        return {"score": 100, "note": "ставка в рамках целевой маржи"}
-    if ratio <= 1.15:
-        score = _clamp(100 - (ratio - 1.0) / 0.15 * 40)  # 100→60
-        return {"score": score, "note": "ставка немного выше бюджета"}
-    if ratio <= 1.4:
-        score = _clamp(60 - (ratio - 1.15) / 0.25 * 40)  # 60→20
-        return {"score": score, "note": "ставка выше бюджета"}
-    return {"score": 10, "note": "ставка существенно выше бюджета"}
-
-
+# Примечание: критерий `relevance` (релевантность опыта) умышленно НЕ
+# вычисляется детерминированно — его оценивает только LLM (см. score_match).
+# Ставку не оцениваем вовсе: её закрывает калькулятор маржи.
 _CRITERION_FUNCS = {
     "stack": _score_stack,
     "grade": _score_grade,
     "experience": _score_experience,
     "format": _score_format,
-    "rate": _score_rate,
 }
 
 
@@ -242,10 +214,17 @@ SCORE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "stack": {**_CRITERION_SCHEMA, "description": "Соответствие технического стека требованиям вакансии."},
+        "relevance": {
+            **_CRITERION_SCHEMA,
+            "description": (
+                "Релевантность РЕАЛЬНОГО опыта задачам и отрасли вакансии: похожие "
+                "проекты, домен, тип решаемых задач, специфические требования "
+                "(например, интеграции, отраслевые системы) — помимо стека и грейда."
+            ),
+        },
         "grade": {**_CRITERION_SCHEMA, "description": "Соответствие грейда/уровня."},
-        "experience": {**_CRITERION_SCHEMA, "description": "Соответствие опыта (годы и релевантность)."},
+        "experience": {**_CRITERION_SCHEMA, "description": "Соответствие опыта по годам."},
         "format": {**_CRITERION_SCHEMA, "description": "Соответствие формата работы (удалёнка/гибрид/офис)."},
-        "rate": {**_CRITERION_SCHEMA, "description": "Соответствие ожиданий по ставке бюджету вакансии."},
         "strengths": {
             "type": "array",
             "items": {"type": "string"},
@@ -271,8 +250,11 @@ _SYSTEM_PROMPT = """\
 Правила:
 1. Оценивай СТРОГО по предоставленным брифам. Не выдумывай факты (технологии, \
 компании, цифры), которых нет в тексте.
-2. По каждому критерию (stack, grade, experience, format, rate) поставь score \
-0–100 и краткий note по-русски (что именно совпало/не совпало).
+2. По каждому критерию (stack, relevance, grade, experience, format) поставь \
+score 0–100 и краткий note по-русски (что именно совпало/не совпало).
+   • relevance — насколько РЕАЛЬНЫЙ опыт (проекты, отрасль, тип задач, \
+особые требования вроде интеграций/отраслевых систем) соответствует вакансии, \
+помимо стека и грейда. Ставку (зарплату) НЕ оценивай.
 3. Если по критерию данных нет — поставь умеренный score и честно отметь это в note.
 4. strengths и gaps — конкретные пункты под ЭТУ вакансию, не общие слова.
 5. summary — 2–3 предложения: подходит ли кандидат и почему.

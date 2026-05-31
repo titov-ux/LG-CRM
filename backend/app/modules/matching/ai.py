@@ -58,7 +58,7 @@ _GRADE_ORDER = {"Junior": 0, "Middle": 1, "Senior": 2, "Lead": 3}
 _GRADE_EXPECTED_YEARS = {"Junior": 1.0, "Middle": 3.0, "Senior": 6.0, "Lead": 8.0}
 
 _MAX_LIST_ITEMS = 6
-_MAX_NOTE_LEN = 200
+_MAX_NOTE_LEN = 800  # мягкий потолок: не режем пояснение по критерию (раньше 200 рвало текст посреди слова)
 _MAX_SUMMARY_LEN = 600
 
 

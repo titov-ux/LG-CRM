@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/vacancies", tags=["vacancies"])
 
 
-def _to_dto(vac: VacancyModel) -> VacancyResponse:
+def _to_dto(vac: VacancyModel, candidates_count: int = 0) -> VacancyResponse:
     return VacancyResponse(
         id=vac.id,
         title=vac.title,
@@ -62,12 +62,20 @@ def _to_dto(vac: VacancyModel) -> VacancyResponse:
         account_manager_id=vac.account_manager_id,
         recruiter_ids=service._recruiter_ids(vac),
         days_in_status=service._days_in_status(vac),
-        candidates_count=0,  # Этап 5 — появится с matching
+        candidates_count=candidates_count,
         deadline=vac.deadline,
         kanban_order=vac.kanban_order,
         description=vac.description,
         requirements=vac.requirements,
     )
+
+
+async def _to_dtos(
+    db: AsyncSession, vacs: list[VacancyModel]
+) -> list[VacancyResponse]:
+    """Список DTO с актуальным candidates_count (один GROUP BY на всю пачку)."""
+    counts = await service.candidates_count_map(db, [v.id for v in vacs])
+    return [_to_dto(v, counts.get(v.id, 0)) for v in vacs]
 
 
 # --- порядок важен: /transitions и /kanban-order должны быть выше /{id} ----
@@ -94,7 +102,7 @@ async def reorder_kanban(
     db: AsyncSession = Depends(get_db),
 ) -> list[VacancyResponse]:
     rows = await service.reorder_kanban(db, user, payload.updates)
-    return [_to_dto(v) for v in rows]
+    return await _to_dtos(db, rows)
 
 
 @router.post(
@@ -181,7 +189,7 @@ async def list_vacancies(
         page_size=page_size,
     )
     return VacancyPage(
-        items=[_to_dto(v) for v in rows], total=total, page=page, page_size=page_size
+        items=await _to_dtos(db, rows), total=total, page=page, page_size=page_size
     )
 
 
@@ -207,7 +215,7 @@ async def get_vacancy(
     db: AsyncSession = Depends(get_db),
 ) -> VacancyResponse:
     vac = await service.get_vacancy(db, user, vac_id)
-    return _to_dto(vac)
+    return _to_dto(vac, await service.candidates_count(db, vac.id))
 
 
 @router.patch("/{vac_id}", response_model=VacancyResponse, summary="Обновить вакансию")
@@ -218,7 +226,7 @@ async def update_vacancy(
     db: AsyncSession = Depends(get_db),
 ) -> VacancyResponse:
     vac = await service.update_vacancy(db, user, vac_id, payload)
-    return _to_dto(vac)
+    return _to_dto(vac, await service.candidates_count(db, vac.id))
 
 
 @router.delete("/{vac_id}", response_model=OkResponse, summary="Удалить вакансию (soft)")
@@ -243,4 +251,4 @@ async def change_status(
     db: AsyncSession = Depends(get_db),
 ) -> VacancyResponse:
     vac = await service.change_status(db, user, vac_id, payload)
-    return _to_dto(vac)
+    return _to_dto(vac, await service.candidates_count(db, vac.id))

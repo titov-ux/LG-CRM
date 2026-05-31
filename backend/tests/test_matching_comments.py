@@ -77,6 +77,31 @@ def test_attach_is_idempotent(
     assert r2.json()["id"] == match_id  # тот же id — идемпотент
 
 
+def test_candidates_count_reflects_attached(
+    client: TestClient, admin_user, account_manager_user, recruiter_user
+) -> None:
+    h = auth_headers(client, admin_user.email)
+    cid = client.post("/api/v1/clients", headers=h, json=_client_payload(account_manager_user.id)).json()["id"]
+    vid = client.post("/api/v1/vacancies", headers=h, json=_vac_payload(cid, account_manager_user.id)).json()["id"]
+    cand_id = client.post("/api/v1/candidates", headers=h, json=_cand_payload(recruiter_user.id)).json()["id"]
+
+    # Изначально ноль — кандидатов ещё не прикрепляли.
+    assert client.get(f"/api/v1/vacancies/{vid}", headers=h).json()["candidatesCount"] == 0
+
+    match_id = client.post(
+        f"/api/v1/vacancies/{vid}/candidates", headers=h, json={"candidateId": cand_id}
+    ).json()["id"]
+
+    # После attach счётчик есть и в карточке, и в списке (kanban).
+    assert client.get(f"/api/v1/vacancies/{vid}", headers=h).json()["candidatesCount"] == 1
+    listed = client.get("/api/v1/vacancies", headers=h).json()["items"]
+    assert next(v for v in listed if v["id"] == vid)["candidatesCount"] == 1
+
+    # После detach — снова ноль.
+    client.delete(f"/api/v1/matches/{match_id}", headers=h)
+    assert client.get(f"/api/v1/vacancies/{vid}", headers=h).json()["candidatesCount"] == 0
+
+
 def test_engagement_type_mismatch_409(
     client: TestClient, admin_user, account_manager_user, recruiter_user
 ) -> None:

@@ -83,6 +83,31 @@ def _recruiter_ids(vac: Vacancy) -> list[uuid.UUID]:
     return [r.user_id for r in vac.recruiters]
 
 
+async def candidates_count_map(
+    db: AsyncSession, vacancy_ids: Iterable[uuid.UUID]
+) -> dict[uuid.UUID, int]:
+    """Число прикреплённых кандидатов по каждой вакансии (одним GROUP BY).
+
+    Импорт matching.models — локальный, чтобы не плодить циклический импорт на
+    уровне модуля (matching.service тянет vacancies-модели).
+    """
+    from app.modules.matching.models import VacancyCandidate
+
+    ids = list(vacancy_ids)
+    if not ids:
+        return {}
+    rows = await db.execute(
+        select(VacancyCandidate.vacancy_id, func.count())
+        .where(VacancyCandidate.vacancy_id.in_(ids))
+        .group_by(VacancyCandidate.vacancy_id)
+    )
+    return {vid: int(cnt) for vid, cnt in rows.all()}
+
+
+async def candidates_count(db: AsyncSession, vacancy_id: uuid.UUID) -> int:
+    return (await candidates_count_map(db, [vacancy_id])).get(vacancy_id, 0)
+
+
 async def _notify_assigned(
     db: AsyncSession,
     *,

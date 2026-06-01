@@ -199,7 +199,7 @@ export function PreferencesCard() {
               />
             </div>
             <p className="text-[11.5px] text-muted-foreground">
-              Тёмная тема включится на этапе 2 — сейчас сохраняем только выбор.
+              Применяется сразу. «Системная» следует за настройками вашей ОС.
             </p>
           </div>
 

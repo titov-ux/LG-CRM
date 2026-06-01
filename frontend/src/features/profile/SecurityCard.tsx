@@ -3,6 +3,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { toast } from 'sonner';
+import { HTTPError } from 'ky';
 import { KeyRound, ShieldCheck, ShieldAlert, Eye, EyeOff, LogOut } from 'lucide-react';
 import {
   Card,
@@ -25,7 +26,7 @@ import {
   FormMessage,
 } from '@/components/ui/form';
 import { usePreferencesStore } from '@/stores/preferences';
-import { useLogout } from '@/features/auth/useAuth';
+import { useChangePassword, useLogout } from '@/features/auth/useAuth';
 import { useProfileStore } from '@/stores/profile';
 
 const passwordSchema = z
@@ -67,6 +68,7 @@ export function SecurityCard() {
   const setTwoFA = usePreferencesStore((s) => s.setTwoFactorEnabled);
   const closeProfile = useProfileStore((s) => s.setOpen);
   const logout = useLogout();
+  const changePassword = useChangePassword();
 
   const handleLogout = () => {
     closeProfile(false);
@@ -86,10 +88,33 @@ export function SecurityCard() {
   const nextPw = form.watch('next');
   const meter = strength(nextPw);
 
-  const onSubmit = (_v: PasswordValues) => {
-    // На этапе 2 — POST /auth/password. Сейчас это локальная заглушка (см. ТЗ §7.4).
-    toast.success('Пароль обновлён. На этапе 2 запрос пойдёт на сервер.');
-    form.reset({ current: '', next: '', confirm: '' });
+  const onSubmit = async (v: PasswordValues) => {
+    try {
+      await changePassword.mutateAsync({ currentPassword: v.current, newPassword: v.next });
+      toast.success('Пароль обновлён. Остальные устройства разлогинены.');
+      form.reset({ current: '', next: '', confirm: '' });
+    } catch (e) {
+      let code: string | undefined;
+      let message: string | undefined;
+      if (e instanceof HTTPError) {
+        try {
+          const body = (await e.response.json()) as
+            | { detail?: { code?: string; message?: string } }
+            | undefined;
+          code = body?.detail?.code;
+          message = body?.detail?.message;
+        } catch {
+          // тело не JSON — оставляем дефолтное сообщение
+        }
+      }
+      if (code === 'invalid_current_password') {
+        form.setError('current', { message: message ?? 'Текущий пароль указан неверно' });
+      } else if (code === 'password_unchanged') {
+        form.setError('next', { message: message ?? 'Новый пароль должен отличаться от текущего' });
+      } else {
+        toast.error(message ?? 'Не удалось сменить пароль. Попробуйте ещё раз.');
+      }
+    }
   };
 
   return (
@@ -210,8 +235,12 @@ export function SecurityCard() {
             </div>
 
             <div className="flex justify-end pt-1">
-              <Button type="submit" size="sm" disabled={form.formState.isSubmitting}>
-                Обновить пароль
+              <Button
+                type="submit"
+                size="sm"
+                disabled={form.formState.isSubmitting || changePassword.isPending}
+              >
+                {changePassword.isPending ? 'Обновляем…' : 'Обновить пароль'}
               </Button>
             </div>
           </form>

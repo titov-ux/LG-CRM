@@ -13,6 +13,8 @@ export const authApi = {
   me: () => api.get('auth/me').json<User>(),
   updateMe: (payload: { fullName?: string; email?: string; telegram?: string | null }) =>
     api.patch('auth/me', { json: payload }).json<User>(),
+  changePassword: (payload: { currentPassword: string; newPassword: string }) =>
+    api.post('auth/me/password', { json: payload }).json<{ ok: true }>(),
   refresh: () => api.post('auth/refresh').json<{ accessToken: string }>(),
   // ── Invite-flow (публичные эндпоинты, без auth) ─────────────────────────
   inviteInfo: (token: string) => api.get(`auth/invite/${token}`).json<InviteInfo>(),

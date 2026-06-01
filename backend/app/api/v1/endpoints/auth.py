@@ -17,6 +17,7 @@ from app.db.session import get_db
 from app.modules.auth import service
 from app.modules.auth.dependencies import get_current_user
 from app.modules.auth.schemas import (
+    ChangePasswordRequest,
     LoginRequest,
     OkResponse,
     RefreshResponse,
@@ -124,6 +125,28 @@ async def update_me(
 ) -> UserResponse:
     updated = await users_service.update_profile(db, user.id, payload)
     return UserResponse.model_validate(updated)
+
+
+@router.post(
+    "/me/password",
+    response_model=OkResponse,
+    summary="Сменить пароль текущего пользователя",
+)
+async def change_my_password(
+    payload: ChangePasswordRequest,
+    response: Response,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(_redis_dep),
+) -> OkResponse:
+    """Сменить пароль. Остальные сессии разлогиниваются, текущая остаётся
+    активной — сервер ставит свежий refresh-токен в cookie.
+    """
+    new_refresh = await service.change_password(
+        db, redis, user, payload.current_password, payload.new_password
+    )
+    _set_refresh_cookie(response, new_refresh)
+    return OkResponse()
 
 
 # ── Invite activation (публичные эндпоинты, без auth-гарда) ───────────────

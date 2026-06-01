@@ -20,6 +20,7 @@ from app.core.security import (
     create_access_token,
     create_refresh_token,
     decode_token,
+    hash_password,
     verify_password,
 )
 from app.modules.auth import store
@@ -106,6 +107,51 @@ async def rotate_refresh(
     new_refresh = create_refresh_token(str(user.id))
     await store.remember_refresh(redis, str(user.id), new_refresh)
     return user, new_access, new_refresh
+
+
+async def change_password(
+    db: AsyncSession,
+    redis: Redis,
+    user: User,
+    current_password: str,
+    new_password: str,
+) -> str:
+    """Сменить пароль текущего пользователя.
+
+    Проверяет текущий пароль, ставит новый хэш, затем отзывает ВСЕ refresh-токены
+    пользователя (разлогин остальных устройств) и выдаёт новый refresh для текущей
+    сессии. Возвращает новый refresh-токен, который эндпоинт ставит в cookie.
+
+    Ошибки:
+    - 400 invalid_current_password — текущий пароль не совпал;
+    - 400 password_unchanged — новый пароль совпадает с текущим.
+
+    Код 400 (а не 401) выбран намеренно: ky-интерцептор на фронте на 401 пытается
+    refresh+retry, что для этого эндпоинта было бы неверно.
+    """
+    if not verify_password(current_password, user.password_hash):
+        raise ApiError(
+            status.HTTP_400_BAD_REQUEST,
+            "invalid_current_password",
+            "Текущий пароль указан неверно",
+        )
+    if verify_password(new_password, user.password_hash):
+        raise ApiError(
+            status.HTTP_400_BAD_REQUEST,
+            "password_unchanged",
+            "Новый пароль должен отличаться от текущего",
+        )
+
+    user.password_hash = hash_password(new_password)
+    await db.commit()
+
+    # Разлогиниваем все устройства (включая текущее), затем выдаём текущей сессии
+    # свежий refresh — так старые токены становятся невалидны, а пользователь
+    # остаётся залогинен в этой вкладке.
+    await store.forget_all_refresh(redis, str(user.id))
+    new_refresh = create_refresh_token(str(user.id))
+    await store.remember_refresh(redis, str(user.id), new_refresh)
+    return new_refresh
 
 
 async def revoke(redis: Redis, refresh_token: str | None) -> None:

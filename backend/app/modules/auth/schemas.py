@@ -24,6 +24,12 @@ class TokenResponse(CamelModel):
     refresh_token: str
 
 
+class ChangePasswordRequest(CamelModel):
+    current_password: str = Field(min_length=1)
+    # Минимум 8 / максимум 128 — синхронно с zod-схемой на фронте и ActivateInviteRequest.
+    new_password: str = Field(min_length=8, max_length=128)
+
+
 class RefreshResponse(CamelModel):
     access_token: str
 

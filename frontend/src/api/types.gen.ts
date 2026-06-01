@@ -170,6 +170,53 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/me/password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Сменить пароль текущего пользователя
+         * @description Проверяет текущий пароль и устанавливает новый. Остальные сессии
+         *     пользователя разлогиниваются (refresh-токены отзываются), текущая
+         *     сессия остаётся активной — сервер ставит свежий refresh в cookie.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ChangePasswordRequest"];
+                };
+            };
+            responses: {
+                200: components["responses"]["Ok"];
+                /** @description Неверный текущий пароль или пароль не изменился */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/users": {
         parameters: {
             query?: never;
@@ -4670,6 +4717,10 @@ export interface components {
         TokenResponse: {
             accessToken: string;
             refreshToken: string;
+        };
+        ChangePasswordRequest: {
+            currentPassword: string;
+            newPassword: string;
         };
         /** @enum {string} */
         Role: "admin" | "account_manager" | "recruiter" | "viewer";

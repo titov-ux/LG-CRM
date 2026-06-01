@@ -45,6 +45,13 @@ export function useLogout() {
   });
 }
 
+export function useChangePassword() {
+  return useMutation({
+    mutationFn: (payload: { currentPassword: string; newPassword: string }) =>
+      authApi.changePassword(payload),
+  });
+}
+
 export function useUpdateMe() {
   const queryClient = useQueryClient();
   const setUser = useAuthStore((s) => s.setUser);

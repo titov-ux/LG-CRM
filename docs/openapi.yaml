@@ -115,6 +115,28 @@ paths:
               schema: { $ref: '#/components/schemas/User' }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
+  /auth/me/password:
+    post:
+      tags: [auth]
+      summary: Сменить пароль текущего пользователя
+      description: |
+        Проверяет текущий пароль и устанавливает новый. Остальные сессии
+        пользователя разлогиниваются (refresh-токены отзываются), текущая
+        сессия остаётся активной — сервер ставит свежий refresh в cookie.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChangePasswordRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '400':
+          description: Неверный текущий пароль или пароль не изменился
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
   # ─────────────── USERS ───────────────
   /users:
     get:
@@ -2215,6 +2237,12 @@ components:
       properties:
         accessToken:  { type: string }
         refreshToken: { type: string }
+    ChangePasswordRequest:
+      type: object
+      required: [currentPassword, newPassword]
+      properties:
+        currentPassword: { type: string, minLength: 1 }
+        newPassword:     { type: string, minLength: 8, maxLength: 128 }
 
     # ─── Users ───
     Role:

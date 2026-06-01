@@ -93,6 +93,83 @@ def test_me_can_update_profile(client: TestClient, admin_user: User) -> None:
     assert me["telegram"] is None
 
 
+def _auth_headers(client: TestClient, email: str, password: str) -> dict[str, str]:
+    r = _login(client, email, password)
+    assert r.status_code == 200, r.text
+    return {"Authorization": f"Bearer {r.json()['accessToken']}"}
+
+
+def test_change_password_success(client: TestClient, admin_user: User) -> None:
+    headers = _auth_headers(client, admin_user.email, "correct-horse-battery-staple")
+    r = client.post(
+        "/api/v1/auth/me/password",
+        headers=headers,
+        json={"currentPassword": "correct-horse-battery-staple", "newPassword": "new-strong-pass-1"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["ok"] is True
+
+    # Старым паролем войти нельзя, новым — можно.
+    assert _login(client, admin_user.email, "correct-horse-battery-staple").status_code == 401
+    assert _login(client, admin_user.email, "new-strong-pass-1").status_code == 200
+
+
+def test_change_password_wrong_current(client: TestClient, admin_user: User) -> None:
+    headers = _auth_headers(client, admin_user.email, "correct-horse-battery-staple")
+    r = client.post(
+        "/api/v1/auth/me/password",
+        headers=headers,
+        json={"currentPassword": "totally-wrong", "newPassword": "new-strong-pass-1"},
+    )
+    assert r.status_code == 400
+    assert r.json()["detail"]["code"] == "invalid_current_password"
+
+
+def test_change_password_same_as_current(client: TestClient, admin_user: User) -> None:
+    headers = _auth_headers(client, admin_user.email, "correct-horse-battery-staple")
+    r = client.post(
+        "/api/v1/auth/me/password",
+        headers=headers,
+        json={
+            "currentPassword": "correct-horse-battery-staple",
+            "newPassword": "correct-horse-battery-staple",
+        },
+    )
+    assert r.status_code == 400
+    assert r.json()["detail"]["code"] == "password_unchanged"
+
+
+def test_change_password_requires_auth(client: TestClient) -> None:
+    r = client.post(
+        "/api/v1/auth/me/password",
+        json={"currentPassword": "x", "newPassword": "new-strong-pass-1"},
+    )
+    assert r.status_code == 401
+
+
+def test_change_password_revokes_other_sessions(client: TestClient, admin_user: User) -> None:
+    """Смена пароля отзывает все прежние refresh-токены (другие устройства)."""
+    # «Другое устройство» логинится и получает свой refresh-cookie.
+    other = TestClient(client.app, base_url=str(client.base_url))
+    r = _login(other, admin_user.email, "correct-horse-battery-staple")
+    assert r.status_code == 200
+    assert other.post("/api/v1/auth/refresh").status_code == 200
+
+    # Текущее устройство меняет пароль.
+    headers = _auth_headers(client, admin_user.email, "correct-horse-battery-staple")
+    r = client.post(
+        "/api/v1/auth/me/password",
+        headers=headers,
+        json={"currentPassword": "correct-horse-battery-staple", "newPassword": "new-strong-pass-1"},
+    )
+    assert r.status_code == 200, r.text
+
+    # Старый refresh «другого устройства» больше не действителен.
+    assert other.post("/api/v1/auth/refresh").status_code == 401
+    # А текущая сессия получила свежий refresh-cookie и продолжает работать.
+    assert client.post("/api/v1/auth/refresh").status_code == 200
+
+
 def test_full_flow_login_me_refresh_logout(client: TestClient, admin_user: User) -> None:
     r = _login(client, admin_user.email, "correct-horse-battery-staple")
     assert r.status_code == 200

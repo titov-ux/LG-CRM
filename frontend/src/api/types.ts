@@ -462,9 +462,15 @@ export interface OutcomeRequest {
 export interface Notification {
   id: UUID;
   userId: UUID;
-  kind: 'mention' | 'status_change' | 'system' | 'assignment' | 'comment';
+  kind:
+    | 'mention'
+    | 'status_change'
+    | 'system'
+    | 'assignment'
+    | 'comment'
+    | 'chat_message';
   text: string;
-  entityType?: 'vacancy' | 'candidate' | 'client' | 'contact';
+  entityType?: 'vacancy' | 'candidate' | 'client' | 'contact' | 'chat_message';
   entityId?: UUID;
   read: boolean;
   createdAt: string;

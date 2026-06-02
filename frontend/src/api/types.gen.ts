@@ -5242,10 +5242,10 @@ export interface components {
             id: components["schemas"]["UUID"];
             userId: components["schemas"]["UUID"];
             /** @enum {string} */
-            kind: "mention" | "status_change" | "system" | "assignment" | "comment";
+            kind: "mention" | "status_change" | "system" | "assignment" | "comment" | "chat_message";
             text: string;
             /** @enum {string|null} */
-            entityType?: "vacancy" | "candidate" | "client" | "contact" | null;
+            entityType?: "vacancy" | "candidate" | "client" | "contact" | "chat_message" | null;
             entityId?: components["schemas"]["UUID"] | null;
             read: boolean;
             /** Format: date-time */

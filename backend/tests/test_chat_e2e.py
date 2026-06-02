@@ -21,7 +21,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.chat.models import ChatMessage
-from app.modules.notifications.models import Notification, NotificationKind
+from app.modules.notifications.models import (
+    Notification,
+    NotificationEntityType,
+    NotificationKind,
+)
 from app.modules.users.models import Role, User
 
 from .conftest import _make_user, auth_headers
@@ -387,3 +391,111 @@ async def test_mute_blocks_notification_but_not_message(
         )
     ).scalars().all()
     assert any("привет" in m.text_ for m in msgs)
+
+
+@pytest.mark.asyncio
+async def test_dm_message_notifies_peer(
+    client: TestClient, alice: User, bob: User, db: AsyncSession
+) -> None:
+    """Обычное сообщение в личке (DM) создаёт Notification kind=chat_message
+    собеседнику, но не автору."""
+    h_alice = auth_headers(client, alice.email)
+    conv = _create_dm(client, h_alice, bob.id)
+
+    _post_message(client, h_alice, conv["id"], "привет")
+
+    rows = (
+        await db.execute(
+            select(Notification).where(
+                Notification.kind == NotificationKind.chat_message,
+            )
+        )
+    ).scalars().all()
+    recipient_ids = {n.user_id for n in rows}
+    assert recipient_ids == {bob.id}
+    assert alice.id not in recipient_ids  # автор себе не нотифится
+    for n in rows:
+        assert n.entity_type == NotificationEntityType.chat_message
+
+
+@pytest.mark.asyncio
+async def test_group_plain_message_does_not_notify(
+    client: TestClient,
+    alice: User,
+    bob: User,
+    carol: User,
+    db: AsyncSession,
+) -> None:
+    """В группе обычное сообщение (без упоминаний) НЕ создаёт chat_message —
+    группы нотифят только по @-упоминанию."""
+    h_alice = auth_headers(client, alice.email)
+    conv = _create_group(client, h_alice, "Команда", [bob.id, carol.id])
+
+    _post_message(client, h_alice, conv["id"], "привет всем")
+
+    rows = (
+        await db.execute(
+            select(Notification).where(
+                Notification.kind == NotificationKind.chat_message,
+            )
+        )
+    ).scalars().all()
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_dm_mention_not_double_notified(
+    client: TestClient, alice: User, bob: User, db: AsyncSession
+) -> None:
+    """Если в личке автор ещё и упомянул собеседника — тот получает только
+    kind=mention, без дубля kind=chat_message."""
+    h_alice = auth_headers(client, alice.email)
+    conv = _create_dm(client, h_alice, bob.id)
+
+    _post_message(client, h_alice, conv["id"], f"глянь <@{bob.id}>")
+
+    chat_rows = (
+        await db.execute(
+            select(Notification).where(
+                Notification.kind == NotificationKind.chat_message,
+            )
+        )
+    ).scalars().all()
+    assert chat_rows == []  # есть только mention, дубля нет
+
+    mention_rows = (
+        await db.execute(
+            select(Notification).where(
+                Notification.kind == NotificationKind.mention,
+            )
+        )
+    ).scalars().all()
+    assert {n.user_id for n in mention_rows} == {bob.id}
+
+
+@pytest.mark.asyncio
+async def test_dm_message_respects_mute(
+    client: TestClient, alice: User, bob: User, db: AsyncSession
+) -> None:
+    """Если собеседник заmute-ил личку, обычное сообщение не создаёт ему
+    Notification kind=chat_message (но сообщение всё равно доставляется)."""
+    h_alice = auth_headers(client, alice.email)
+    h_bob = auth_headers(client, bob.email)
+    conv = _create_dm(client, h_alice, bob.id)
+
+    r = client.post(
+        f"/api/v1/chat/conversations/{conv['id']}/mute",
+        json={"until": "2099-12-31T23:59:59+00:00"},
+        headers=h_bob,
+    )
+    assert r.status_code == 200
+
+    _post_message(client, h_alice, conv["id"], "ты тут?")
+
+    rows = await db.execute(
+        select(Notification).where(
+            Notification.user_id == bob.id,
+            Notification.kind == NotificationKind.chat_message,
+        )
+    )
+    assert rows.scalar_one_or_none() is None

@@ -3035,11 +3035,11 @@ components:
         userId:    { $ref: '#/components/schemas/UUID' }
         kind:
           type: string
-          enum: [mention, status_change, system, assignment, comment]
+          enum: [mention, status_change, system, assignment, comment, chat_message]
         text:      { type: string }
         entityType:
           type: string
-          enum: [vacancy, candidate, client, contact]
+          enum: [vacancy, candidate, client, contact, chat_message]
           nullable: true
         entityId:
           allOf: [{ $ref: '#/components/schemas/UUID' }]

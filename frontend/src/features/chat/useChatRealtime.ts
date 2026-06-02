@@ -96,16 +96,21 @@ export function useChatRealtime(): void {
         }
       }
 
-      // Если меня упомянули — оживим nav-badge уведомлений.
+      // Если меня упомянули — оживим nav-badge уведомлений (+ mention-звук).
       const notified = event.payload['notifiedUserIds'];
       const iWasMentioned =
         !!meId && Array.isArray(notified) && notified.includes(meId);
+      // Уведомление о новом сообщении (kind=chat_message) — тоже оживляет
+      // nav-badge, но без mention-звука.
+      const msgNotified = event.payload['messageNotifiedUserIds'];
+      const iWasNotified =
+        !!meId && Array.isArray(msgNotified) && msgNotified.includes(meId);
       if (
         meId &&
         (event.type === 'chat.message_created' ||
           event.type === 'chat.message_updated')
       ) {
-        if (iWasMentioned) {
+        if (iWasMentioned || iWasNotified) {
           queryClient.invalidateQueries({ queryKey: notificationKeys.all });
         }
       }

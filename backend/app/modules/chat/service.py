@@ -308,6 +308,90 @@ async def _notify_mentions(
     return recipients
 
 
+def _message_preview(text: str, *, has_files: bool) -> str:
+    """Короткий безопасный preview тела сообщения для уведомления.
+
+    Экранируем HTML: `send_message` шлёт с `parse_mode=HTML`, а тело — это
+    свободный пользовательский ввод, в котором легко встретить `<`, `>`, `&`
+    (иначе Bot API вернёт ошибку парсинга и сообщение не уйдёт). Пустой текст
+    (сообщение из одних вложений) заменяем плейсхолдером.
+    """
+    import html
+
+    clean = (text or "").strip()
+    if not clean:
+        return "📎 вложение" if has_files else "(пустое сообщение)"
+    short = clean[:140] + ("…" if len(clean) > 140 else "")
+    return html.escape(short)
+
+
+async def _notify_new_message(
+    db: AsyncSession,
+    *,
+    author: User,
+    conv: ChatConversation,
+    audience_ids: set[uuid.UUID],
+    already_notified: set[uuid.UUID],
+    message_id: uuid.UUID,
+    preview: str,
+) -> list[uuid.UUID]:
+    """Создаёт Notification kind=chat_message о новом сообщении, возвращает
+    фактически уведомлённых.
+
+    ВАЖНО: уведомляем ТОЛЬКО в личных диалогах (DM). В группах поток сообщений
+    шумный — туда нотифим лишь по @-упоминанию (kind=mention, см.
+    `_notify_mentions`). Так уведомление приходит, если «тебе пишут в личку
+    либо тебя отметили».
+
+    Принципы (симметрично `_notify_mentions`):
+      • автор сам себе не нотифится;
+      • кого уже уведомили по упоминанию (`already_notified`) — повторно не
+        дёргаем: персональное «вас упомянули» важнее и не дублируется;
+      • получатель с `muted_until > now()` — Notification не создаётся
+        (realtime-сообщение всё равно приходит отдельно).
+    """
+    if conv.kind != ConversationKind.dm:
+        return []
+
+    candidates = [
+        uid
+        for uid in audience_ids
+        if uid != author.id and uid not in already_notified
+    ]
+    if not candidates:
+        return []
+
+    now = datetime.now(timezone.utc)
+    muted_rows = await db.execute(
+        select(ChatMember.user_id).where(
+            ChatMember.conversation_id == conv.id,
+            ChatMember.user_id.in_(candidates),
+            ChatMember.muted_until.isnot(None),
+            ChatMember.muted_until > now,
+        )
+    )
+    muted_set = set(muted_rows.scalars().all())
+    recipients = [uid for uid in candidates if uid not in muted_set]
+    if not recipients:
+        return []
+
+    text = f"Новое сообщение от {author.full_name}: {preview}"
+
+    await notify_service.notify_many(
+        db,
+        recipient_ids=recipients,
+        kind=NotificationKind.chat_message,
+        text=text,
+        entity_type=NotificationEntityType.chat_message,
+        entity_id=message_id,
+        payload={
+            "conversationId": str(conv.id),
+            "messageId": str(message_id),
+        },
+    )
+    return recipients
+
+
 async def post_message(
     db: AsyncSession,
     *,
@@ -433,7 +517,16 @@ async def post_message(
         message_id=msg.id,
         mention_all=mention_all,
     )
-
+    # Уведомление о новом сообщении остальным участникам (не упомянутым).
+    message_notified = await _notify_new_message(
+        db,
+        author=current_user,
+        conv=conv,
+        audience_ids=set(audience_ids),
+        already_notified=set(notified),
+        message_id=msg.id,
+        preview=_message_preview(text, has_files=bool(files_to_attach)),
+    )
     await db.commit()
     await db.refresh(msg)
 
@@ -450,7 +543,11 @@ async def post_message(
             "preview": text[:140],
             "mentions": [str(u) for u in mention_ids],
             "mentionAll": mention_all,
+            # Упомянутые (kind=mention) — фронт даёт им mention-звук.
             "notifiedUserIds": [str(u) for u in notified],
+            # Остальные получатели уведомления о новом сообщении
+            # (kind=chat_message) — нужны лишь для оживления nav-badge.
+            "messageNotifiedUserIds": [str(u) for u in message_notified],
             "createdAt": msg.created_at.isoformat(),
         },
         actor_id=current_user.id,

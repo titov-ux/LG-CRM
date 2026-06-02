@@ -30,6 +30,7 @@ const KIND_ICON = {
   system: Bell,
   assignment: UserPlus,
   comment: MessageSquare,
+  chat_message: MessageSquare,
 };
 
 const KIND_LABEL: Record<Notification['kind'], string> = {
@@ -38,10 +39,12 @@ const KIND_LABEL: Record<Notification['kind'], string> = {
   system: 'Системные',
   assignment: 'Назначения',
   comment: 'Комментарии',
+  chat_message: 'Сообщения в чате',
 };
 
 const KIND_OPTIONS: Notification['kind'][] = [
   'mention',
+  'chat_message',
   'comment',
   'status_change',
   'assignment',

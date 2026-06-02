@@ -33,6 +33,9 @@ class NotificationKind(str, enum.Enum):
     # Добавлено миграцией 0026_notification_comment — новый комментарий к
     # кандидату/вакансии для назначенного рекрутера (см. comments/service.py).
     comment = "comment"
+    # Добавлено миграцией 0028_notification_chat_message — новое сообщение в
+    # диалоге чата для участников (см. chat/service.py: _notify_new_message).
+    chat_message = "chat_message"
 
 
 class NotificationEntityType(str, enum.Enum):

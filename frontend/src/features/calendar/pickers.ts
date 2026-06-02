@@ -33,7 +33,9 @@ export function useUsersList(enabled = true) {
 export function useCandidatesList(enabled = true) {
   return useQuery({
     queryKey: ['calendar', 'pick', 'candidates'],
-    queryFn: async () => normalize<Candidate>(await candidatesApi.list({ pageSize: 500 })),
+    // Бэкенд ограничивает pageSize значением le=200 — больше отдаёт 422,
+    // и тогда дропдаун кандидатов оставался пустым.
+    queryFn: async () => normalize<Candidate>(await candidatesApi.list({ pageSize: 200 })),
     staleTime: 60_000,
     enabled,
   });

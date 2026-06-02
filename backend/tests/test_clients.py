@@ -63,7 +63,7 @@ def test_filter_by_status_kind_industry(client: TestClient, admin_user, account_
     assert {c["name"] for c in r.json()["items"]} == {"Inter B"}
 
 
-def test_account_manager_sees_only_own_clients(
+def test_account_manager_sees_all_clients(
     client: TestClient, admin_user, account_manager_user, other_account_manager_user
 ) -> None:
     h_admin = auth_headers(client, admin_user.email)
@@ -79,11 +79,69 @@ def test_account_manager_sees_only_own_clients(
         json=_make_client_payload(other_account_manager_user.id, name="Other"),
     )
 
+    # account_manager видит всех клиентов, а не только своих (clients.view = всем)
     h_am = auth_headers(client, account_manager_user.email)
     r = client.get("/api/v1/clients", headers=h_am)
     assert r.status_code == 200
     names = {c["name"] for c in r.json()["items"]}
-    assert names == {"Mine"}
+    assert names == {"Mine", "Other"}
+
+
+def test_account_manager_can_edit_any_client(
+    client: TestClient, admin_user, account_manager_user, other_account_manager_user
+) -> None:
+    h_admin = auth_headers(client, admin_user.email)
+    # клиент чужого менеджера
+    cid = client.post(
+        "/api/v1/clients",
+        headers=h_admin,
+        json=_make_client_payload(other_account_manager_user.id, name="Other"),
+    ).json()["id"]
+
+    h_am = auth_headers(client, account_manager_user.email)
+    # редактирование «обычного» поля чужого клиента — можно
+    r = client.patch(
+        f"/api/v1/clients/{cid}", headers=h_am, json={"industry": "retail"}
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["industry"] == "retail"
+
+    # форма всегда шлёт accountManagerId; если менеджер не меняется — тоже можно
+    r = client.patch(
+        f"/api/v1/clients/{cid}",
+        headers=h_am,
+        json={"industry": "it", "accountManagerId": str(other_account_manager_user.id)},
+    )
+    assert r.status_code == 200, r.text
+
+
+def test_account_manager_cannot_reassign_manager(
+    client: TestClient, admin_user, account_manager_user, other_account_manager_user
+) -> None:
+    h_admin = auth_headers(client, admin_user.email)
+    cid = client.post(
+        "/api/v1/clients",
+        headers=h_admin,
+        json=_make_client_payload(other_account_manager_user.id, name="Other"),
+    ).json()["id"]
+
+    # account_manager не может сменить ответственного менеджера — только админ
+    h_am = auth_headers(client, account_manager_user.email)
+    r = client.patch(
+        f"/api/v1/clients/{cid}",
+        headers=h_am,
+        json={"accountManagerId": str(account_manager_user.id)},
+    )
+    assert r.status_code == 403
+
+    # админ — может
+    r = client.patch(
+        f"/api/v1/clients/{cid}",
+        headers=h_admin,
+        json={"accountManagerId": str(account_manager_user.id)},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["accountManagerId"] == str(account_manager_user.id)
 
 
 def test_account_manager_cannot_create_for_other(

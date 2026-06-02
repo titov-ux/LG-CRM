@@ -21,11 +21,70 @@ interface Props {
   events: CalendarEvent[];
   onOpenEvent: (e: CalendarEvent) => void;
   onCreateAt: (date: Date) => void;
+  /** Перетаскивание события на новое время/день. Если не задан — DnD выключен. */
+  onMoveEvent?: (event: CalendarEvent, newStartsAt: Date) => void;
+}
+
+/** Позиция события внутри колонки дня: индекс дорожки и сколько их в кластере. */
+interface Slot {
+  col: number;
+  cols: number;
+}
+
+function evStartMs(ev: CalendarEvent): number {
+  return new Date(ev.startsAt).getTime();
+}
+function evEndMs(ev: CalendarEvent): number {
+  const s = evStartMs(ev);
+  return ev.endsAt ? new Date(ev.endsAt).getTime() : s + 60 * 60_000;
+}
+
+/**
+ * Раскладка пересекающихся событий по колонкам. События, перекрывающиеся по
+ * времени, образуют кластер и делят ширину дня поровну; непересекающиеся
+ * занимают всю ширину. Жадный алгоритм: внутри кластера событие садится в
+ * первую свободную дорожку, иначе заводится новая.
+ */
+function layoutDay(events: CalendarEvent[]): Map<string, Slot> {
+  const result = new Map<string, Slot>();
+  const sorted = [...events].sort((a, b) => evStartMs(a) - evStartMs(b) || evEndMs(a) - evEndMs(b));
+
+  let cluster: { ev: CalendarEvent; col: number }[] = [];
+  let colEnds: number[] = []; // время окончания последнего события в каждой дорожке
+  let clusterEnd = -Infinity;
+
+  const flush = () => {
+    const cols = colEnds.length;
+    for (const item of cluster) result.set(item.ev.id, { col: item.col, cols });
+    cluster = [];
+    colEnds = [];
+    clusterEnd = -Infinity;
+  };
+
+  for (const ev of sorted) {
+    const s = evStartMs(ev);
+    const e = evEndMs(ev);
+    // Событие не пересекается с текущим кластером → закрываем кластер.
+    if (cluster.length && s >= clusterEnd) flush();
+
+    let col = colEnds.findIndex((end) => end <= s);
+    if (col === -1) {
+      col = colEnds.length;
+      colEnds.push(e);
+    } else {
+      colEnds[col] = e;
+    }
+    cluster.push({ ev, col });
+    clusterEnd = Math.max(clusterEnd, e);
+  }
+  flush();
+  return result;
 }
 
 /** Почасовая сетка день/неделя в стиле Яндекс.Календаря (Notion-эстетика). */
-export function TimeGrid({ days, events, onOpenEvent, onCreateAt }: Props) {
+export function TimeGrid({ days, events, onOpenEvent, onCreateAt, onMoveEvent }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
   const [now, setNow] = useState(() => new Date());
 
   useEffect(() => {
@@ -59,7 +118,118 @@ export function TimeGrid({ days, events, onOpenEvent, onCreateAt }: Props) {
     return map;
   }, [events]);
 
+  // Раскладка пересекающихся событий по колонкам — для каждого дня отдельно.
+  const layoutByDay = useMemo(() => {
+    const map = new Map<string, Map<string, Slot>>();
+    for (const [key, evs] of eventsByDay) map.set(key, layoutDay(evs));
+    return map;
+  }, [eventsByDay]);
+
+  // === Drag-and-drop переноса события ===
+  const dragRef = useRef<{
+    event: CalendarEvent;
+    startX: number;
+    startY: number;
+    grabOffsetY: number;
+    durationH: number;
+    moved: boolean;
+    dayIndex: number;
+    topPx: number;
+  } | null>(null);
+  // Подавляет click сразу после перетаскивания (чтобы не открыть карточку
+  // события и не создать новое по клику в колонке).
+  const suppressClickRef = useRef(false);
+  const [dragActive, setDragActive] = useState(false);
+  const [ghost, setGhost] = useState<{
+    id: string;
+    dayIndex: number;
+    topPx: number;
+    durationH: number;
+    status: EventStatus;
+    title: string;
+  } | null>(null);
+
+  function beginDrag(event: CalendarEvent, e: React.PointerEvent) {
+    if (!onMoveEvent || e.button !== 0 || !bodyRef.current) return;
+    const start = new Date(event.startsAt);
+    const end = event.endsAt ? new Date(event.endsAt) : new Date(start.getTime() + 60 * 60_000);
+    const durationH = Math.max(0.5, (end.getTime() - start.getTime()) / 3_600_000);
+    const blockTop = (start.getHours() + start.getMinutes() / 60) * HOUR_PX;
+    const rect = bodyRef.current.getBoundingClientRect();
+    const grabOffsetY = e.clientY - rect.top - blockTop;
+    const dayIndex = Math.max(0, days.findIndex((d) => isSameDay(d, start)));
+    dragRef.current = {
+      event,
+      startX: e.clientX,
+      startY: e.clientY,
+      grabOffsetY,
+      durationH,
+      moved: false,
+      dayIndex,
+      topPx: blockTop,
+    };
+    setDragActive(true);
+  }
+
+  useEffect(() => {
+    if (!dragActive) return;
+    const snapPx = (15 / 60) * HOUR_PX; // шаг привязки — 15 минут
+
+    const onMove = (e: PointerEvent) => {
+      const d = dragRef.current;
+      if (!d || !bodyRef.current) return;
+      // До порога в 4px считаем это кликом, а не перетаскиванием.
+      if (!d.moved && Math.hypot(e.clientX - d.startX, e.clientY - d.startY) < 4) return;
+      d.moved = true;
+      const rect = bodyRef.current.getBoundingClientRect();
+      const colWidth = (rect.width - GUTTER) / days.length;
+      let dayIndex = Math.floor((e.clientX - rect.left - GUTTER) / colWidth);
+      dayIndex = Math.max(0, Math.min(days.length - 1, dayIndex));
+      let topPx = e.clientY - rect.top - d.grabOffsetY;
+      topPx = Math.round(topPx / snapPx) * snapPx;
+      topPx = Math.max(0, Math.min(24 * HOUR_PX - d.durationH * HOUR_PX, topPx));
+      d.dayIndex = dayIndex;
+      d.topPx = topPx;
+      setGhost({
+        id: d.event.id,
+        dayIndex,
+        topPx,
+        durationH: d.durationH,
+        status: d.event.status,
+        title: d.event.candidateName ?? d.event.title,
+      });
+    };
+
+    const onUp = () => {
+      const d = dragRef.current;
+      dragRef.current = null;
+      setDragActive(false);
+      setGhost(null);
+      if (!d || !d.moved) return;
+      // Был именно drag → гасим последующий click и применяем перенос.
+      suppressClickRef.current = true;
+      window.setTimeout(() => {
+        suppressClickRef.current = false;
+      }, 0);
+      const minutes = Math.round((d.topPx / HOUR_PX) * 60);
+      const day = days[d.dayIndex];
+      const newStart = new Date(day);
+      newStart.setHours(0, minutes, 0, 0);
+      if (newStart.getTime() !== new Date(d.event.startsAt).getTime()) {
+        onMoveEvent?.(d.event, newStart);
+      }
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+  }, [dragActive, days, onMoveEvent]);
+
   function handleColumnClick(day: Date, e: React.MouseEvent<HTMLDivElement>) {
+    if (suppressClickRef.current) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const offsetY = e.clientY - rect.top;
     const minutes = Math.floor((offsetY / HOUR_PX) * 60);
@@ -67,6 +237,19 @@ export function TimeGrid({ days, events, onOpenEvent, onCreateAt }: Props) {
     const d = startOfDay(day);
     d.setMinutes(snapped);
     onCreateAt(d);
+  }
+
+  function handleOpenEvent(ev: CalendarEvent) {
+    if (suppressClickRef.current) return;
+    onOpenEvent(ev);
+  }
+
+  /** Подпись времени по вертикальной позиции (px) — для ghost при перетаскивании. */
+  function pxToTimeLabel(topPx: number): string {
+    const total = Math.round((topPx / HOUR_PX) * 60);
+    const h = Math.floor(total / 60);
+    const m = total % 60;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
   }
 
   const nowOffset = (now.getHours() + now.getMinutes() / 60) * HOUR_PX;
@@ -112,7 +295,7 @@ export function TimeGrid({ days, events, onOpenEvent, onCreateAt }: Props) {
         </div>
 
         {/* Сетка часов */}
-        <div className="relative grid" style={{ gridTemplateColumns: gridCols, height: totalHeight }}>
+        <div ref={bodyRef} className="relative grid" style={{ gridTemplateColumns: gridCols, height: totalHeight }}>
           {/* Колонка часов + номер недели */}
           <div className="relative border-r">
             <span className="absolute right-1.5 top-1 text-[11px] text-muted-foreground">
@@ -133,6 +316,7 @@ export function TimeGrid({ days, events, onOpenEvent, onCreateAt }: Props) {
           {days.map((day) => {
             const key = format(day, 'yyyy-MM-dd');
             const dayEvents = eventsByDay.get(key) ?? [];
+            const dayLayout = layoutByDay.get(key);
             const today = isSameDay(day, new Date());
             return (
               <div
@@ -149,11 +333,37 @@ export function TimeGrid({ days, events, onOpenEvent, onCreateAt }: Props) {
                   <div key={h} className="border-b border-border/60" style={{ height: HOUR_PX }} />
                 ))}
                 {dayEvents.map((ev) => (
-                  <EventBlock key={ev.id} event={ev} onOpen={onOpenEvent} />
+                  <EventBlock
+                    key={ev.id}
+                    event={ev}
+                    slot={dayLayout?.get(ev.id) ?? { col: 0, cols: 1 }}
+                    onOpen={handleOpenEvent}
+                    onDragStart={onMoveEvent ? (e) => beginDrag(ev, e) : undefined}
+                    dimmed={ghost?.id === ev.id}
+                  />
                 ))}
               </div>
             );
           })}
+
+          {/* Ghost перетаскиваемого события — следует за курсором */}
+          {ghost && (
+            <div
+              className={cn(
+                'pointer-events-none absolute z-40 overflow-hidden rounded-md border px-1.5 py-1 text-left text-[11px] shadow-lg ring-2 ring-primary/40',
+                STATUS_STYLE[ghost.status],
+              )}
+              style={{
+                top: ghost.topPx,
+                height: ghost.durationH * HOUR_PX,
+                left: `calc(${GUTTER}px + ${ghost.dayIndex} * ((100% - ${GUTTER}px) / ${days.length}) + 4px)`,
+                width: `calc((100% - ${GUTTER}px) / ${days.length} - 8px)`,
+              }}
+            >
+              <div className="font-medium leading-tight">{pxToTimeLabel(ghost.topPx)}</div>
+              <div className="truncate leading-tight">{ghost.title}</div>
+            </div>
+          )}
 
           {/* Линия «сейчас»: через всю ширину, жирный сегмент — на колонке сегодня */}
           {todayIndex >= 0 && (
@@ -190,10 +400,16 @@ export function TimeGrid({ days, events, onOpenEvent, onCreateAt }: Props) {
 
 function EventBlock({
   event,
+  slot,
   onOpen,
+  onDragStart,
+  dimmed,
 }: {
   event: CalendarEvent;
+  slot: Slot;
   onOpen: (e: CalendarEvent) => void;
+  onDragStart?: (e: React.PointerEvent) => void;
+  dimmed?: boolean;
 }) {
   const start = new Date(event.startsAt);
   const end = event.endsAt ? new Date(event.endsAt) : new Date(start.getTime() + 60 * 60_000);
@@ -201,17 +417,31 @@ function EventBlock({
   const durationH = Math.max(0.5, (end.getTime() - start.getTime()) / 3_600_000);
   const height = durationH * HOUR_PX;
 
+  // Колонка дня делится между пересекающимися событиями. Слева отступ 4px,
+  // справа — кликабельная полоса RIGHT_GUTTER, чтобы в занятый временной ряд
+  // можно было кликнуть и добавить ещё одно событие. Между колонками — 2px.
+  const GAP = 2;
+  const EDGE = 4;
+  const RIGHT_GUTTER = 24;
+  const reserved = EDGE + RIGHT_GUTTER + (slot.cols - 1) * GAP;
+  const colWidth = `((100% - ${reserved}px) / ${slot.cols})`;
+  const left = `calc(${EDGE}px + ${slot.col} * (${colWidth} + ${GAP}px))`;
+  const width = `calc(${colWidth})`;
+
   return (
     <button
+      onPointerDown={onDragStart}
       onClick={(e) => {
         e.stopPropagation();
         onOpen(event);
       }}
       className={cn(
-        'absolute left-1 right-1 z-10 overflow-hidden rounded-md border px-1.5 py-1 text-left text-[11px] shadow-sm transition-shadow hover:shadow',
+        'absolute z-10 select-none overflow-hidden rounded-md border px-1.5 py-1 text-left text-[11px] shadow-sm transition-shadow hover:shadow',
         STATUS_STYLE[event.status],
+        onDragStart && 'cursor-grab active:cursor-grabbing',
+        dimmed && 'opacity-40',
       )}
-      style={{ top, height }}
+      style={{ top, height, left, width }}
     >
       <div className="font-medium leading-tight">{format(start, 'HH:mm')}</div>
       <div className="truncate leading-tight">{event.candidateName ?? event.title}</div>

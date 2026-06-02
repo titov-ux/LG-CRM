@@ -9,9 +9,9 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { Separator } from '@/components/ui/separator';
+import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import type { CalendarEvent, EventStatus } from '@/api/types';
 import { useCan } from '@/lib/permissions';
@@ -24,18 +24,11 @@ interface Props {
   onEdit: (event: CalendarEvent) => void;
 }
 
-const STATUS_LABEL: Record<EventStatus, string> = {
-  scheduled: 'Запланировано',
-  held: 'Состоялось',
-  no_show: 'Не пришёл',
-  canceled: 'Отменено',
-};
-
-const STATUS_VARIANT: Record<EventStatus, 'default' | 'secondary' | 'destructive' | 'outline'> = {
-  scheduled: 'default',
-  held: 'secondary',
-  no_show: 'destructive',
-  canceled: 'outline',
+const STATUS_STYLE: Record<EventStatus, { label: string; dot: string }> = {
+  scheduled: { label: 'Запланировано', dot: 'bg-blue-500' },
+  held: { label: 'Состоялось', dot: 'bg-emerald-500' },
+  no_show: { label: 'Не пришёл', dot: 'bg-red-500' },
+  canceled: { label: 'Отменено', dot: 'bg-muted-foreground' },
 };
 
 const LOCATION_LABEL = { online: 'Онлайн', onsite: 'В офисе', phone: 'Телефон' } as const;
@@ -89,9 +82,12 @@ export function EventDetailSheet({ open, onOpenChange, event, onEdit }: Props) {
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="flex w-full flex-col sm:max-w-md">
         <SheetHeader>
-          <div className="flex items-start justify-between gap-3">
-            <SheetTitle className="pr-6">{event.title}</SheetTitle>
-            <Badge variant={STATUS_VARIANT[event.status]}>{STATUS_LABEL[event.status]}</Badge>
+          <div className="flex flex-col gap-2 pr-8">
+            <SheetTitle>{event.title}</SheetTitle>
+            <span className="inline-flex w-fit items-center gap-1.5 text-xs font-medium text-muted-foreground">
+              <span className={cn('h-1.5 w-1.5 rounded-full', STATUS_STYLE[event.status].dot)} />
+              {STATUS_STYLE[event.status].label}
+            </span>
           </div>
         </SheetHeader>
 
@@ -105,10 +101,26 @@ export function EventDetailSheet({ open, onOpenChange, event, onEdit }: Props) {
           </div>
 
           <div className="flex items-center gap-2 text-muted-foreground">
-            <MapPin className="h-4 w-4" />
-            <span>
+            <MapPin className="h-4 w-4 shrink-0" />
+            <span className="break-all">
               {LOCATION_LABEL[event.locationKind]}
-              {event.location ? ` · ${event.location}` : ''}
+              {event.location ? (
+                <>
+                  {' · '}
+                  {/^https?:\/\//i.test(event.location) ? (
+                    <a
+                      href={event.location}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary underline-offset-2 hover:underline"
+                    >
+                      {event.location}
+                    </a>
+                  ) : (
+                    event.location
+                  )}
+                </>
+              ) : null}
             </span>
           </div>
 

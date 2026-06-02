@@ -1,6 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import { format } from 'date-fns';
-import { ru } from 'date-fns/locale';
 import { toast } from 'sonner';
 import {
   Sheet,
@@ -14,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
+import { DateField } from '@/components/forms/DateField';
 import {
   Select,
   SelectContent,
@@ -22,6 +21,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import type { CalendarEvent, EventLocationKind, UUID } from '@/api/types';
+import { useAuthStore } from '@/stores/auth';
 import { useCreateEvent, useUpdateEvent } from './hooks';
 import { useCandidatesList, useUsersList, useVacanciesList } from './pickers';
 
@@ -47,6 +47,18 @@ function toTimeInput(d: Date): string {
   return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 
+/** Date → "YYYY-MM-DD" (локальная дата) для DateField. */
+function toDateInput(d: Date): string {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+/** "YYYY-MM-DD" → Date (полночь локального дня) или null. */
+function fromDateInput(iso: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!m) return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+}
+
 /** Совместить день (Date) и время "HH:mm" в один Date. */
 function combine(day: Date, time: string): Date {
   const [h, m] = time.split(':').map((x) => parseInt(x, 10));
@@ -63,6 +75,7 @@ const LOCATION_LABELS: Record<EventLocationKind, string> = {
 
 export function EventFormSheet({ open, onOpenChange, event, prefill }: Props) {
   const isEdit = !!event;
+  const currentUserId = useAuthStore((s) => s.user?.id ?? null);
   const create = useCreateEvent();
   const update = useUpdateEvent();
   // Справочники грузим только когда форма реально открыта — иначе тяжёлый
@@ -108,9 +121,10 @@ export function EventFormSheet({ open, onOpenChange, event, prefill }: Props) {
       setEndTime(toTimeInput(new Date(base.getTime() + 60 * 60_000)));
       setLocationKind('online');
       setLocation('');
-      setAttendeeIds([]);
+      // Создатель встречи по умолчанию — участник.
+      setAttendeeIds(currentUserId ? [currentUserId] : []);
     }
-  }, [open, event, prefill]);
+  }, [open, event, prefill, currentUserId]);
 
   const busy = create.isPending || update.isPending;
 
@@ -120,6 +134,26 @@ export function EventFormSheet({ open, onOpenChange, event, prefill }: Props) {
     () => [...users].sort((a, b) => (a.fullName ?? '').localeCompare(b.fullName ?? '')),
     [users],
   );
+
+  // Кандидаты текущего рекрутера — вперёд, остальные следом; внутри групп по алфавиту.
+  const sortedCandidates = useMemo(() => {
+    const mine = (c: (typeof candidates)[number]) =>
+      !!currentUserId && c.recruiterId === currentUserId;
+    return [...candidates].sort((a, b) => {
+      if (mine(a) !== mine(b)) return mine(a) ? -1 : 1;
+      return (a.fullName ?? '').localeCompare(b.fullName ?? '');
+    });
+  }, [candidates, currentUserId]);
+
+  // Вакансии, где текущий пользователь в числе рекрутеров — вперёд.
+  const sortedVacancies = useMemo(() => {
+    const mine = (v: (typeof vacancies)[number]) =>
+      !!currentUserId && v.recruiterIds?.includes(currentUserId);
+    return [...vacancies].sort((a, b) => {
+      if (mine(a) !== mine(b)) return mine(a) ? -1 : 1;
+      return (a.title ?? '').localeCompare(b.title ?? '');
+    });
+  }, [vacancies, currentUserId]);
 
   function toggleAttendee(id: UUID) {
     setAttendeeIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -200,7 +234,7 @@ export function EventFormSheet({ open, onOpenChange, event, prefill }: Props) {
                       <SelectValue placeholder="Выберите кандидата" />
                     </SelectTrigger>
                     <SelectContent>
-                      {candidates.map((c) => (
+                      {sortedCandidates.map((c) => (
                         <SelectItem key={c.id} value={c.id}>
                           {c.fullName}
                         </SelectItem>
@@ -215,7 +249,7 @@ export function EventFormSheet({ open, onOpenChange, event, prefill }: Props) {
                       <SelectValue placeholder="Без вакансии" />
                     </SelectTrigger>
                     <SelectContent>
-                      {vacancies.map((v) => (
+                      {sortedVacancies.map((v) => (
                         <SelectItem key={v.id} value={v.id}>
                           {v.title}
                         </SelectItem>
@@ -227,10 +261,15 @@ export function EventFormSheet({ open, onOpenChange, event, prefill }: Props) {
             )}
 
             <div className="space-y-1.5">
-              <Label>Дата</Label>
-              <div className="flex h-9 items-center rounded-md border border-input bg-muted/40 px-3 text-sm capitalize text-muted-foreground">
-                {format(eventDate, 'EEEE, d MMMM yyyy', { locale: ru })}
-              </div>
+              <Label htmlFor="ev-date">Дата</Label>
+              <DateField
+                id="ev-date"
+                value={toDateInput(eventDate)}
+                onChange={(iso) => {
+                  const d = fromDateInput(iso);
+                  if (d) setEventDate(d);
+                }}
+              />
             </div>
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

@@ -15,8 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import ApiError
 from app.modules.clients.models import Client, Contact
 from app.modules.clients.schemas import CreateContactRequest
-from app.modules.clients.service import _ensure_can_mutate, _ensure_can_see, get_client
-from app.modules.users.models import Role, User
+from app.modules.clients.service import _ensure_can_mutate, get_client
+from app.modules.users.models import User
 
 
 def _visible_join() -> Select:
@@ -28,8 +28,8 @@ def _visible_join() -> Select:
 
 
 def _scope_for_user(q: Select, user: User) -> Select:
-    if user.role == Role.account_manager:
-        q = q.where(Client.account_manager_id == user.id)
+    # Все роли видят контакты всех клиентов — как и сами карточки клиентов
+    # (правило `clients.view` = всем ролям). Сужения по ответственному менеджеру нет.
     return q
 
 

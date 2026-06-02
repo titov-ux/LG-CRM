@@ -26,9 +26,10 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { toast } from 'sonner';
 import { useCan } from '@/lib/permissions';
 import type { CalendarEvent, EventStatus, UUID } from '@/api/types';
-import { useCalendarEvents } from './hooks';
+import { useCalendarEvents, useUpdateEvent } from './hooks';
 import { useUsersList } from './pickers';
 import { EventFormSheet, type EventFormPrefill } from './EventFormSheet';
 import { EventDetailSheet } from './EventDetailSheet';
@@ -46,6 +47,8 @@ const VIEW_LABEL: Record<ViewMode, string> = {
 
 export function CalendarPage() {
   const canCreate = useCan('event:create');
+  const canEdit = useCan('event:edit');
+  const updateEvent = useUpdateEvent();
   const [view, setView] = useState<ViewMode>('week');
   const [anchor, setAnchor] = useState(() => new Date());
   const [recruiterId, setRecruiterId] = useState<UUID | 'all'>('all');
@@ -113,6 +116,23 @@ export function CalendarPage() {
     setEditEvent(ev);
     setPrefill(undefined);
     setFormOpen(true);
+  }
+
+  // Перенос события перетаскиванием: сохраняем длительность, шлём новые startsAt/endsAt.
+  function moveEvent(ev: CalendarEvent, newStart: Date) {
+    const oldStart = new Date(ev.startsAt).getTime();
+    const durationMs = ev.endsAt ? new Date(ev.endsAt).getTime() - oldStart : 60 * 60_000;
+    const newEnd = new Date(newStart.getTime() + durationMs);
+    updateEvent.mutate(
+      {
+        id: ev.id,
+        payload: { startsAt: newStart.toISOString(), endsAt: newEnd.toISOString() },
+      },
+      {
+        onSuccess: () => toast.success('Событие перенесено'),
+        onError: () => toast.error('Не удалось перенести событие'),
+      },
+    );
   }
 
   return (
@@ -219,6 +239,7 @@ export function CalendarPage() {
             events={events}
             onOpenEvent={openEvent}
             onCreateAt={(d) => canCreate && openCreate(d)}
+            onMoveEvent={canEdit ? moveEvent : undefined}
           />
         )}
       </div>

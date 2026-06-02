@@ -90,13 +90,19 @@ export function QuickCreateMenu() {
   if (!canCreateVacancy && !canCreateCandidate) return null;
 
   const close = () => setOpen(null);
-  const closeVacancySheet = () => {
+  // Форму сбрасываем при ОТКРЫТИИ, а не при закрытии: Radix держит контент
+  // смонтированным во время анимации закрытия и переиспользует инстанс формы
+  // при быстром повторном открытии. Если бампать ключ только на закрытии, то
+  // путь «успешное создание → close()» его не задевает, и в новой форме всплывают
+  // значения только что созданной вакансии/кандидата. Сброс на открытии
+  // гарантирует чистую форму при любом сценарии закрытия.
+  const openVacancy = () => {
     setVacancyFormResetKey((k) => k + 1);
-    close();
+    setOpen('vacancy');
   };
-  const closeCandidateSheet = () => {
+  const openCandidate = () => {
     setCandidateFormResetKey((k) => k + 1);
-    close();
+    setOpen('candidate');
   };
 
   const handleVacancy = (values: VacancyFormValues) => {
@@ -230,13 +236,13 @@ export function QuickCreateMenu() {
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-56">
           {canCreateVacancy && (
-            <DropdownMenuItem onSelect={() => setOpen('vacancy')}>
+            <DropdownMenuItem onSelect={openVacancy}>
               <Briefcase className="mr-2 h-4 w-4" />
               Вакансию
             </DropdownMenuItem>
           )}
           {canCreateCandidate && (
-            <DropdownMenuItem onSelect={() => setOpen('candidate')}>
+            <DropdownMenuItem onSelect={openCandidate}>
               <UserPlus className="mr-2 h-4 w-4" />
               Кандидата
             </DropdownMenuItem>
@@ -244,7 +250,7 @@ export function QuickCreateMenu() {
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <Sheet open={canCreateVacancy && open === 'vacancy'} onOpenChange={(o) => !o && closeVacancySheet()}>
+      <Sheet open={canCreateVacancy && open === 'vacancy'} onOpenChange={(o) => !o && close()}>
         <SheetContent className="overflow-y-auto sm:max-w-xl">
           <SheetHeader className="mb-4">
             <SheetTitle>Новая вакансия</SheetTitle>
@@ -259,7 +265,7 @@ export function QuickCreateMenu() {
         </SheetContent>
       </Sheet>
 
-      <Sheet open={canCreateCandidate && open === 'candidate'} onOpenChange={(o) => !o && closeCandidateSheet()}>
+      <Sheet open={canCreateCandidate && open === 'candidate'} onOpenChange={(o) => !o && close()}>
         <SheetContent className="overflow-y-auto sm:max-w-xl">
           <SheetHeader className="mb-4">
             <SheetTitle>Новый кандидат</SheetTitle>

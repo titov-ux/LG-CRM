@@ -1,8 +1,11 @@
 """Бизнес-логика clients/legal_entities/contacts.
 
-Видимость по ролям:
-- admin / recruiter / viewer — все клиенты;
-- account_manager — только клиенты, где он `account_manager_id`.
+Видимость по ролям: все роли видят и редактируют всех клиентов
+(совпадает с матрицей: `clients.view` = всем, `clients.create_edit` =
+admin + account_manager). Ролевые ограничения, которые остаются:
+- удаление/архив клиента — только admin (`_ensure_can_delete`);
+- смена ответственного менеджера — только admin (см. `update_client`);
+- account_manager заводит новых клиентов только на себя (см. `create_client`).
 
 `vacancies_count` и `contacts_count` считаются на чтении — GROUP BY-подзапросы
 в `_counts_for_clients` (фильтр `deleted_at IS NULL` для обоих). Денормализация
@@ -40,23 +43,25 @@ from app.modules.vacancies.models import Vacancy
 
 
 def _visible_clients_filter(user: User) -> list:
-    """Фильтр SQLAlchemy для области видимости клиентов конкретной роли."""
-    if user.role == Role.account_manager:
-        return [Client.account_manager_id == user.id]
+    """Фильтр SQLAlchemy для области видимости клиентов.
+
+    Все роли видят всех клиентов (правило `clients.view` = всем ролям),
+    поэтому дополнительных условий нет. Функция оставлена точкой расширения
+    на случай, если понадобится вернуть ролевое сужение.
+    """
     return []
 
 
 def _ensure_can_see(client: Client, user: User) -> None:
-    if user.role == Role.account_manager and client.account_manager_id != user.id:
-        raise ApiError(status.HTTP_403_FORBIDDEN, "forbidden", "Нет доступа к клиенту")
+    """Доступ к карточке клиента есть у всех ролей (`clients.view`).
+
+    Оставлено no-op для совместимости с вызовами в `get_client`/`contacts_service`.
+    """
+    return None
 
 
 def _ensure_can_mutate(user: User) -> None:
-    """Создание/редактирование клиентов: admin и account_manager (правило clients.create_edit).
-
-    Запреты на конкретного клиента (account_manager редактирует чужого) проверяются
-    через `_ensure_can_see`.
-    """
+    """Создание/редактирование клиентов: admin и account_manager (правило clients.create_edit)."""
     if user.role not in (Role.admin, Role.account_manager):
         raise ApiError(status.HTTP_403_FORBIDDEN, "forbidden", "Нет прав на изменение клиента")
 
@@ -229,7 +234,13 @@ async def update_client(
         client.industry = data["industry"]
     if "account_manager_id" in data and data["account_manager_id"] is not None:
         # account_manager не может «передать» клиента другому — только админ.
-        if user.role == Role.account_manager and data["account_manager_id"] != user.id:
+        # Сравниваем с текущим значением, а не с user.id: форма всегда шлёт
+        # accountManagerId, и редактирование чужого клиента без смены менеджера
+        # (значение не меняется) должно проходить.
+        if (
+            user.role == Role.account_manager
+            and data["account_manager_id"] != client.account_manager_id
+        ):
             raise ApiError(
                 status.HTTP_403_FORBIDDEN,
                 "forbidden",

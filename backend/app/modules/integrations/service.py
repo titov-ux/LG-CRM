@@ -36,7 +36,7 @@ from app.modules.candidates.schemas import CreateCandidateRequest
 from app.modules.integrations.hh_mapper import map_hh_resume_to_candidate
 from app.modules.integrations.models import IntegrationToken
 from app.modules.matching.models import VacancyCandidate
-from app.modules.users.models import User
+from app.modules.users.models import Role, User
 
 logger = logging.getLogger(__name__)
 
@@ -299,8 +299,18 @@ async def import_resume(
         ) from exc
 
     create_req: CreateCandidateRequest = map_hh_resume_to_candidate(payload)
-    if recruiter_id is not None:
-        create_req = create_req.model_copy(update={"recruiter_id": recruiter_id})
+    # Если рекрутер явно не передан — назначаем ответственным владельца токена,
+    # т.е. того, кто фактически сохранил резюме. Это основной кейс Chrome-
+    # расширения hh.ru: оно шлёт только {url}, без recruiter_id, поэтому раньше
+    # кандидат создавался без ответственного. Рекрутером может быть только
+    # recruiter/admin (см. _ensure_valid_recruiter_id), иначе оставляем пустым.
+    effective_recruiter_id = recruiter_id
+    if effective_recruiter_id is None and user.role in (Role.recruiter, Role.admin):
+        effective_recruiter_id = user.id
+    if effective_recruiter_id is not None:
+        create_req = create_req.model_copy(
+            update={"recruiter_id": effective_recruiter_id}
+        )
     create_req = create_req.model_copy(update={"status": CandidateStatus.new})
 
     try:

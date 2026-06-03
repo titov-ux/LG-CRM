@@ -103,7 +103,19 @@ export function ClientsListPage() {
           setAddOpen(false);
           navigate({ to: '/clients/$id', params: { id: c.id } });
         },
-        onError: () => toast.error('Не удалось создать клиента'),
+        onError: async (err: unknown) => {
+          let message = 'Не удалось создать клиента';
+          const res = (err as { response?: Response })?.response;
+          if (res) {
+            try {
+              const body = (await res.json()) as { detail?: { message?: string } };
+              if (body?.detail?.message) message = body.detail.message;
+            } catch {
+              /* тело не JSON — оставляем дефолтный текст */
+            }
+          }
+          toast.error(message);
+        },
       },
     );
   };

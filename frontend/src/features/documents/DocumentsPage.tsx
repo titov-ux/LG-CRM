@@ -90,13 +90,13 @@ const KIND_ICON: Record<DocumentKind, LucideIcon> = {
 };
 
 const KIND_COLOR: Record<DocumentKind, string> = {
-  doc: 'text-blue-600 bg-blue-50',
-  pdf: 'text-red-600 bg-red-50',
-  xlsx: 'text-emerald-600 bg-emerald-50',
-  pptx: 'text-orange-600 bg-orange-50',
-  image: 'text-purple-600 bg-purple-50',
-  folder: 'text-amber-600 bg-amber-50',
-  note: 'text-yellow-700 bg-yellow-50',
+  doc: 'text-blue-600 bg-blue-50 dark:text-blue-300 dark:bg-blue-950/40',
+  pdf: 'text-red-600 bg-red-50 dark:text-red-300 dark:bg-red-950/40',
+  xlsx: 'text-emerald-600 bg-emerald-50 dark:text-emerald-300 dark:bg-emerald-950/40',
+  pptx: 'text-orange-600 bg-orange-50 dark:text-orange-300 dark:bg-orange-950/40',
+  image: 'text-purple-600 bg-purple-50 dark:text-purple-300 dark:bg-purple-950/40',
+  folder: 'text-amber-600 bg-amber-50 dark:text-amber-300 dark:bg-amber-950/40',
+  note: 'text-yellow-700 bg-yellow-50 dark:text-yellow-300 dark:bg-yellow-950/40',
 };
 
 const KIND_LABEL: Record<DocumentKind, string> = {

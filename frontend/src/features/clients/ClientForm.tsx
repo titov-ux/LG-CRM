@@ -20,6 +20,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useUsers } from '@/features/users/hooks';
+import { useAuthStore } from '@/stores/auth';
 import type { ClientKind, ClientStatus } from '@/api/types';
 
 const STATUSES: { id: ClientStatus; label: string }[] = [
@@ -61,7 +62,17 @@ interface Props {
 
 export function ClientForm({ defaultValues, onSubmit, isPending, submitLabel = 'Сохранить' }: Props) {
   const { data: users } = useUsers();
+  const currentUser = useAuthStore((s) => s.user);
+  const isAccountManager = currentUser?.role === 'account_manager';
   const managers = (users ?? []).filter((u) => u.role === 'account_manager' || u.role === 'admin');
+
+  // Аккаунт-менеджер по правам может заводить клиента только на себя и не может
+  // менять ответственного (см. backend create_client/update_client). Поэтому для
+  // этой роли подставляем его самого по умолчанию и блокируем выбор менеджера —
+  // иначе он выберет «не себя» и получит молчаливый 403.
+  const lockedManagerId = isAccountManager
+    ? defaultValues?.accountManagerId ?? currentUser?.id ?? ''
+    : undefined;
 
   const form = useForm<ClientFormValues>({
     resolver: zodResolver(schema),
@@ -69,11 +80,12 @@ export function ClientForm({ defaultValues, onSubmit, isPending, submitLabel = '
       name: '',
       legalEntities: [{ name: '', inn: '' }],
       industry: '',
-      accountManagerId: '',
+      accountManagerId: lockedManagerId ?? '',
       status: 'lead',
       clientKind: 'direct',
       telegramChat: '',
       ...defaultValues,
+      ...(lockedManagerId ? { accountManagerId: lockedManagerId } : {}),
     } as ClientFormValues,
   });
 
@@ -214,7 +226,11 @@ export function ClientForm({ defaultValues, onSubmit, isPending, submitLabel = '
           render={({ field }) => (
             <FormItem>
               <FormLabel>Аккаунт-менеджер</FormLabel>
-              <Select value={field.value} onValueChange={field.onChange}>
+              <Select
+                value={field.value}
+                onValueChange={field.onChange}
+                disabled={isAccountManager}
+              >
                 <FormControl><SelectTrigger><SelectValue placeholder="Выберите менеджера" /></SelectTrigger></FormControl>
                 <SelectContent>
                   {managers.map((u) => (
@@ -222,6 +238,11 @@ export function ClientForm({ defaultValues, onSubmit, isPending, submitLabel = '
                   ))}
                 </SelectContent>
               </Select>
+              {isAccountManager && (
+                <p className="text-[11.5px] text-muted-foreground">
+                  Клиент закрепляется за вами. Сменить ответственного может только администратор.
+                </p>
+              )}
               <FormMessage />
             </FormItem>
           )}

@@ -9,9 +9,11 @@ const GUTTER = 56; // ширина левого жёлоба с часами (px
 const SCROLL_TO_HOUR = 8; // стартовый скролл к рабочему утру
 
 const STATUS_STYLE: Record<EventStatus, string> = {
-  scheduled: 'bg-blue-50 border-blue-300 text-blue-900',
-  held: 'bg-emerald-50 border-emerald-300 text-emerald-900',
-  no_show: 'bg-red-50 border-red-300 text-red-900',
+  scheduled:
+    'bg-blue-50 border-blue-300 text-blue-900 dark:bg-blue-950/50 dark:border-blue-900/70 dark:text-blue-100',
+  held: 'bg-emerald-50 border-emerald-300 text-emerald-900 dark:bg-emerald-950/50 dark:border-emerald-900/70 dark:text-emerald-100',
+  no_show:
+    'bg-red-50 border-red-300 text-red-900 dark:bg-red-950/50 dark:border-red-900/70 dark:text-red-100',
   canceled: 'bg-muted border-border text-muted-foreground line-through',
 };
 

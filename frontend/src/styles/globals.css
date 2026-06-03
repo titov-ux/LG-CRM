@@ -45,8 +45,10 @@
     --popover: 222 44% 12%;
     --popover-foreground: 210 40% 96%;
 
-    --primary: 210 40% 96%;
-    --primary-foreground: 222 47% 11%;
+    /* В тёмной теме primary — синий бренд-акцент (а не почти-белый), чтобы
+       кнопки действий не «выжигали» и совпадали с акцентами интерфейса. */
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
 
     --secondary: 217 33% 18%;
     --secondary-foreground: 210 40% 96%;

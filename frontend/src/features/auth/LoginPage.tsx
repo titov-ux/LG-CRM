@@ -5,10 +5,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { useForceLightTheme } from '@/lib/theme';
 import { useLogin } from './useAuth';
 import { BubbleBackdrop } from './BubbleBackdrop';
 
 export function LoginPage() {
+  // Экран авторизации всегда в светлой теме, независимо от настройки темы.
+  useForceLightTheme();
   const navigate = useNavigate();
   const login = useLogin();
   const [email, setEmail] = useState('');

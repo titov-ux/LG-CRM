@@ -10,6 +10,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import { authApi } from '@/api/auth';
 import { useAuthStore } from '@/stores/auth';
+import { useForceLightTheme } from '@/lib/theme';
 import { authKeys } from './useAuth';
 import { BubbleBackdrop } from './BubbleBackdrop';
 
@@ -29,6 +30,8 @@ import { BubbleBackdrop } from './BubbleBackdrop';
  * карточку, что и LoginPage — это одно семейство публичных экранов.
  */
 export function InvitePage() {
+  // Публичный экран — всегда светлая тема (как и логин).
+  useForceLightTheme();
   const { token } = useParams({ from: '/invite/$token' });
   const navigate = useNavigate();
   const queryClient = useQueryClient();

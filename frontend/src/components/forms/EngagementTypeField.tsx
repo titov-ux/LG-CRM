@@ -36,9 +36,9 @@ export function EngagementTypeField({ value, onChange, disabled }: Props) {
               'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
               isActive
                 ? opt.id === 'outstaff'
-                  ? 'border-blue-400 bg-blue-50/60 ring-1 ring-blue-300/60'
-                  : 'border-amber-400 bg-amber-50/60 ring-1 ring-amber-300/60'
-                : 'hover:border-slate-300 hover:bg-muted/30',
+                  ? 'border-blue-400 bg-blue-50/60 ring-1 ring-blue-300/60 dark:border-blue-500/60 dark:bg-blue-950/40 dark:ring-blue-900/50'
+                  : 'border-amber-400 bg-amber-50/60 ring-1 ring-amber-300/60 dark:border-amber-500/60 dark:bg-amber-950/40 dark:ring-amber-900/50'
+                : 'hover:border-slate-300 hover:bg-muted/30 dark:hover:border-slate-600',
               disabled && 'cursor-not-allowed opacity-60',
             )}
           >
@@ -47,8 +47,8 @@ export function EngagementTypeField({ value, onChange, disabled }: Props) {
                 'h-3.5 w-3.5 shrink-0',
                 isActive
                   ? opt.id === 'outstaff'
-                    ? 'text-blue-600'
-                    : 'text-amber-600'
+                    ? 'text-blue-600 dark:text-blue-400'
+                    : 'text-amber-600 dark:text-amber-400'
                   : 'text-muted-foreground',
               )}
               strokeWidth={2}

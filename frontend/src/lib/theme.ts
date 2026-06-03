@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { usePreferencesStore, type ThemeMode } from '@/stores/preferences';
 
 // Применение темы оформления. Источник истины — preferences-стор (localStorage).
@@ -40,4 +41,20 @@ export function initTheme(): void {
       applyTheme('system');
     }
   });
+}
+
+/**
+ * Принудительно держать светлую тему, пока компонент смонтирован (экраны до
+ * авторизации — логин, активация по инвайту). При размонтировании возвращает
+ * тему по пользовательским предпочтениям.
+ */
+export function useForceLightTheme(): void {
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.remove('dark');
+    root.style.colorScheme = 'light';
+    return () => {
+      applyTheme(usePreferencesStore.getState().theme);
+    };
+  }, []);
 }

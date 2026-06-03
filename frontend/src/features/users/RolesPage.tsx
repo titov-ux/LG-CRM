@@ -46,10 +46,14 @@ import {
 } from '@/features/permissions/hooks';
 
 const ROLE_BADGE_CLASS: Record<Role, string> = {
-  admin: 'bg-rose-100 text-rose-700 hover:bg-rose-100',
-  account_manager: 'bg-violet-100 text-violet-700 hover:bg-violet-100',
-  recruiter: 'bg-emerald-100 text-emerald-700 hover:bg-emerald-100',
-  viewer: 'bg-slate-100 text-slate-700 hover:bg-slate-100',
+  admin:
+    'bg-rose-100 text-rose-700 hover:bg-rose-100 dark:bg-rose-950/40 dark:text-rose-300 dark:hover:bg-rose-950/40',
+  account_manager:
+    'bg-violet-100 text-violet-700 hover:bg-violet-100 dark:bg-violet-950/40 dark:text-violet-300 dark:hover:bg-violet-950/40',
+  recruiter:
+    'bg-emerald-100 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-950/40',
+  viewer:
+    'bg-slate-100 text-slate-700 hover:bg-slate-100 dark:bg-slate-800/60 dark:text-slate-300 dark:hover:bg-slate-800/60',
 };
 
 const ROLES_ORDER: Role[] = ['admin', 'account_manager', 'recruiter', 'viewer'];
@@ -290,7 +294,7 @@ export function RolesPage() {
                     <TableCell className="text-center">
                       {u.isActive ? (
                         <div className="flex items-center justify-center gap-2">
-                          <Badge variant="secondary" className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100">
+                          <Badge variant="secondary" className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-950/40">
                             Активен
                           </Badge>
                           <Switch
@@ -300,7 +304,7 @@ export function RolesPage() {
                           />
                         </div>
                       ) : (
-                        <Badge variant="secondary" className="bg-amber-100 text-amber-800 hover:bg-amber-100">
+                        <Badge variant="secondary" className="bg-amber-100 text-amber-800 hover:bg-amber-100 dark:bg-amber-950/40 dark:text-amber-300 dark:hover:bg-amber-950/40">
                           Не активирован
                         </Badge>
                       )}

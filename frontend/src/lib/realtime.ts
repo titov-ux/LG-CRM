@@ -312,6 +312,87 @@ function openSocket(): void {
   });
 }
 
+/** Отправить сообщение на сервер, если сокет открыт. Возвращает успех. */
+export function sendRealtime(payload: Record<string, unknown>): boolean {
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    try {
+      socket.send(JSON.stringify(payload));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+// --- activity tracking (Этап 3 учёта времени) ------------------------------
+// «Активное» время = вкладка видима И было взаимодействие. Раз в
+// ACTIVITY_PING_MS, если оба условия выполнены, шлём `{type:'activity'}`.
+// Сервер сам считает дельты и дедуплицирует вкладки (см. record_activity).
+
+const ACTIVITY_PING_MS = 30_000;
+// Считаем «idle», если взаимодействия не было дольше этого порога.
+const IDLE_TIMEOUT_MS = 120_000;
+const ACTIVITY_EVENTS = [
+  'pointerdown',
+  'pointermove',
+  'keydown',
+  'wheel',
+  'scroll',
+  'touchstart',
+] as const;
+
+let lastInteraction = 0;
+let activityTimer: ReturnType<typeof setInterval> | null = null;
+let activityAttached = false;
+
+function markInteraction(): void {
+  lastInteraction = Date.now();
+}
+
+function activityTick(): void {
+  if (typeof document === 'undefined') return;
+  if (document.visibilityState !== 'visible') return;
+  if (Date.now() - lastInteraction >= IDLE_TIMEOUT_MS) return;
+  sendRealtime({ type: 'activity' });
+}
+
+function onVisibilityChange(): void {
+  if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+    markInteraction();
+    activityTick();
+  }
+}
+
+function startActivityTracking(): void {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return;
+  if (activityAttached) return;
+  activityAttached = true;
+  lastInteraction = Date.now(); // старт канала = считаем активным
+  for (const ev of ACTIVITY_EVENTS) {
+    window.addEventListener(ev, markInteraction, { passive: true });
+  }
+  document.addEventListener('visibilitychange', onVisibilityChange);
+  activityTimer = setInterval(activityTick, ACTIVITY_PING_MS);
+}
+
+function stopActivityTracking(): void {
+  if (!activityAttached) return;
+  activityAttached = false;
+  if (typeof window !== 'undefined') {
+    for (const ev of ACTIVITY_EVENTS) {
+      window.removeEventListener(ev, markInteraction);
+    }
+  }
+  if (typeof document !== 'undefined') {
+    document.removeEventListener('visibilitychange', onVisibilityChange);
+  }
+  if (activityTimer) {
+    clearInterval(activityTimer);
+    activityTimer = null;
+  }
+}
+
 /** Запустить realtime-канал. Идемпотентно. */
 export function startRealtime(tokenFactory: () => string | null): void {
   currentTokenFactory = tokenFactory;
@@ -323,6 +404,7 @@ export function startRealtime(tokenFactory: () => string | null): void {
   }
   started = true;
   openSocket();
+  startActivityTracking();
 }
 
 /** Полностью остановить и закрыть. Дёргается на logout. */
@@ -339,5 +421,6 @@ export function stopRealtime(): void {
     /* ignore */
   }
   socket = null;
+  stopActivityTracking();
   setPresenceSnapshot([]);
 }

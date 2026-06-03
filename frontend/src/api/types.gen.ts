@@ -3545,6 +3545,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/analytics/worklog/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Учёт времени — суммарное время по сотрудникам за период
+         * @description admin и account_manager видят всех (или конкретного userId); прочие роли — только себя (чужой userId → 403).
+         */
+        get: {
+            parameters: {
+                query?: {
+                    from?: string;
+                    to?: string;
+                    userId?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description WorklogSummaryResponse */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WorklogSummaryResponse"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/analytics/worklog/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Учёт времени — сырые интервалы пользователя за период */
+        get: {
+            parameters: {
+                query?: {
+                    from?: string;
+                    to?: string;
+                    userId?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Список интервалов */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WorklogSession"][];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/files/presign": {
         parameters: {
             query?: never;
@@ -5451,6 +5536,34 @@ export interface components {
         ClientPerformanceResponse: {
             items: components["schemas"]["ClientMetric"][];
             period: components["schemas"]["PeriodWindow"];
+        };
+        /** @enum {string} */
+        WorkSessionEndReason: "disconnect" | "sweep" | "server_shutdown" | "reconcile";
+        WorklogUserSummary: {
+            userId: components["schemas"]["UUID"];
+            fullName: string;
+            totalSeconds: number;
+            totalActiveSeconds: number;
+            sessionsCount: number;
+        };
+        WorklogSummaryResponse: {
+            /** Format: date-time */
+            from: string;
+            /** Format: date-time */
+            to: string;
+            items: components["schemas"]["WorklogUserSummary"][];
+        };
+        WorklogSession: {
+            id: components["schemas"]["UUID"];
+            userId?: components["schemas"]["UUID"] | null;
+            /** Format: date-time */
+            startedAt: string;
+            /** Format: date-time */
+            lastHeartbeatAt: string;
+            /** Format: date-time */
+            endedAt?: string | null;
+            endReason?: components["schemas"]["WorkSessionEndReason"] | null;
+            durationSeconds?: number | null;
         };
         /** @enum {string} */
         FileEntityType: "candidate" | "vacancy" | "client" | "contact" | "document";

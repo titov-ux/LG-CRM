@@ -4,6 +4,7 @@ import {
   type PeriodParams,
   type SummaryParams,
   type TrendsParams,
+  type WorklogParams,
 } from '@/api/analytics';
 
 export const analyticsKeys = {
@@ -18,6 +19,10 @@ export const analyticsKeys = {
     ['analytics', 'recruiter-performance', p] as const,
   clientPerformance: (p: PeriodParams = {}) =>
     ['analytics', 'client-performance', p] as const,
+  worklogSummary: (p: WorklogParams = {}) =>
+    ['analytics', 'worklog-summary', p] as const,
+  worklogSessions: (p: WorklogParams = {}) =>
+    ['analytics', 'worklog-sessions', p] as const,
 };
 
 export function useSummary(params: SummaryParams = {}) {
@@ -80,5 +85,24 @@ export function useClientPerformance(params: PeriodParams = {}) {
   return useQuery({
     queryKey: analyticsKeys.clientPerformance(params),
     queryFn: () => analyticsApi.clientPerformance(params),
+  });
+}
+
+export function useWorklogSummary(params: WorklogParams = {}, enabled = true) {
+  return useQuery({
+    queryKey: analyticsKeys.worklogSummary(params),
+    queryFn: () => analyticsApi.worklogSummary(params),
+    enabled,
+  });
+}
+
+export function useWorklogSessions(
+  params: WorklogParams = {},
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: analyticsKeys.worklogSessions(params),
+    queryFn: () => analyticsApi.worklogSessions(params),
+    enabled,
   });
 }

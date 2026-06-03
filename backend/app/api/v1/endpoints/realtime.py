@@ -15,6 +15,7 @@ HB-цикл этого WS продлевает TTL соединения в Redis
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import uuid
 from typing import Any
@@ -27,6 +28,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import decode_token
 from app.db.session import SessionLocal
 from app.modules.users.models import User
+from app.modules.analytics import worklog_service
+from app.modules.analytics.worklog_models import WorkSessionEndReason
 from app.realtime.bus import get_bus
 from app.realtime.events import publish_user_presence_event
 from app.realtime.presence import get_presence_store
@@ -99,6 +102,10 @@ async def events(
     )
     if became_online:
         publish_user_presence_event(user_id=user.id, online=True)
+        # Открываем рабочую сессию учёта времени. became_online гарантирует,
+        # что это «первый» коннект юзера; повторные вкладки сюда не попадут.
+        # Сервис идемпотентен и не бросает наружу.
+        await worklog_service.open_session(user.id)
 
     async def _pump_events() -> None:
         # Фильтрация по audience: если в событии явно перечислена аудитория
@@ -142,6 +149,9 @@ async def events(
                     logger.exception(
                         "realtime: presence heartbeat failed (continuing)"
                     )
+                # Продлеваем last_heartbeat_at рабочей сессии тем же тиком —
+                # по нему «повисшие» сессии закроются честным временем.
+                await worklog_service.touch(user_id_str)
         except WebSocketDisconnect:
             raise
         except Exception:
@@ -149,12 +159,19 @@ async def events(
             raise
 
     async def _drain_incoming() -> None:
-        # Мы не ждём от клиента полезной нагрузки, но обязаны читать сообщения,
-        # иначе библиотека не заметит отключения. Любой получённый текст
-        # игнорируем (можно использовать как «client pong», тоже норм).
+        # Обязаны читать сообщения, иначе библиотека не заметит отключения.
+        # Клиент шлёт `{"type":"activity"}`, когда вкладка видима и есть
+        # взаимодействие (Этап 3 учёта времени). По нему накапливаем активное
+        # время сессии. Всё прочее игнорируем (в т.ч. «client pong»).
         try:
             while True:
-                await websocket.receive_text()
+                raw = await websocket.receive_text()
+                try:
+                    msg = json.loads(raw)
+                except (ValueError, TypeError):
+                    continue
+                if isinstance(msg, dict) and msg.get("type") == "activity":
+                    await worklog_service.record_activity(user_id_str)
         except WebSocketDisconnect:
             raise
 
@@ -185,6 +202,10 @@ async def events(
             became_offline = False
         if became_offline:
             publish_user_presence_event(user_id=user.id, online=False)
+            # Последний коннект юзера пропал — закрываем рабочую сессию «сейчас».
+            await worklog_service.close_session(
+                user.id, reason=WorkSessionEndReason.disconnect
+            )
         try:
             await websocket.close()
         except Exception:

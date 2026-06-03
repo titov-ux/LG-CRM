@@ -20,6 +20,7 @@ import type { LucideIcon } from 'lucide-react';
 import { Link, useRouterState } from '@tanstack/react-router';
 import { cn } from '@/lib/utils';
 import { useNotifications } from '@/features/notifications/hooks';
+import { useAuthStore } from '@/stores/auth';
 import { AppInfoPopover } from './AppInfoPopover';
 
 interface NavItem {
@@ -29,6 +30,8 @@ interface NavItem {
   badge?: number;
   tag?: string;
   tagHint?: string;
+  /** Пункт виден только администраторам. */
+  adminOnly?: boolean;
 }
 
 interface NavGroup {
@@ -60,7 +63,7 @@ const GROUPS: NavGroup[] = [
     label: 'Прочее',
     items: [
       { to: '/notifications', label: 'Уведомления', icon: Bell },
-      { to: '/analytics', label: 'Аналитика', icon: TrendingUp },
+      { to: '/analytics', label: 'Аналитика', icon: TrendingUp, adminOnly: true },
       { to: '/calculator', label: 'Калькулятор', icon: Calculator },
       { to: '/resume-formatter', label: 'Оформление резюме', icon: FileUp },
       { to: '/audit', label: 'Журнал действий', icon: Activity },
@@ -79,6 +82,7 @@ export function Sidebar() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const { data: notifications } = useNotifications();
   const unreadCount = notifications?.filter((n) => !n.read).length ?? 0;
+  const isAdmin = useAuthStore((s) => s.user?.role) === 'admin';
 
   return (
     <aside className="flex w-[232px] shrink-0 flex-col border-r bg-muted/30">
@@ -107,7 +111,9 @@ export function Sidebar() {
               </div>
             )}
             <ul className="space-y-px">
-              {group.items.map((item) => {
+              {group.items
+                .filter((item) => !item.adminOnly || isAdmin)
+                .map((item) => {
                 const Icon = item.icon;
                 const active = pathname.startsWith(item.to);
                 const badge =

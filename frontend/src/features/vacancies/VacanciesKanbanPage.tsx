@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -18,9 +18,15 @@ import type {
   Priority,
   VacancyStatus,
 } from '@/api/types';
-import { vacancyStatuses } from '@/mocks/db/vacancies';
+import { vacancyStatuses, isFinalVacancyStatus } from '@/mocks/db/vacancies';
 import { vacanciesApi } from '@/api/vacancies';
-import { useVacancies, useReorderVacanciesKanban, vacancyKeys } from './hooks';
+import {
+  useVacancies,
+  useReorderVacanciesKanban,
+  useChangeVacancyStatus,
+  vacancyKeys,
+} from './hooks';
+import { FinalStatusCommentDialog } from './FinalStatusCommentDialog';
 import { useClients } from '@/features/clients/hooks';
 import { useUsers } from '@/features/users/hooks';
 import { VacancyKanbanCard } from './VacancyKanbanCard';
@@ -89,7 +95,14 @@ export function VacanciesKanbanPage() {
   const { data: usersData } = useUsers();
   const { data: clientsData } = useClients();
   const reorder = useReorderVacanciesKanban();
+  const changeStatus = useChangeVacancyStatus();
   const queryClient = useQueryClient();
+
+  // Перетаскивание в финальную колонку (Закрыта / Закрыта успешно) требует
+  // комментарий — копим целевой статус и id вакансии до подтверждения в диалоге.
+  const [finalDrop, setFinalDrop] = useState<{ id: string; status: VacancyStatus; title?: string } | null>(
+    null,
+  );
 
   const userMap = useMemo(() => new Map((usersData ?? []).map((u) => [u.id, u])), [usersData]);
   const clientMap = useMemo(
@@ -336,6 +349,13 @@ export function VacanciesKanbanPage() {
               const original = items.find((x) => x.id === u.id);
               return original && original.status !== u.status;
             });
+            // Финальный статус требует комментария и недоступен через
+            // reorder-эндпоинт — открываем диалог и идём через change_status.
+            if (statusChanged && isFinalVacancyStatus(statusChanged.status)) {
+              const v = items.find((x) => x.id === statusChanged.id);
+              setFinalDrop({ id: statusChanged.id, status: statusChanged.status, title: v?.title });
+              return;
+            }
             reorder.mutate(updates, {
               onSuccess: () => {
                 if (statusChanged) {
@@ -356,6 +376,28 @@ export function VacanciesKanbanPage() {
           )}
         />
       )}
+
+      <FinalStatusCommentDialog
+        open={finalDrop !== null}
+        targetStatus={finalDrop?.status ?? null}
+        pending={changeStatus.isPending}
+        onOpenChange={(o) => {
+          if (!o && !changeStatus.isPending) setFinalDrop(null);
+        }}
+        onConfirm={(comment) => {
+          if (!finalDrop) return;
+          changeStatus.mutate(
+            { id: finalDrop.id, status: finalDrop.status, comment },
+            {
+              onSuccess: (v) => {
+                setFinalDrop(null);
+                toast.success(`Вакансия «${v.title}» — статус изменён`);
+              },
+              onError: () => toast.error('Не удалось изменить статус'),
+            },
+          );
+        }}
+      />
     </div>
   );
 }

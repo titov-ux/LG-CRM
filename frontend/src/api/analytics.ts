@@ -215,6 +215,46 @@ export interface ClientPerformanceResponse {
   period: PeriodWindow;
 }
 
+// ─── Worklog (учёт времени в системе) ─────────────────────────────────
+
+export type WorkSessionEndReason =
+  | 'disconnect'
+  | 'sweep'
+  | 'server_shutdown'
+  | 'reconcile';
+
+export interface WorklogUserSummary {
+  userId: string;
+  fullName: string;
+  totalSeconds: number;
+  /** Активное время (вкладка видима + взаимодействие), пропорц. окну. */
+  totalActiveSeconds: number;
+  sessionsCount: number;
+}
+
+export interface WorklogSummaryResponse {
+  from: string;
+  to: string;
+  items: WorklogUserSummary[];
+}
+
+export interface WorklogSession {
+  id: string;
+  userId: string | null;
+  startedAt: string;
+  lastHeartbeatAt: string;
+  endedAt: string | null;
+  endReason: WorkSessionEndReason | null;
+  durationSeconds: number | null;
+}
+
+export interface WorklogParams {
+  from?: string;
+  to?: string;
+  /** Конкретный сотрудник; для непривилегированных ролей игнорируется бэком. */
+  userId?: string;
+}
+
 function toSearchParams(obj: Record<string, unknown>): URLSearchParams {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(obj)) {
@@ -268,4 +308,16 @@ export const analyticsApi = {
         searchParams: toSearchParams(params as Record<string, unknown>),
       })
       .json<ClientPerformanceResponse>(),
+  worklogSummary: (params: WorklogParams = {}) =>
+    api
+      .get('analytics/worklog/summary', {
+        searchParams: toSearchParams(params as Record<string, unknown>),
+      })
+      .json<WorklogSummaryResponse>(),
+  worklogSessions: (params: WorklogParams = {}) =>
+    api
+      .get('analytics/worklog/sessions', {
+        searchParams: toSearchParams(params as Record<string, unknown>),
+      })
+      .json<WorklogSession[]>(),
 };

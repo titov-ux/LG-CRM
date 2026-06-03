@@ -5,14 +5,16 @@
 """
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import ApiError
 from app.db.session import get_db
-from app.modules.analytics import service
+from app.modules.analytics import service, worklog_service
 from app.modules.analytics.schemas import (
     AttentionResponse,
     ChatStats,
@@ -25,9 +27,21 @@ from app.modules.analytics.schemas import (
     TimeToHireResponse,
     TrendsResponse,
 )
+from app.modules.analytics.worklog_schemas import (
+    WorklogSession,
+    WorklogSummaryResponse,
+    WorklogUserSummary,
+)
 from app.modules.chat.analytics import chat_stats
 from app.modules.auth.dependencies import get_current_user
-from app.modules.users.models import User
+from app.modules.users.models import Role, User
+
+# Учёт времени — раздел только для администраторов.
+def _ensure_worklog_admin(current: User) -> None:
+    if current.role != Role.admin:
+        raise ApiError(
+            403, "forbidden", "Учёт времени доступен только администраторам"
+        )
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -183,3 +197,53 @@ async def chat_metrics(
 ) -> ChatStats:
     data = await chat_stats(db)
     return ChatStats.model_validate(data)
+
+
+# === Учёт времени сотрудников (work_sessions) — только администраторы =======
+
+
+@router.get(
+    "/worklog/summary",
+    response_model=WorklogSummaryResponse,
+    summary="Учёт времени: суммарное время по сотрудникам за период (admin)",
+)
+async def worklog_summary(
+    from_dt: datetime | None = Query(None, alias="from"),
+    to_dt: datetime | None = Query(None, alias="to"),
+    user_id: uuid.UUID | None = Query(None, alias="userId"),
+    current: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> WorklogSummaryResponse:
+    _ensure_worklog_admin(current)
+    period = service.resolve_period(from_dt, to_dt)
+    user_ids = None if user_id is None else [user_id]
+    rows = await worklog_service.summary(
+        db, from_dt=period.from_dt, to_dt=period.to_dt, user_ids=user_ids
+    )
+    return WorklogSummaryResponse(
+        from_dt=period.from_dt,
+        to_dt=period.to_dt,
+        items=[WorklogUserSummary.model_validate(r) for r in rows],
+    )
+
+
+@router.get(
+    "/worklog/sessions",
+    response_model=list[WorklogSession],
+    summary="Учёт времени: сырые интервалы пользователя за период (admin)",
+)
+async def worklog_sessions(
+    from_dt: datetime | None = Query(None, alias="from"),
+    to_dt: datetime | None = Query(None, alias="to"),
+    user_id: uuid.UUID | None = Query(None, alias="userId"),
+    current: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[WorklogSession]:
+    _ensure_worklog_admin(current)
+    period = service.resolve_period(from_dt, to_dt)
+    # Без явного userId админ смотрит свои интервалы (список «по всем» бессмыслен).
+    target = user_id or current.id
+    rows = await worklog_service.sessions(
+        db, user_id=target, from_dt=period.from_dt, to_dt=period.to_dt
+    )
+    return [WorklogSession.model_validate(r) for r in rows]

@@ -40,7 +40,8 @@ import { VacancyForm, type VacancyFormValues } from './VacancyForm';
 import { useClients } from '@/features/clients/hooks';
 import { useUsers } from '@/features/users/hooks';
 import { useCandidates } from '@/features/candidates/hooks';
-import { vacancyStatuses } from '@/mocks/db/vacancies';
+import { vacancyStatuses, isFinalVacancyStatus } from '@/mocks/db/vacancies';
+import { FinalStatusCommentDialog } from './FinalStatusCommentDialog';
 import { formatDateRu, formatMoneyRub } from '@/lib/utils';
 import type { Candidate, UUID, Vacancy } from '@/api/types';
 import { useAuthStore } from '@/stores/auth';
@@ -196,6 +197,8 @@ export function VacancyCardPage() {
   const [attachOpen, setAttachOpen] = useState(false);
   const [activityExpanded, setActivityExpanded] = useState(false);
   const [downloadingResumes, setDownloadingResumes] = useState(false);
+  // Целевой финальный статус, для которого открыт диалог комментария.
+  const [finalStatusTarget, setFinalStatusTarget] = useState<VacancyStatus | null>(null);
   // ID кандидата, для которого сейчас крутится AI-улучшение. Один за раз —
   // чтобы не наплодить параллельных запросов к Yandex AI (квоты, цена).
   const [improvingCandidateId, setImprovingCandidateId] = useState<string | null>(null);
@@ -238,15 +241,28 @@ export function VacancyCardPage() {
   const hiddenActivityCount = Math.max(activityItems.length - ACTIVITY_PREVIEW_LIMIT, 0);
   const visibleActivity = activityExpanded ? activityItems : activityItems.slice(0, ACTIVITY_PREVIEW_LIMIT);
 
-  const handleStatusChange = (status: VacancyStatus) => {
-    if (!vacancy || status === vacancy.status) return;
+  const commitStatusChange = (status: VacancyStatus, comment?: string) => {
+    if (!vacancy) return;
     changeStatus.mutate(
-      { id: vacancy.id, status },
+      { id: vacancy.id, status, comment },
       {
-        onSuccess: (v) => toast.success(`Вакансия «${v.title}» — статус изменён`),
+        onSuccess: (v) => {
+          setFinalStatusTarget(null);
+          toast.success(`Вакансия «${v.title}» — статус изменён`);
+        },
         onError: () => toast.error('Не удалось изменить статус'),
       },
     );
+  };
+
+  const handleStatusChange = (status: VacancyStatus) => {
+    if (!vacancy || status === vacancy.status) return;
+    // Финальные статусы требуют обязательного комментария — открываем диалог.
+    if (isFinalVacancyStatus(status)) {
+      setFinalStatusTarget(status);
+      return;
+    }
+    commitStatusChange(status);
   };
 
   const handleShare = async () => {
@@ -863,6 +879,18 @@ export function VacancyCardPage() {
         )}
       </SheetContent>
     </Sheet>
+
+    <FinalStatusCommentDialog
+      open={finalStatusTarget !== null}
+      targetStatus={finalStatusTarget}
+      pending={changeStatus.isPending}
+      onOpenChange={(o) => {
+        if (!o && !changeStatus.isPending) setFinalStatusTarget(null);
+      }}
+      onConfirm={(comment) => {
+        if (finalStatusTarget) commitStatusChange(finalStatusTarget, comment);
+      }}
+    />
 
     <Dialog open={deleteOpen} onOpenChange={(o) => !deleteVacancy.isPending && setDeleteOpen(o)}>
       <DialogContent className="max-w-md">

@@ -18,6 +18,15 @@ export const vacancyStatuses: VacancyStatusDescriptor[] = [
   { id: 'paused', label: 'На паузе', color: '#cbd5e1' },
 ];
 
+// Финальные статусы — перевод в них на бэке требует обязательного комментария
+// (см. backend/app/modules/vacancies/transitions.py: FINAL_STATUSES). Зеркалим
+// здесь, чтобы UI запрашивал комментарий, а не падал с 422 comment_required.
+export const FINAL_VACANCY_STATUSES: readonly VacancyStatus[] = ['closed_success', 'closed'];
+
+export function isFinalVacancyStatus(status: VacancyStatus): boolean {
+  return FINAL_VACANCY_STATUSES.includes(status);
+}
+
 // ВНИМАНИЕ: `candidatesCount` в этом seed всегда равно 0.
 // Реальное значение поля считается на стороне MSW при каждом чтении
 // вакансий из candidatesDb (см. withCandidatesCount в mocks/handlers.ts).

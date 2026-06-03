@@ -43,6 +43,7 @@ from app.modules.calendar.models import (  # noqa: F401
     CalendarEvent,
     CalendarEventAttendee,
 )
+from app.modules.analytics.worklog_models import WorkSession  # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:

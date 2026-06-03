@@ -17,6 +17,8 @@ from app.core.config import get_settings
 from app.realtime.bus import get_bus
 from app.realtime.events import current_client_id_var, publish_user_presence_event
 from app.realtime.presence import start_sweeper, stop_sweeper
+from app.modules.analytics import worklog_service
+from app.modules.analytics.worklog_models import WorkSessionEndReason
 from app.modules.calendar.reminders import start_reminders, stop_reminders
 from app.modules.integrations import telegram_service
 # Импорт регистрирует SQLAlchemy-слушатели after_commit/after_rollback,
@@ -74,6 +76,24 @@ async def _lifespan(_app: FastAPI):
         # Sweeper зачистил все соединения юзера — публикуем offline всем
         # подписчикам (это будет получено фронтами через тот же realtime-bus).
         publish_user_presence_event(user_id=user_id, online=False)
+        # И закрываем рабочую сессию учёта времени. use_heartbeat=True —
+        # ended_at ставится по last_heartbeat_at, а не «сейчас», чтобы не
+        # засчитать мёртвый TTL-хвост после падения воркера.
+        await worklog_service.close_session(
+            user_id,
+            reason=WorkSessionEndReason.sweep,
+            use_heartbeat=True,
+        )
+
+    # Реконсиляция: закрываем «повисшие» сессии от предыдущего запуска
+    # (хард-рестарт backend без disconnect/sweep). Закрываем только устаревшие —
+    # живые сессии других воркеров (свежий heartbeat) не трогаем.
+    try:
+        closed = await worklog_service.reconcile_stale_open_sessions()
+        if closed:
+            logger.info("worklog: reconciled %d stale open session(s)", closed)
+    except Exception:
+        logger.exception("worklog: failed to reconcile open sessions (continuing)")
 
     try:
         await start_sweeper(on_offline=_on_user_offlined)

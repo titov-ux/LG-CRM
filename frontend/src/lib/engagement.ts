@@ -30,16 +30,20 @@ export const ENGAGEMENT_META: Record<EngagementType, EngagementMeta> = {
     label: 'Аутстафф',
     short: 'АФ',
     accentClass: 'bg-blue-500',
-    badgeClass: 'bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200/70',
-    chipClass: 'bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200/70',
+    badgeClass:
+      'bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200/70 dark:bg-blue-950/40 dark:text-blue-300 dark:ring-blue-900/60',
+    chipClass:
+      'bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200/70 dark:bg-blue-950/40 dark:text-blue-300 dark:ring-blue-900/60',
     borderColor: '#3b82f6',
   },
   agency: {
     label: 'Агентство',
     short: 'КА',
     accentClass: 'bg-amber-500',
-    badgeClass: 'bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-200/70',
-    chipClass: 'bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-200/70',
+    badgeClass:
+      'bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-200/70 dark:bg-amber-950/40 dark:text-amber-300 dark:ring-amber-900/60',
+    chipClass:
+      'bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-200/70 dark:bg-amber-950/40 dark:text-amber-300 dark:ring-amber-900/60',
     borderColor: '#f59e0b',
   },
 };

@@ -10,10 +10,10 @@ interface Props {
 export function DaysBadge({ days, className }: Props) {
   const color =
     days < 7
-      ? 'bg-emerald-100 text-emerald-700'
+      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
       : days <= 14
-        ? 'bg-amber-100 text-amber-700'
-        : 'bg-red-100 text-red-700';
+        ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
+        : 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300';
   return (
     <span
       className={cn('tnum inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium', color, className)}

@@ -2,8 +2,14 @@ import type { Priority } from '@/api/types';
 import { cn } from '@/lib/utils';
 
 const STYLES: Record<Priority, { label: string; className: string }> = {
-  urgent: { label: 'Срочно', className: 'bg-red-100 text-red-700' },
-  high: { label: 'Высокий', className: 'bg-amber-100 text-amber-700' },
+  urgent: {
+    label: 'Срочно',
+    className: 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300',
+  },
+  high: {
+    label: 'Высокий',
+    className: 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300',
+  },
   medium: { label: 'Средний', className: 'bg-muted text-muted-foreground' },
   low: { label: 'Низкий', className: 'bg-muted text-muted-foreground' },
 };

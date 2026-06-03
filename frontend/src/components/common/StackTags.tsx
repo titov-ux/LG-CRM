@@ -24,7 +24,7 @@ export function StackTags({
   const rest = max ? stack.length - items.length : 0;
   const base =
     variant === 'accent'
-      ? 'bg-indigo-50 text-indigo-700'
+      ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300'
       : 'bg-muted text-muted-foreground';
   return (
     <div

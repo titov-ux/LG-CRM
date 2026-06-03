@@ -70,6 +70,56 @@ async def test_open_session_is_idempotent(db, recruiter_user) -> None:
 
 
 @pytest.mark.asyncio
+async def test_open_session_resumes_recent_session(db, recruiter_user) -> None:
+    now = _utcnow()
+    # Сессия закрылась 30с назад (реконнект-шторм / сетевой блип), с активом.
+    await _seed(
+        db,
+        recruiter_user.id,
+        started_at=now - timedelta(minutes=10),
+        last_heartbeat_at=now - timedelta(seconds=30),
+        ended_at=now - timedelta(seconds=30),
+        active_seconds=120,
+    )
+    await worklog_service.open_session(recruiter_user.id, db=db)
+
+    rows = (
+        await db.execute(
+            select(WorkSession).where(WorkSession.user_id == recruiter_user.id)
+        )
+    ).scalars().all()
+    # Новой строки не появилось — реанимировали прошлую.
+    assert len(rows) == 1
+    assert rows[0].ended_at is None
+    # Накопленное активное время сохранилось.
+    assert rows[0].active_seconds == 120
+
+
+@pytest.mark.asyncio
+async def test_open_session_new_after_grace(db, recruiter_user) -> None:
+    now = _utcnow()
+    # Прошлая сессия закрылась давно (5 минут > grace 120с) — это новый заход.
+    await _seed(
+        db,
+        recruiter_user.id,
+        started_at=now - timedelta(hours=2),
+        last_heartbeat_at=now - timedelta(minutes=5),
+        ended_at=now - timedelta(minutes=5),
+        active_seconds=300,
+    )
+    await worklog_service.open_session(recruiter_user.id, db=db)
+
+    rows = (
+        await db.execute(
+            select(WorkSession).where(WorkSession.user_id == recruiter_user.id)
+        )
+    ).scalars().all()
+    # Прошлая осталась закрытой + создана новая открытая.
+    assert len(rows) == 2
+    assert await _open_count(db, recruiter_user.id) == 1
+
+
+@pytest.mark.asyncio
 async def test_touch_updates_heartbeat(db, recruiter_user) -> None:
     await worklog_service.open_session(recruiter_user.id, db=db)
     later = _utcnow() + timedelta(minutes=3)

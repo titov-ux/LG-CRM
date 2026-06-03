@@ -74,14 +74,25 @@ async def _writable(db: AsyncSession | None) -> AsyncIterator[AsyncSession]:
 # === Запись =================================================================
 
 
+# Окно «возобновления» сессии. Если пользователь переподключился в течение
+# этого времени после закрытия прошлой сессии (сетевой блип, HMR в dev,
+# сон/пробуждение, кратковременный реконнект-шторм) — реанимируем прошлую
+# сессию, а не плодим новую. Иначе один час работы превращается в сотни
+# 20-секундных сессий, и активное время не успевает накопиться (каждая новая
+# сессия начинает учёт активности заново). Должно быть ≳ presence-TTL (120с).
+_RESUME_GRACE_SECONDS = 120
+
+
 async def open_session(
     user_id: uuid.UUID | str, *, db: AsyncSession | None = None
 ) -> None:
     """Открыть рабочую сессию (became_online).
 
-    INSERT ... ON CONFLICT DO NOTHING по частичному unique-индексу
-    `uq_work_sessions_open` — если открытая сессия уже есть (гонка вкладок/
-    воркеров), второй INSERT просто ничего не сделает.
+    Сначала пытаемся **возобновить** недавно закрытую сессию (в пределах
+    `_RESUME_GRACE_SECONDS`) — это схлопывает реконнект-штормы в одну сессию и
+    сохраняет накопленный `active_seconds`. Если возобновлять нечего — создаём
+    новую через INSERT ... ON CONFLICT DO NOTHING по частичному unique-индексу
+    `uq_work_sessions_open` (защита от гонки вкладок/воркеров).
     """
     uid = _coerce_uuid(user_id)
     if uid is None:
@@ -89,7 +100,51 @@ async def open_session(
     now = datetime.now(timezone.utc)
     try:
         async with _writable(db) as session:
-            stmt = (
+            # Если у юзера уже есть открытая сессия — ничего не делаем
+            # (became_online не должен был сработать, но подстрахуемся, чтобы
+            # не нарушить частичный unique-индекс).
+            already_open = await session.scalar(
+                select(WorkSession.id)
+                .where(
+                    WorkSession.user_id == uid,
+                    WorkSession.ended_at.is_(None),
+                )
+                .limit(1)
+            )
+            if already_open is not None:
+                return
+
+            # Самая свежая закрытая сессия в пределах grace-окна → возобновляем.
+            cutoff = now - timedelta(seconds=_RESUME_GRACE_SECONDS)
+            resumable_id = await session.scalar(
+                select(WorkSession.id)
+                .where(
+                    WorkSession.user_id == uid,
+                    WorkSession.ended_at.is_not(None),
+                    WorkSession.ended_at >= cutoff,
+                )
+                .order_by(WorkSession.ended_at.desc())
+                .limit(1)
+            )
+            if resumable_id is not None:
+                # Реанимация: снимаем ended_at, переставляем якоря на «сейчас»
+                # (чтобы offline-разрыв не засчитался в активное время), но
+                # сохраняем накопленный active_seconds.
+                await session.execute(
+                    update(WorkSession)
+                    .where(WorkSession.id == resumable_id)
+                    .values(
+                        ended_at=None,
+                        end_reason=None,
+                        duration_seconds=None,
+                        last_heartbeat_at=now,
+                        last_active_at=now,
+                    )
+                )
+                return
+
+            # Возобновлять нечего — новая сессия.
+            await session.execute(
                 pg_insert(WorkSession)
                 .values(
                     user_id=uid,
@@ -102,7 +157,6 @@ async def open_session(
                     index_where=WorkSession.ended_at.is_(None),
                 )
             )
-            await session.execute(stmt)
     except Exception:
         logger.exception("worklog: open_session failed for %s (continuing)", uid)
 

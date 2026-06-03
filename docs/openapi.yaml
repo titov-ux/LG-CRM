@@ -3074,11 +3074,18 @@ components:
         text:      { type: string }
         entityType:
           type: string
-          enum: [vacancy, candidate, client, contact, chat_message]
+          enum: [vacancy, candidate, client, contact, chat_message, event]
           nullable: true
         entityId:
           allOf: [{ $ref: '#/components/schemas/UUID' }]
           nullable: true
+        payload:
+          type: object
+          additionalProperties: true
+          description: >-
+            Доп. данные для построения ссылки-перехода. Например, у chat_message
+            entityId указывает на сообщение, а conversationId диалога лежит в
+            payload.conversationId.
         read:      { type: boolean }
         createdAt: { type: string, format: date-time }
 

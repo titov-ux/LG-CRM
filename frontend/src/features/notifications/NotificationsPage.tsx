@@ -4,6 +4,7 @@ import {
   Bell,
   CalendarRange,
   CheckCheck,
+  ChevronRight,
   Inbox,
   Search,
   Tag,
@@ -19,6 +20,7 @@ import { DateField } from '@/components/forms/DateField';
 import { EmptyState } from '@/components/common/EmptyState';
 import { FilterBar, FilterChip, MenuItem } from '@/components/common/FilterChip';
 import { useNotifications, useMarkAllRead, useMarkRead } from './hooks';
+import { useNotificationNavigate, notificationHasTarget } from './navigate';
 import { cn } from '@/lib/utils';
 import type { Notification } from '@/api/types';
 
@@ -110,6 +112,12 @@ export function NotificationsPage() {
   const { data, isLoading } = useNotifications();
   const markAll = useMarkAllRead();
   const markOne = useMarkRead();
+  const goToNotification = useNotificationNavigate();
+
+  const handleClick = (n: Notification) => {
+    if (!n.read) markOne.mutate(n.id);
+    goToNotification(n);
+  };
 
   const [filters, setFilters] = useState<Filters>(EMPTY);
   const set = <K extends keyof Filters>(k: K, v: Filters[K]) =>
@@ -309,20 +317,23 @@ export function NotificationsPage() {
         <Card className="divide-y">
           {filtered.map((n) => {
             const Icon = KIND_ICON[n.kind];
+            const hasTarget = notificationHasTarget(n);
             return (
               <button
                 key={n.id}
                 type="button"
-                onClick={() => markOne.mutate(n.id)}
+                onClick={() => handleClick(n)}
                 className={cn(
-                  'flex w-full items-start gap-3 p-4 text-left transition-colors hover:bg-muted/50',
-                  !n.read && 'bg-blue-50/40',
+                  'group flex w-full items-start gap-3 p-4 text-left transition-colors hover:bg-muted/50',
+                  !n.read && 'bg-blue-50/40 dark:bg-blue-950/25',
                 )}
               >
                 <span
                   className={cn(
                     'mt-0.5 flex h-7 w-7 items-center justify-center rounded-full',
-                    n.read ? 'bg-muted text-muted-foreground' : 'bg-blue-100 text-blue-700',
+                    n.read
+                      ? 'bg-muted text-muted-foreground'
+                      : 'bg-blue-100 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300',
                   )}
                 >
                   <Icon className="h-3.5 w-3.5" />
@@ -333,6 +344,9 @@ export function NotificationsPage() {
                     {new Date(n.createdAt).toLocaleString('ru-RU')}
                   </div>
                 </div>
+                {hasTarget && (
+                  <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground/40 transition-colors group-hover:text-muted-foreground" />
+                )}
               </button>
             );
           })}

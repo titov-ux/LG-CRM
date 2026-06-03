@@ -470,8 +470,14 @@ export interface Notification {
     | 'comment'
     | 'chat_message';
   text: string;
-  entityType?: 'vacancy' | 'candidate' | 'client' | 'contact' | 'chat_message';
+  entityType?: 'vacancy' | 'candidate' | 'client' | 'contact' | 'chat_message' | 'event';
   entityId?: UUID;
+  /**
+   * Доп. данные для построения ссылки-перехода. Например, у chat_message
+   * `entityId` указывает на сообщение, а перейти нужно в диалог — его id лежит
+   * в `payload.conversationId`.
+   */
+  payload?: Record<string, unknown>;
   read: boolean;
   createdAt: string;
 }

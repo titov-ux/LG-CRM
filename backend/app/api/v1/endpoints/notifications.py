@@ -25,6 +25,7 @@ def _to_dto(n: Notification) -> NotificationResponse:
         text=n.text_,
         entity_type=n.entity_type,
         entity_id=n.entity_id,
+        payload=n.payload or {},
         read=n.read_at is not None,
         created_at=n.created_at,
     )

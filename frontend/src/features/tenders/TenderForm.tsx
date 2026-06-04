@@ -3,7 +3,6 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
 import {
   Form,
   FormControl,
@@ -52,7 +51,6 @@ const schema = z.object({
   priority: z.enum(['low', 'medium', 'high', 'urgent']),
   accountManagerId: z.string().optional(),
   url: z.string().url('Некорректная ссылка').optional().or(z.literal('')),
-  note: z.string().optional(),
 });
 
 export type TenderFormValues = z.infer<typeof schema>;
@@ -93,7 +91,6 @@ export function TenderForm({
       priority: 'medium',
       accountManagerId: '',
       url: '',
-      note: '',
       ...defaultValues,
     },
   });
@@ -342,20 +339,6 @@ export function TenderForm({
               <FormLabel>Ссылка на закупку</FormLabel>
               <FormControl>
                 <Input placeholder="https://zakupki.gov.ru/…" {...field} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-
-        <FormField
-          control={form.control}
-          name="note"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Заметки</FormLabel>
-              <FormControl>
-                <Textarea rows={3} placeholder="Условия, риски, комментарии…" {...field} />
               </FormControl>
               <FormMessage />
             </FormItem>

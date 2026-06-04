@@ -86,7 +86,6 @@ function formToPayload(values: TenderFormValues): Partial<Tender> {
     priority: values.priority,
     accountManagerId: values.accountManagerId || null,
     url: values.url?.trim() || null,
-    note: values.note?.trim() || null,
   };
 }
 
@@ -105,7 +104,6 @@ function tenderToForm(t: Tender): Partial<TenderFormValues> {
     priority: t.priority,
     accountManagerId: t.accountManagerId ?? '',
     url: t.url ?? '',
-    note: t.note ?? '',
   };
 }
 

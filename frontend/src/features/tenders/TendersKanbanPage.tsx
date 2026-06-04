@@ -74,7 +74,6 @@ function formToPayload(values: TenderFormValues): Partial<Tender> {
     priority: values.priority,
     accountManagerId: values.accountManagerId || null,
     url: values.url?.trim() || null,
-    note: values.note?.trim() || null,
   };
 }
 

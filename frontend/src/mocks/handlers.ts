@@ -12,6 +12,8 @@ import type {
   ContactListItem,
   EventStatus,
   Notification,
+  Tender,
+  TenderStatus,
   User,
   Vacancy,
   VacancyStatus,
@@ -27,14 +29,17 @@ import {
   notificationsDb,
   permissionsMatrixDb,
   persistCandidatesDb,
+  persistTendersDb,
   persistVacanciesDb,
   resetPermissionsMatrix,
+  tendersDb,
   updatePermissionRow,
   usersDb,
   vacanciesDb,
   vacancyStatuses,
 } from './db';
 import type { Role } from '@/api/types';
+import { tenderStatuses } from '@/features/tenders/statuses';
 
 const url = (path: string) => `${API_BASE_URL}${path.startsWith('/') ? '' : '/'}${path}`;
 
@@ -213,6 +218,9 @@ function candidateStatusLabel(id: CandidateStatus): string {
 }
 function vacancyStatusLabel(id: VacancyStatus): string {
   return vacancyStatuses.find((s) => s.id === id)?.label ?? id;
+}
+function tenderStatusLabel(id: TenderStatus): string {
+  return tenderStatuses.find((s) => s.id === id)?.label ?? id;
 }
 
 // candidatesCount у вакансии — производное значение от candidatesDb.
@@ -759,6 +767,157 @@ export const handlers = [
       // candidatesCount пересчитывается на чтении — ручной декремент больше не нужен.
       persistCandidatesDb();
     }
+    return HttpResponse.json({ ok: true });
+  }),
+
+  // === Tenders ===
+  http.get(url('/tenders/transitions'), () =>
+    HttpResponse.json({
+      transitions: {
+        lead: ['evaluation', 'lost'],
+        evaluation: ['bid', 'lead', 'lost'],
+        bid: ['evaluation', 'lost', 'review'],
+        review: ['bid', 'lost', 'won'],
+        won: [],
+        lost: ['lead'],
+      },
+      finalStatuses: ['lost', 'won'],
+    }),
+  ),
+  http.put(url('/tenders/kanban-order'), async ({ request }) => {
+    const body = (await request.json()) as {
+      updates: { id: string; status: TenderStatus; kanbanOrder: number }[];
+    };
+    const before = new Map(tendersDb.map((t) => [t.id, t.status]));
+    const updated = applyKanbanReorder(tendersDb, body.updates);
+    const actorId = actorIdFromRequest(request);
+    for (const u of body.updates) {
+      const prev = before.get(u.id);
+      if (prev && prev !== u.status) {
+        pushActivity({
+          entityType: 'tender',
+          entityId: u.id,
+          actorId,
+          kind: 'status',
+          text: `Статус изменён на «${tenderStatusLabel(u.status)}»`,
+        });
+      }
+    }
+    persistTendersDb();
+    return HttpResponse.json(updated);
+  }),
+  http.get(url('/tenders'), ({ request }) => {
+    const u = new URL(request.url);
+    const search = u.searchParams.get('search')?.toLowerCase() ?? '';
+    const law = u.searchParams.get('law');
+    const priority = u.searchParams.get('priority');
+    const platform = u.searchParams.get('platform');
+    const accountManagerId = u.searchParams.get('accountManagerId');
+    const items = tendersDb.filter((t) => {
+      if (
+        search &&
+        !t.title.toLowerCase().includes(search) &&
+        !t.customer.toLowerCase().includes(search)
+      )
+        return false;
+      if (law && t.law !== law) return false;
+      if (priority && t.priority !== priority) return false;
+      if (platform && t.platform !== platform) return false;
+      if (accountManagerId && t.accountManagerId !== accountManagerId) return false;
+      return true;
+    });
+    return HttpResponse.json(
+      paginate(
+        sortByKanbanOrder(items),
+        u.searchParams.get('page'),
+        u.searchParams.get('pageSize'),
+      ),
+    );
+  }),
+  http.post(url('/tenders'), async ({ request }) => {
+    const body = (await request.json()) as Partial<Tender>;
+    const created: Tender = {
+      id: `t-${Date.now()}`,
+      title: body.title ?? 'Без названия',
+      customer: body.customer ?? '',
+      registryNumber: body.registryNumber ?? null,
+      platform: body.platform ?? null,
+      law: body.law ?? 'fz44',
+      nmck: body.nmck ?? 0,
+      ourPrice: body.ourPrice ?? null,
+      securityAmount: body.securityAmount ?? null,
+      submissionDeadline: body.submissionDeadline ?? null,
+      auctionDate: body.auctionDate ?? null,
+      status: body.status ?? 'lead',
+      priority: body.priority ?? 'medium',
+      accountManagerId: body.accountManagerId ?? null,
+      daysInStatus: 0,
+      kanbanOrder: nextKanbanOrder(tendersDb, body.status ?? 'lead'),
+      url: body.url ?? null,
+      note: body.note ?? null,
+    };
+    tendersDb.unshift(created);
+    persistTendersDb();
+    pushActivity({
+      entityType: 'tender',
+      entityId: created.id,
+      actorId: actorIdFromRequest(request),
+      kind: 'create',
+      text: 'Тендер добавлен в систему',
+    });
+    return HttpResponse.json(created, { status: 201 });
+  }),
+  http.get(url('/tenders/:id'), ({ params }) => {
+    const t = tendersDb.find((x) => x.id === params.id);
+    return t ? HttpResponse.json(t) : new HttpResponse(null, { status: 404 });
+  }),
+  http.get(url('/tenders/:id/activity'), ({ params }) =>
+    HttpResponse.json(
+      activityDb
+        .filter((a) => a.entityType === 'tender' && a.entityId === params.id)
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
+    ),
+  ),
+  http.patch(url('/tenders/:id/status'), async ({ params, request }) => {
+    const body = (await request.json()) as { status: TenderStatus; comment?: string };
+    const t = tendersDb.find((x) => x.id === params.id);
+    if (!t) return new HttpResponse(null, { status: 404 });
+    const prev = t.status;
+    t.status = body.status;
+    if (prev !== body.status) {
+      t.daysInStatus = 0;
+      t.kanbanOrder = nextKanbanOrder(tendersDb, body.status);
+      if (body.comment?.trim()) {
+        const stamp = new Date().toISOString().slice(0, 10);
+        const line = `[${stamp}] ${body.status}: ${body.comment.trim()}`;
+        t.note = t.note ? `${t.note}\n${line}` : line;
+      }
+      pushActivity({
+        entityType: 'tender',
+        entityId: t.id,
+        actorId: actorIdFromRequest(request),
+        kind: 'status',
+        text:
+          `Статус изменён на «${tenderStatusLabel(body.status)}»` +
+          (body.comment?.trim() ? `. ${body.comment.trim()}` : ''),
+      });
+    }
+    persistTendersDb();
+    return HttpResponse.json(t);
+  }),
+  http.patch(url('/tenders/:id'), async ({ params, request }) => {
+    const patch = (await request.json()) as Partial<Tender>;
+    const t = tendersDb.find((x) => x.id === params.id);
+    if (!t) return new HttpResponse(null, { status: 404 });
+    Object.assign(t, patch);
+    persistTendersDb();
+    return HttpResponse.json(t);
+  }),
+  http.delete(url('/tenders/:id'), ({ params }) => {
+    const idx = tendersDb.findIndex((x) => x.id === params.id);
+    if (idx === -1) return new HttpResponse(null, { status: 404 });
+    tendersDb.splice(idx, 1);
+    persistTendersDb();
     return HttpResponse.json({ ok: true });
   }),
 

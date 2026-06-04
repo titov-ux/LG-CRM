@@ -84,6 +84,32 @@ def publish_vacancy_changed(
         logger.exception("publish_vacancy_changed failed (suppressed)")
 
 
+def publish_tender_changed(
+    kind: VacancyEventKind,
+    *,
+    id: uuid.UUID | None = None,
+    ids: Iterable[uuid.UUID] | None = None,
+    actor_id: uuid.UUID | None = None,
+) -> None:
+    """Опубликовать событие об изменении тендера.
+
+    Безопасно для вызова из любого места — никогда не бросает исключений.
+    """
+    try:
+        event = {
+            "type": "tender.changed",
+            "kind": kind,
+            "id": _safe_uuid(id),
+            "ids": [str(i) for i in (ids or [])],
+            "actorId": _safe_uuid(actor_id),
+            "clientId": current_client_id_var.get(""),
+            "ts": _now_iso(),
+        }
+        get_bus().publish(event)
+    except Exception:
+        logger.exception("publish_tender_changed failed (suppressed)")
+
+
 def publish_candidate_changed(
     kind: CandidateEventKind,
     *,

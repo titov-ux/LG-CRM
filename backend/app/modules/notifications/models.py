@@ -49,6 +49,9 @@ class NotificationEntityType(str, enum.Enum):
     # Добавлено миграцией 0023_calendar_events — события календаря (собесы);
     # entity_id ссылается на calendar_events.id.
     event = "event"
+    # Добавлено миграцией 0032_tender_activity — @-упоминания в комментариях
+    # к тендеру; entity_id ссылается на tenders.id.
+    tender = "tender"
 
 
 def _enum_values(e):

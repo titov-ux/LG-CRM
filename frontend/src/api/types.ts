@@ -181,6 +181,50 @@ export interface Vacancy {
   requirements?: string;
 }
 
+// === Tenders (госзакупки / коммерческие тендеры) ===
+export type TenderStatus =
+  | 'lead'
+  | 'evaluation'
+  | 'bid'
+  | 'review'
+  | 'won'
+  | 'lost';
+
+/** Правовой режим закупки. */
+export type TenderLaw = 'fz44' | 'fz223' | 'commercial';
+
+export interface Tender {
+  id: UUID;
+  /** Название закупки / тендера. */
+  title: string;
+  /** Заказчик — внешняя организация (строкой, не обязательно клиент CRM). */
+  customer: string;
+  /** Реестровый номер закупки в ЕИС. */
+  registryNumber?: string | null;
+  /** ЭТП — электронная торговая площадка. */
+  platform?: string | null;
+  law: TenderLaw;
+  /** НМЦК — начальная (максимальная) цена контракта, ₽. */
+  nmck: number;
+  /** Наша ценовая заявка, ₽. */
+  ourPrice?: number | null;
+  /** Обеспечение заявки, ₽. */
+  securityAmount?: number | null;
+  /** Срок подачи заявки (ISO YYYY-MM-DD). */
+  submissionDeadline?: string | null;
+  /** Дата проведения торгов / рассмотрения (ISO YYYY-MM-DD). */
+  auctionDate?: string | null;
+  status: TenderStatus;
+  priority: Priority;
+  accountManagerId: UUID | null;
+  daysInStatus: number;
+  kanbanOrder: number;
+  /** Ссылка на карточку закупки на ЭТП / в ЕИС. */
+  url?: string | null;
+  /** Свободные заметки / история комментариев финальных статусов. */
+  note?: string | null;
+}
+
 // === Candidates ===
 export type CandidateStatus =
   | 'new'
@@ -470,7 +514,7 @@ export interface Notification {
     | 'comment'
     | 'chat_message';
   text: string;
-  entityType?: 'vacancy' | 'candidate' | 'client' | 'contact' | 'chat_message' | 'event';
+  entityType?: 'vacancy' | 'candidate' | 'client' | 'contact' | 'chat_message' | 'event' | 'tender';
   entityId?: UUID;
   /**
    * Доп. данные для построения ссылки-перехода. Например, у chat_message
@@ -483,7 +527,7 @@ export interface Notification {
 }
 
 // === Comments ===
-export type CommentEntityType = 'contact' | 'candidate' | 'vacancy' | 'client';
+export type CommentEntityType = 'contact' | 'candidate' | 'vacancy' | 'client' | 'tender';
 
 export interface Comment {
   id: UUID;
@@ -517,7 +561,7 @@ export interface UpdateCommentRequest {
 // === Audit / Activity ===
 export interface ActivityEntry {
   id: UUID;
-  entityType: 'vacancy' | 'candidate' | 'client';
+  entityType: 'vacancy' | 'candidate' | 'client' | 'tender';
   entityId: UUID;
   /** null = актёр удалён. */
   actorId: UUID | null;

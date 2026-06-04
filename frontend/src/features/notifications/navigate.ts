@@ -11,6 +11,7 @@ export function notificationHasTarget(n: Notification): boolean {
   switch (n.entityType) {
     case 'candidate':
     case 'vacancy':
+    case 'tender':
     case 'client':
     case 'contact':
       return !!n.entityId;
@@ -48,6 +49,9 @@ export function useNotificationNavigate() {
         break;
       case 'vacancy':
         if (n.entityId) navigate({ to: '/vacancies/$id', params: { id: n.entityId } });
+        break;
+      case 'tender':
+        if (n.entityId) navigate({ to: '/tenders/$id', params: { id: n.entityId } });
         break;
       case 'client':
         if (n.entityId) navigate({ to: '/clients/$id', params: { id: n.entityId } });

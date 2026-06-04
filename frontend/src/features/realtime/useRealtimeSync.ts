@@ -15,6 +15,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/stores/auth';
 import { candidateKeys } from '@/features/candidates/hooks';
 import { vacancyKeys } from '@/features/vacancies/hooks';
+import { tenderKeys } from '@/features/tenders/hooks';
 import { matchKeys } from '@/features/matching/hooks';
 import {
   startRealtime,
@@ -62,7 +63,11 @@ export function useRealtimeSync(): void {
         }
         return;
       }
-      if (event.type !== 'vacancy.changed' && event.type !== 'candidate.changed') {
+      if (
+        event.type !== 'vacancy.changed' &&
+        event.type !== 'candidate.changed' &&
+        event.type !== 'tender.changed'
+      ) {
         return;
       }
       if (event.entity === 'vacancy') {
@@ -71,6 +76,11 @@ export function useRealtimeSync(): void {
           // Дополнительно подёргаем карточку, если она открыта.
           queryClient.invalidateQueries({ queryKey: vacancyKeys.byId(event.id) });
           queryClient.invalidateQueries({ queryKey: vacancyKeys.activity(event.id) });
+        }
+      } else if (event.entity === 'tender') {
+        queryClient.invalidateQueries({ queryKey: tenderKeys.all });
+        if (event.id) {
+          queryClient.invalidateQueries({ queryKey: tenderKeys.byId(event.id) });
         }
       } else if (event.entity === 'candidate') {
         queryClient.invalidateQueries({ queryKey: candidateKeys.all });

@@ -1,0 +1,532 @@
+import { useState } from 'react';
+import { useNavigate, useParams } from '@tanstack/react-router';
+import {
+  ArrowRight,
+  ChevronLeft,
+  Copy,
+  Edit3,
+  ExternalLink,
+  Mail,
+  MessageCircle,
+  MoreHorizontal,
+  Phone,
+  Plus,
+  Share2,
+  Trash2,
+  X,
+} from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+import { toast } from 'sonner';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
+import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Separator } from '@/components/ui/separator';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { UserAvatar } from '@/components/common/UserAvatar';
+import { PriorityBadge } from '@/components/common/PriorityBadge';
+import { KanbanStatusSelect } from '@/components/kanban/KanbanStatusSelect';
+import { CommentsSection } from '@/features/comments/CommentsSection';
+import { useUsers } from '@/features/users/hooks';
+import { cn, formatDateRu, formatMoneyRub } from '@/lib/utils';
+import type { Tender, TenderStatus } from '@/api/types';
+import {
+  useChangeTenderStatus,
+  useCreateTender,
+  useDeleteTender,
+  useTender,
+  useTenderActivity,
+  useUpdateTender,
+} from './hooks';
+import { TenderForm, type TenderFormValues } from './TenderForm';
+import { TenderFinalStatusDialog } from './TenderFinalStatusDialog';
+import { TENDER_LAW_META, isFinalTenderStatus, tenderStatuses } from './statuses';
+
+const ACTIVITY_ICON: Record<string, LucideIcon> = {
+  status: ArrowRight,
+  note: MessageCircle,
+  call: Phone,
+  email: Mail,
+  create: Plus,
+};
+const ACTIVITY_PREVIEW_LIMIT = 5;
+
+function formToPayload(values: TenderFormValues): Partial<Tender> {
+  const num = (v: number | undefined) => (v === undefined || Number.isNaN(v) ? null : v);
+  return {
+    title: values.title,
+    customer: values.customer,
+    law: values.law,
+    registryNumber: values.registryNumber?.trim() || null,
+    platform: values.platform?.trim() || null,
+    nmck: num(values.nmck) ?? 0,
+    ourPrice: num(values.ourPrice),
+    securityAmount: num(values.securityAmount),
+    submissionDeadline: values.submissionDeadline || null,
+    auctionDate: values.auctionDate || null,
+    priority: values.priority,
+    accountManagerId: values.accountManagerId || null,
+    url: values.url?.trim() || null,
+    note: values.note?.trim() || null,
+  };
+}
+
+function tenderToForm(t: Tender): Partial<TenderFormValues> {
+  return {
+    title: t.title,
+    customer: t.customer,
+    law: t.law,
+    registryNumber: t.registryNumber ?? '',
+    platform: t.platform ?? '',
+    nmck: t.nmck || undefined,
+    ourPrice: t.ourPrice ?? undefined,
+    securityAmount: t.securityAmount ?? undefined,
+    submissionDeadline: t.submissionDeadline ?? '',
+    auctionDate: t.auctionDate ?? '',
+    priority: t.priority,
+    accountManagerId: t.accountManagerId ?? '',
+    url: t.url ?? '',
+    note: t.note ?? '',
+  };
+}
+
+function toDuplicatePayload(t: Tender): Partial<Tender> {
+  return {
+    title: `${t.title} (копия)`,
+    customer: t.customer,
+    law: t.law,
+    registryNumber: t.registryNumber,
+    platform: t.platform,
+    nmck: t.nmck,
+    ourPrice: t.ourPrice,
+    securityAmount: t.securityAmount,
+    submissionDeadline: t.submissionDeadline,
+    auctionDate: t.auctionDate,
+    priority: t.priority,
+    accountManagerId: t.accountManagerId,
+    url: t.url,
+    status: 'lead',
+  };
+}
+
+export function TenderCardPage() {
+  const navigate = useNavigate();
+  const { id } = useParams({ from: '/_authed/tenders/$id' });
+  const { data: tender, isLoading } = useTender(id);
+  const { data: activity, isLoading: activityLoading, isError: activityError } =
+    useTenderActivity(id);
+  const { data: usersData } = useUsers();
+
+  const updateTender = useUpdateTender();
+  const createTender = useCreateTender();
+  const changeStatus = useChangeTenderStatus();
+  const deleteTender = useDeleteTender();
+
+  const [editOpen, setEditOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [activityExpanded, setActivityExpanded] = useState(false);
+  const [finalStatusTarget, setFinalStatusTarget] = useState<TenderStatus | null>(null);
+
+  const close = () => navigate({ to: '/tenders' });
+  const accountManager = usersData?.find((u) => u.id === tender?.accountManagerId);
+  const law = tender ? TENDER_LAW_META[tender.law] : null;
+
+  const activityItems = activity ?? [];
+  const hiddenActivityCount = Math.max(activityItems.length - ACTIVITY_PREVIEW_LIMIT, 0);
+  const visibleActivity = activityExpanded
+    ? activityItems
+    : activityItems.slice(0, ACTIVITY_PREVIEW_LIMIT);
+
+  const commitStatusChange = (status: TenderStatus, comment?: string) => {
+    if (!tender) return;
+    changeStatus.mutate(
+      { id: tender.id, status, comment },
+      {
+        onSuccess: (t) => {
+          setFinalStatusTarget(null);
+          toast.success(`Тендер «${t.title}» — статус изменён`);
+        },
+        onError: () => toast.error('Не удалось изменить статус'),
+      },
+    );
+  };
+
+  const handleStatusChange = (status: TenderStatus) => {
+    if (!tender || status === tender.status) return;
+    if (isFinalTenderStatus(status)) {
+      setFinalStatusTarget(status);
+      return;
+    }
+    commitStatusChange(status);
+  };
+
+  const handleShare = async () => {
+    if (!tender) return;
+    const link = `${window.location.origin}/tenders/${tender.id}`;
+    try {
+      await navigator.clipboard.writeText(link);
+      toast.success('Ссылка на тендер скопирована');
+    } catch {
+      toast.error('Не удалось скопировать ссылку');
+    }
+  };
+
+  const handleDuplicate = () => {
+    if (!tender) return;
+    createTender.mutate(toDuplicatePayload(tender), {
+      onSuccess: (t) => {
+        toast.success(`Создана копия «${t.title}»`);
+        navigate({ to: '/tenders/$id', params: { id: t.id } });
+      },
+      onError: () => toast.error('Не удалось скопировать тендер'),
+    });
+  };
+
+  const handleDelete = () => {
+    if (!tender) return;
+    deleteTender.mutate(tender.id, {
+      onSuccess: () => {
+        toast.success(`Тендер «${tender.title}» удалён`);
+        setDeleteOpen(false);
+        navigate({ to: '/tenders' });
+      },
+      onError: () => toast.error('Не удалось удалить тендер'),
+    });
+  };
+
+  const handleEdit = (values: TenderFormValues) => {
+    if (!tender) return;
+    updateTender.mutate(
+      { id: tender.id, payload: formToPayload(values) },
+      {
+        onSuccess: (t) => {
+          toast.success(`Тендер «${t.title}» обновлён`);
+          setEditOpen(false);
+        },
+        onError: () => toast.error('Не удалось сохранить изменения'),
+      },
+    );
+  };
+
+  return (
+    <>
+      <Sheet open onOpenChange={(o) => !o && close()}>
+        <SheetContent hideClose className="overflow-y-auto p-0 sm:max-w-2xl">
+          <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-background px-6 py-4">
+            <div className="flex items-center gap-1">
+              <Button variant="ghost" size="icon" onClick={close}>
+                <ChevronLeft className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                disabled={!tender}
+                onClick={() => setEditOpen(true)}
+                aria-label="Редактировать тендер"
+              >
+                <Edit3 className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                disabled={!tender || createTender.isPending}
+                onClick={handleDuplicate}
+                aria-label="Скопировать тендер"
+              >
+                <Copy className="h-3.5 w-3.5" />
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" disabled={!tender} aria-label="Ещё">
+                    <MoreHorizontal className="h-3.5 w-3.5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-44">
+                  <DropdownMenuItem onSelect={handleShare}>
+                    <Share2 className="mr-2 h-3.5 w-3.5" />
+                    Поделиться
+                  </DropdownMenuItem>
+                  {tender?.url && (
+                    <DropdownMenuItem onSelect={() => window.open(tender.url ?? '', '_blank')}>
+                      <ExternalLink className="mr-2 h-3.5 w-3.5" />
+                      Открыть закупку
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onSelect={(e) => {
+                      e.preventDefault();
+                      setDeleteOpen(true);
+                    }}
+                    className="text-red-600 focus:bg-red-50 focus:text-red-700 dark:focus:bg-red-950/40"
+                  >
+                    <Trash2 className="mr-2 h-3.5 w-3.5" />
+                    Удалить
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+            <Button variant="ghost" size="icon" onClick={close}>
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+
+          {isLoading || !tender ? (
+            <div className="space-y-4 px-6 py-6">
+              <Skeleton className="h-10 w-3/4" />
+              <Skeleton className="h-4 w-1/2" />
+              <Skeleton className="h-40" />
+            </div>
+          ) : (
+            <div className="space-y-6 px-6 py-6">
+              <div className="space-y-2.5 pb-4">
+                <div className="text-[11.5px] font-medium uppercase tracking-wide text-muted-foreground">
+                  Тендер · {tender.customer || 'без заказчика'}
+                </div>
+                <div className="text-[22px] font-bold leading-tight tracking-tight">
+                  {tender.title}
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <KanbanStatusSelect
+                    statuses={tenderStatuses}
+                    value={tender.status}
+                    onValueChange={handleStatusChange}
+                    disabled={changeStatus.isPending}
+                  />
+                  {law && (
+                    <span
+                      className={cn(
+                        'inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium',
+                        law.badgeClassName,
+                      )}
+                    >
+                      {law.label}
+                    </span>
+                  )}
+                  <PriorityBadge priority={tender.priority} />
+                </div>
+              </div>
+
+              <Separator />
+
+              <div className="grid grid-cols-2 gap-x-7 gap-y-3.5 text-sm">
+                <Field label="Заказчик" value={tender.customer} />
+                <Field label="Реестровый №" value={tender.registryNumber} />
+                <Field label="Закон" value={law?.label} />
+                <Field label="Площадка (ЭТП)" value={tender.platform} />
+                <Field
+                  label="НМЦК"
+                  value={tender.nmck > 0 ? `${formatMoneyRub(tender.nmck)} ₽` : undefined}
+                />
+                <Field
+                  label="Наша цена"
+                  value={
+                    tender.ourPrice != null && tender.ourPrice > 0
+                      ? `${formatMoneyRub(tender.ourPrice)} ₽`
+                      : undefined
+                  }
+                />
+                <Field
+                  label="Обеспечение заявки"
+                  value={
+                    tender.securityAmount != null && tender.securityAmount > 0
+                      ? `${formatMoneyRub(tender.securityAmount)} ₽`
+                      : undefined
+                  }
+                />
+                <Field label="Срок подачи" value={formatDateRu(tender.submissionDeadline)} />
+                <Field label="Дата торгов" value={formatDateRu(tender.auctionDate)} />
+                <Field
+                  label="Ответственный"
+                  value={
+                    accountManager && (
+                      <span className="flex items-center gap-1.5">
+                        <UserAvatar user={accountManager} size={20} />
+                        <span>{accountManager.fullName}</span>
+                      </span>
+                    )
+                  }
+                />
+              </div>
+
+              {tender.url && (
+                <Section title="Ссылка на закупку">
+                  <a
+                    href={tender.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 break-all text-[13px] text-blue-600 hover:underline dark:text-blue-400"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                    {tender.url}
+                  </a>
+                </Section>
+              )}
+
+              <Section title="История взаимодействий">
+                {activityLoading && <div className="text-xs text-muted-foreground">Загрузка…</div>}
+                {activityError && !activityLoading && (
+                  <div className="text-xs text-red-600">Не удалось загрузить историю.</div>
+                )}
+                {!activityLoading && !activityError && activityItems.length === 0 && (
+                  <div className="text-xs text-muted-foreground">Записей пока нет.</div>
+                )}
+                <div className="flex flex-col">
+                  {visibleActivity.map((entry, i, arr) => {
+                    const Icon = ACTIVITY_ICON[entry.kind] ?? Plus;
+                    const actor = usersData?.find((u) => u.id === entry.actorId);
+                    return (
+                      <div key={entry.id} className="relative flex gap-2.5 pb-3.5 last:pb-0">
+                        {i < arr.length - 1 && (
+                          <div className="absolute left-[11px] top-6 bottom-0 w-px bg-border" />
+                        )}
+                        <div className="z-10 flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full border bg-background">
+                          <Icon className="h-2.5 w-2.5 text-muted-foreground" strokeWidth={1.8} />
+                        </div>
+                        <div className="flex-1">
+                          <div className="text-[13px] leading-5">{entry.text}</div>
+                          <div className="mt-0.5 text-[11.5px] text-muted-foreground">
+                            {actor?.fullName ?? '—'} ·{' '}
+                            {new Date(entry.createdAt).toLocaleString('ru-RU')}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {hiddenActivityCount > 0 && !activityLoading && !activityError && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={() => setActivityExpanded((prev) => !prev)}
+                  >
+                    {activityExpanded ? 'Свернуть' : `Показать ещё ${hiddenActivityCount}`}
+                  </Button>
+                )}
+              </Section>
+
+              <Separator />
+
+              <CommentsSection entityType="tender" entityId={tender.id} />
+            </div>
+          )}
+        </SheetContent>
+      </Sheet>
+
+      <Sheet open={editOpen} onOpenChange={setEditOpen}>
+        <SheetContent className="overflow-y-auto sm:max-w-xl">
+          <SheetHeader className="mb-4">
+            <SheetTitle>Редактирование тендера</SheetTitle>
+            <SheetDescription>
+              Изменения сохраняются в карточке и на канбан-доске.
+            </SheetDescription>
+          </SheetHeader>
+          {tender && (
+            <TenderForm
+              key={tender.id}
+              defaultValues={tenderToForm(tender)}
+              onSubmit={handleEdit}
+              isPending={updateTender.isPending}
+              onCancel={() => setEditOpen(false)}
+            />
+          )}
+        </SheetContent>
+      </Sheet>
+
+      <TenderFinalStatusDialog
+        open={finalStatusTarget !== null}
+        targetStatus={finalStatusTarget}
+        pending={changeStatus.isPending}
+        onOpenChange={(o) => {
+          if (!o && !changeStatus.isPending) setFinalStatusTarget(null);
+        }}
+        onConfirm={(comment) => {
+          if (finalStatusTarget) commitStatusChange(finalStatusTarget, comment);
+        }}
+      />
+
+      <Dialog open={deleteOpen} onOpenChange={(o) => !deleteTender.isPending && setDeleteOpen(o)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Удалить тендер?</DialogTitle>
+            <DialogDescription>
+              {tender && (
+                <>
+                  Тендер «<span className="font-medium text-foreground">{tender.title}</span>» будет
+                  удалён без возможности восстановления.
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setDeleteOpen(false)}
+              disabled={deleteTender.isPending}
+            >
+              Отмена
+            </Button>
+            <Button variant="destructive" onClick={handleDelete} disabled={deleteTender.isPending}>
+              <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+              {deleteTender.isPending ? 'Удаление…' : 'Удалить'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+function Field({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div>
+      <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        {label}
+      </div>
+      <div>{value ?? '—'}</div>
+    </div>
+  );
+}
+
+function Section({
+  title,
+  action,
+  children,
+}: {
+  title: string;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+          {title}
+        </div>
+        {action}
+      </div>
+      {children}
+    </div>
+  );
+}

@@ -128,6 +128,24 @@ class Settings(BaseSettings):
     # пустым и не задавать токен — вебхук недоступен без публичного HTTPS.
     telegram_webhook_url: str = ""
     telegram_request_timeout_seconds: float = 15.0
+    # Из РФ (YC) прямой доступ к api.telegram.org часто закрыт (ConnectTimeout),
+    # хотя остальной интернет доступен. Тогда исходящие к Bot API гоним через
+    # релей вне РФ. Пусто = ходим напрямую (текущее поведение).
+    #   TELEGRAM_API_PROXY=http://user:pass@host:port  (или socks5://host:port)
+    telegram_api_proxy: str = ""
+    # Базовый URL Bot API. Меняется на self-hosted telegram-bot-api сервер вне
+    # РФ как альтернатива прокси. По умолчанию — публичный Bot API.
+    telegram_api_base: str = "https://api.telegram.org"
+
+    # ── Сеть ────────────────────────────────────────────────
+    # У контейнера есть IPv6-адрес, но нет маршрута наружу (типично для YC-VM
+    # без публичного IPv6). DNS отдаёт и A, и AAAA (напр. api.telegram.org),
+    # а glibc/httpx по умолчанию предпочитают IPv6 → коннект падает с
+    # `[Errno 101] Network is unreachable`, и уведомления в Telegram не уходят.
+    # Флаг ставит на старте фильтр getaddrinfo, отбрасывающий IPv6-адреса, —
+    # весь исходящий трафик процесса идёт по IPv4. Выключить можно, если на
+    # хосте появится рабочий IPv6.
+    force_ipv4_egress: bool = True
 
 
 @lru_cache(maxsize=1)

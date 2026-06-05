@@ -66,6 +66,12 @@ async def _lifespan(_app: FastAPI):
     Lua-скрипты атомарны, конкуренция между воркерами безопасна и просто
     приводит к тому, что чистку выполнит тот, кто пришёл первым.
     """
+    # IPv4-only egress — до любых исходящих соединений (см. app/core/ipv4.py).
+    if get_settings().force_ipv4_egress:
+        from app.core.ipv4 import force_ipv4
+
+        force_ipv4()
+
     bus = get_bus()
     try:
         await bus.start_listener()

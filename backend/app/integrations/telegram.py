@@ -19,15 +19,13 @@ from app.core.config import get_settings
 
 log = logging.getLogger(__name__)
 
-_API_BASE = "https://api.telegram.org"
-
-
 def is_configured() -> bool:
     return bool(get_settings().telegram_bot_token)
 
 
 def _method_url(token: str, method: str) -> str:
-    return f"{_API_BASE}/bot{token}/{method}"
+    base = get_settings().telegram_api_base.rstrip("/")
+    return f"{base}/bot{token}/{method}"
 
 
 async def _call(method: str, payload: dict[str, Any]) -> dict[str, Any] | None:
@@ -37,14 +35,20 @@ async def _call(method: str, payload: dict[str, Any]) -> dict[str, Any] | None:
     if not token:
         log.warning("Telegram not configured — skip %s", method)
         return None
+    # Прямой путь к Telegram из РФ часто закрыт — при заданном
+    # telegram_api_proxy идём через релей вне РФ (см. config).
+    proxy = settings.telegram_api_proxy or None
     try:
         async with httpx.AsyncClient(
-            timeout=settings.telegram_request_timeout_seconds
+            timeout=settings.telegram_request_timeout_seconds,
+            proxy=proxy,
         ) as client:
             resp = await client.post(_method_url(token, method), json=payload)
         data = resp.json()
     except (httpx.HTTPError, ValueError) as e:
-        log.error("Telegram %s failed: %s", method, e)
+        # str(e) у таймаутов/ConnectError часто пустой — логируем тип через repr,
+        # иначе в проде видно лишь «failed: » без причины.
+        log.error("Telegram %s failed: %r", method, e)
         return None
     if not data.get("ok"):
         log.error("Telegram %s returned error: %s", method, data.get("description"))

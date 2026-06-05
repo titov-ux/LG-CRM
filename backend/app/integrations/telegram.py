@@ -52,18 +52,25 @@ async def _call(method: str, payload: dict[str, Any]) -> dict[str, Any] | None:
     return data.get("result")
 
 
-async def send_message(chat_id: int, text: str) -> bool:
-    """Отправить текстовое сообщение. True, если ушло."""
-    result = await _call(
-        "sendMessage",
-        {
-            "chat_id": chat_id,
-            "text": text,
-            # HTML — чтобы можно было выделять «жирным» названия сущностей.
-            "parse_mode": "HTML",
-            "disable_web_page_preview": True,
-        },
-    )
+async def send_message(
+    chat_id: int, text: str, *, parse_mode: str | None = None
+) -> bool:
+    """Отправить текстовое сообщение. True, если ушло.
+
+    По умолчанию `parse_mode` НЕ задаётся: тексты уведомлений подставляют сырые
+    названия сущностей (имя кандидата, заголовок вакансии и т.п.), которые могут
+    содержать `&`, `<`, `>`. С `parse_mode="HTML"` такой текст Telegram отвергает
+    с 400 «can't parse entities», и сообщение молча теряется. Если нужна разметка
+    — передавайте `parse_mode` явно и экранируйте текст на стороне вызова.
+    """
+    payload: dict[str, Any] = {
+        "chat_id": chat_id,
+        "text": text,
+        "disable_web_page_preview": True,
+    }
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
+    result = await _call("sendMessage", payload)
     return result is not None
 
 

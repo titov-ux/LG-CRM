@@ -48,13 +48,24 @@ async def _send_one(user_id, text: str) -> None:
     try:
         async with SessionLocal() as db:
             user = await db.get(User, user_id)
-            if (
-                user is None
-                or user.telegram_chat_id is None
-                or not user.telegram_notifications_enabled
-            ):
+            if user is None:
+                log.warning("telegram: user %s not found — skip delivery", user_id)
                 return
-            await tg_client.send_message(user.telegram_chat_id, text)
+            if user.telegram_chat_id is None:
+                log.info("telegram: user %s has no chat_id (not linked) — skip", user_id)
+                return
+            if not user.telegram_notifications_enabled:
+                log.info("telegram: user %s disabled notifications — skip", user_id)
+                return
+            ok = await tg_client.send_message(user.telegram_chat_id, text)
+            if ok:
+                log.info("telegram: delivered notification to %s", user_id)
+            else:
+                log.error(
+                    "telegram: send_message returned False for user %s "
+                    "(see Bot API error above)",
+                    user_id,
+                )
     except Exception:  # noqa: BLE001 — доставка не должна ронять ничего
         log.exception("telegram: failed to deliver notification to %s", user_id)
 

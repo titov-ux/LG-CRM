@@ -80,9 +80,7 @@ function formToPayload(values: TenderFormValues): Partial<Tender> {
     platform: values.platform?.trim() || null,
     nmck: num(values.nmck) ?? 0,
     ourPrice: num(values.ourPrice),
-    securityAmount: num(values.securityAmount),
     submissionDeadline: values.submissionDeadline || null,
-    auctionDate: values.auctionDate || null,
     priority: values.priority,
     accountManagerId: values.accountManagerId || null,
     url: values.url?.trim() || null,
@@ -98,9 +96,7 @@ function tenderToForm(t: Tender): Partial<TenderFormValues> {
     platform: t.platform ?? '',
     nmck: t.nmck || undefined,
     ourPrice: t.ourPrice ?? undefined,
-    securityAmount: t.securityAmount ?? undefined,
     submissionDeadline: t.submissionDeadline ?? '',
-    auctionDate: t.auctionDate ?? '',
     priority: t.priority,
     accountManagerId: t.accountManagerId ?? '',
     url: t.url ?? '',
@@ -116,9 +112,7 @@ function toDuplicatePayload(t: Tender): Partial<Tender> {
     platform: t.platform,
     nmck: t.nmck,
     ourPrice: t.ourPrice,
-    securityAmount: t.securityAmount,
     submissionDeadline: t.submissionDeadline,
-    auctionDate: t.auctionDate,
     priority: t.priority,
     accountManagerId: t.accountManagerId,
     url: t.url,
@@ -343,16 +337,7 @@ export function TenderCardPage() {
                       : undefined
                   }
                 />
-                <Field
-                  label="Обеспечение заявки"
-                  value={
-                    tender.securityAmount != null && tender.securityAmount > 0
-                      ? `${formatMoneyRub(tender.securityAmount)} ₽`
-                      : undefined
-                  }
-                />
                 <Field label="Срок подачи" value={formatDateRu(tender.submissionDeadline)} />
-                <Field label="Дата торгов" value={formatDateRu(tender.auctionDate)} />
                 <Field
                   label="Ответственный"
                   value={

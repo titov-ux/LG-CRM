@@ -45,9 +45,7 @@ const schema = z.object({
   platform: z.string().optional(),
   nmck: optionalSum,
   ourPrice: optionalSum,
-  securityAmount: optionalSum,
   submissionDeadline: z.string().optional(),
-  auctionDate: z.string().optional(),
   priority: z.enum(['low', 'medium', 'high', 'urgent']),
   accountManagerId: z.string().optional(),
   url: z.string().url('Некорректная ссылка').optional().or(z.literal('')),
@@ -85,9 +83,7 @@ export function TenderForm({
       platform: '',
       nmck: undefined,
       ourPrice: undefined,
-      securityAmount: undefined,
       submissionDeadline: '',
-      auctionDate: '',
       priority: 'medium',
       accountManagerId: '',
       url: '',
@@ -213,7 +209,7 @@ export function TenderForm({
           />
         </div>
 
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 gap-3">
           <FormField
             control={form.control}
             name="nmck"
@@ -252,55 +248,21 @@ export function TenderForm({
               </FormItem>
             )}
           />
-          <FormField
-            control={form.control}
-            name="securityAmount"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Обеспечение, ₽</FormLabel>
-                <FormControl>
-                  <Input
-                    type="number"
-                    inputMode="numeric"
-                    placeholder="—"
-                    {...field}
-                    value={field.value ?? ''}
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <FormField
-            control={form.control}
-            name="submissionDeadline"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Срок подачи</FormLabel>
-                <FormControl>
-                  <DateField value={field.value} onChange={field.onChange} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-          <FormField
-            control={form.control}
-            name="auctionDate"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Дата торгов</FormLabel>
-                <FormControl>
-                  <DateField value={field.value} onChange={field.onChange} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        </div>
+        <FormField
+          control={form.control}
+          name="submissionDeadline"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Срок подачи</FormLabel>
+              <FormControl>
+                <DateField value={field.value} onChange={field.onChange} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
 
         <FormField
           control={form.control}

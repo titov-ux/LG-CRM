@@ -28,6 +28,9 @@ class FileEntityType(str, enum.Enum):
     # Добавлено миграцией 0015_chat_threads_attachments (Этап 4 чата) —
     # вложения в сообщения чата; entity_id ссылается на chat_messages.id.
     chat_message = "chat_message"
+    # Добавлено миграцией 0033_file_entity_document — файлы документов базы
+    # знаний; entity_id ссылается на documents.id.
+    document = "document"
 
 
 class ScanStatus(str, enum.Enum):

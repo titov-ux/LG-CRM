@@ -348,6 +348,16 @@ async def update_document(
         doc.description = payload.description
     if "tags" in provided and payload.tags is not None:
         doc.tags = list(payload.tags)
+    if "file_id" in provided:
+        if payload.file_id is not None:
+            if doc.kind == DocumentKind.note:
+                raise ApiError(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "invalid_note_file",
+                    "Для заметки fileId не используется",
+                )
+            await _ensure_file_exists(db, payload.file_id)
+        doc.file_id = payload.file_id
     if "body" in provided and doc.kind == DocumentKind.note:
         doc.body = payload.body
     doc.updated_at = _now()

@@ -63,6 +63,7 @@ class UpdateDocumentRequest(CamelModel):
     description: str | None = None
     tags: list[str] | None = None
     owner_user_id: uuid.UUID | None = None
+    file_id: uuid.UUID | None = None
     body: str | None = None
 
 

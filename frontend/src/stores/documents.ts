@@ -20,8 +20,10 @@ interface DocumentsState {
   setEmoji: (id: string, emoji: string) => Promise<void>;
   /** Дублирование документа (новая копия, не разделяет blob-контент) */
   duplicateDocument: (id: string) => Promise<DocumentItem | null>;
-  /** Прикрепить/обновить файл к документу */
+  /** Прикрепить/обновить файл к документу (только локальная мета) */
   attachFile: (id: string, file: DocumentFileMeta) => void;
+  /** Привязать загруженный в S3 файл: PATCH fileId + локальная мета */
+  attachUploadedFile: (id: string, fileId: string, file: DocumentFileMeta) => Promise<void>;
   // Bulk
   bulkDelete: (ids: string[]) => Promise<void>;
   bulkMove: (ids: string[], section: DocumentSectionId, parentId?: string) => Promise<void>;
@@ -49,6 +51,7 @@ function mapDoc(d: Awaited<ReturnType<typeof documentsApi.byId>>): DocumentItem 
     description: d.description ?? undefined,
     parentId: d.parentId ?? undefined,
     body: d.body ?? undefined,
+    fileId: d.fileId ?? undefined,
     file: d.fileMeta
       ? {
           fileName: d.fileMeta.fileName,
@@ -237,6 +240,22 @@ export const useDocumentsStore = create<DocumentsState>()(
               : d,
           ),
         })),
+
+      attachUploadedFile: async (id, fileId, file) => {
+        await documentsApi.update(id, { fileId });
+        set((s) => ({
+          documents: s.documents.map((d) =>
+            d.id === id
+              ? {
+                  ...d,
+                  fileId,
+                  file,
+                  updatedAt: new Date().toISOString(),
+                }
+              : d,
+          ),
+        }));
+      },
 
       addVersion: async (id, version) => {
         const created = await documentsApi.createVersion(id, {

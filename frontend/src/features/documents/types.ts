@@ -45,8 +45,10 @@ export interface DocumentItem {
   parentId?: string; // для вложения внутрь папки
   versions?: DocumentVersion[];
   comments?: DocumentComment[];
-  /** мета приложенного файла; контент лежит либо в `file.dataUrl`, либо в in-memory store */
+  /** мета приложенного файла; контент лежит либо в `file.dataUrl`, либо в in-memory store, либо в S3 (по fileId) */
   file?: DocumentFileMeta;
+  /** id файла в S3-хранилище (таблица files); есть — файл персистентен и доступен после reload */
+  fileId?: string;
   /** HTML-контент заметки (kind='note'). Tiptap-вывод. */
   body?: string;
 }

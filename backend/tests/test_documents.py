@@ -40,6 +40,15 @@ def test_documents_crud_flow(client: TestClient, admin_user) -> None:
     assert updated.status_code == 200
     assert updated.json()["title"] == "NDA Acme v2"
 
+    # PATCH с несуществующим fileId — 422 file_not_found (валидация привязки файла).
+    bad_file = client.patch(
+        f"/api/v1/documents/{doc['id']}",
+        headers=h,
+        json={"fileId": "00000000-0000-0000-0000-000000000000"},
+    )
+    assert bad_file.status_code == 422, bad_file.text
+    assert bad_file.json()["detail"]["code"] == "file_not_found"
+
     deleted = client.delete(f"/api/v1/documents/{doc['id']}", headers=h)
     assert deleted.status_code == 200
     assert deleted.json()["ok"] is True

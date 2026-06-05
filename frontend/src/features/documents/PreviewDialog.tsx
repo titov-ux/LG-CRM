@@ -24,10 +24,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { useDocumentsStore } from '@/stores/documents';
+import { filesApi, uploadFile } from '@/api/files';
+import { toast } from 'sonner';
 import { SECTIONS } from './mocks';
 import type { DocumentItem } from './types';
 import {
-  fileMetaFromFile,
   formatBytes,
   getCachedBlobUrl,
   readAsDataUrl,
@@ -75,7 +76,7 @@ export function PreviewDialog({
 }: Props) {
   const addVersion = useDocumentsStore((s) => s.addVersion);
   const addComment = useDocumentsStore((s) => s.addComment);
-  const attachFile = useDocumentsStore((s) => s.attachFile);
+  const attachUploadedFile = useDocumentsStore((s) => s.attachUploadedFile);
   const loadDocumentExtras = useDocumentsStore((s) => s.loadDocumentExtras);
   const documents = useDocumentsStore((s) => s.documents);
 
@@ -84,17 +85,38 @@ export function PreviewDialog({
   const [versionNote, setVersionNote] = useState('');
   const [commentText, setCommentText] = useState('');
   const [textPreview, setTextPreview] = useState<string | null>(null);
+  const [remoteUrl, setRemoteUrl] = useState<string | undefined>(undefined);
+  const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // подхватываем последние данные из стора (на случай новых комментариев/версий/файла)
   const fresh = document ? documents.find((d) => d.id === document.id) ?? document : null;
   const section = fresh ? SECTIONS.find((s) => s.id === fresh.section) : undefined;
-  const previewUrl = useMemo(() => (fresh ? resolvePreviewUrl(fresh) : undefined), [fresh]);
+  const localUrl = useMemo(() => (fresh ? resolvePreviewUrl(fresh) : undefined), [fresh]);
+  const previewUrl = localUrl ?? remoteUrl;
 
   useEffect(() => {
     if (!open || !fresh) return;
     void loadDocumentExtras(fresh.id);
   }, [open, fresh?.id, loadDocumentExtras]);
+
+  // Нет локального blob, но файл есть в S3 (по fileId) — берём временную ссылку.
+  useEffect(() => {
+    setRemoteUrl(undefined);
+    if (!open || !fresh || localUrl || !fresh.fileId) return;
+    let cancelled = false;
+    filesApi
+      .download(fresh.fileId)
+      .then((res) => {
+        if (!cancelled) setRemoteUrl(res.url);
+      })
+      .catch(() => {
+        if (!cancelled) setRemoteUrl(undefined);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, fresh?.id, fresh?.fileId, localUrl]);
 
   // подгружаем текстовые форматы
   useEffect(() => {
@@ -137,14 +159,34 @@ export function PreviewDialog({
   const handleAttach = async (file: File) => {
     const blobUrl = URL.createObjectURL(file);
     rememberBlobUrl(fresh.id, blobUrl);
-    const meta = fileMetaFromFile(file);
-    // для маленьких файлов сразу сохраняем dataURL, чтобы пережил reload
+    // для маленьких файлов сразу читаем dataURL — мгновенное превью без S3
     const PERSIST_LIMIT = 2 * 1024 * 1024;
+    let dataUrl: string | undefined;
     if (file.size <= PERSIST_LIMIT) {
-      const dataUrl = await readAsDataUrl(file);
-      attachFile(fresh.id, { ...meta, dataUrl });
-    } else {
-      attachFile(fresh.id, meta);
+      try {
+        dataUrl = await readAsDataUrl(file);
+      } catch {
+        /* ignore */
+      }
+    }
+    // Реальная загрузка в S3 + привязка fileId, чтобы файл пережил reload.
+    setUploading(true);
+    try {
+      const rec = await uploadFile({
+        entityType: 'document',
+        entityId: fresh.id,
+        file,
+      });
+      await attachUploadedFile(fresh.id, rec.id, {
+        fileName: rec.originalName,
+        mime: rec.mime,
+        size: rec.size,
+        dataUrl,
+      });
+    } catch {
+      toast.error('Не удалось загрузить файл на сервер');
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -157,18 +199,26 @@ export function PreviewDialog({
       );
     }
     if (!fresh.file || !previewUrl) {
+      // Файл есть в S3 (fileId), но ссылка ещё грузится — показываем загрузку.
+      const loadingRemote = !!fresh.file && !!fresh.fileId;
       return (
         <div className="flex h-64 flex-col items-center justify-center gap-3 rounded-md border border-dashed bg-muted/20 text-center">
           <Paperclip className="h-5 w-5 text-muted-foreground" />
           <div className="text-[12.5px] text-muted-foreground">
-            {fresh.file
-              ? 'Файл не доступен в текущей сессии. Перезагрузите его, чтобы открыть превью.'
-              : 'Файл ещё не прикреплён. Загрузите его, чтобы появился предпросмотр.'}
+            {uploading
+              ? 'Загрузка файла на сервер…'
+              : loadingRemote
+                ? 'Загружаем файл из хранилища…'
+                : fresh.file
+                  ? 'Файл не доступен в текущей сессии. Перезагрузите его, чтобы открыть превью.'
+                  : 'Файл ещё не прикреплён. Загрузите его, чтобы появился предпросмотр.'}
           </div>
-          <Button size="sm" variant="outline" onClick={() => fileInputRef.current?.click()}>
-            <Upload className="mr-1.5 h-3.5 w-3.5" />
-            {fresh.file ? 'Загрузить заново' : 'Прикрепить файл'}
-          </Button>
+          {!loadingRemote && !uploading && (
+            <Button size="sm" variant="outline" onClick={() => fileInputRef.current?.click()}>
+              <Upload className="mr-1.5 h-3.5 w-3.5" />
+              {fresh.file ? 'Загрузить заново' : 'Прикрепить файл'}
+            </Button>
+          )}
           <input
             ref={fileInputRef}
             type="file"

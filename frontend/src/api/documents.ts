@@ -99,6 +99,7 @@ export interface UpdateDocumentRequest {
   description?: string | null;
   tags?: string[];
   ownerUserId?: UUID;
+  fileId?: UUID | null;
   body?: string | null;
 }
 

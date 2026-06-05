@@ -3553,6 +3553,7 @@ components:
           type: array
           items: { type: string, maxLength: 64 }
         ownerUserId: { $ref: '#/components/schemas/UUID' }
+        fileId:      { $ref: '#/components/schemas/UUID', nullable: true, description: 'Прикреплённый файл (из /files/confirm)' }
         body:        { type: string, nullable: true, description: 'HTML для kind=note' }
     MoveDocumentRequest:
       type: object

@@ -12,7 +12,8 @@ export type FileEntityType =
   | 'vacancy'
   | 'client'
   | 'contact'
-  | 'chat_message';
+  | 'chat_message'
+  | 'document';
 
 export type ScanStatus = 'pending' | 'clean' | 'infected' | 'error';
 

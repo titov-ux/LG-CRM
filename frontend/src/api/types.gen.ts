@@ -3554,7 +3554,7 @@ export interface paths {
         };
         /**
          * Учёт времени — суммарное время по сотрудникам за период
-         * @description admin и account_manager видят всех (или конкретного userId); прочие роли — только себя (чужой userId → 403).
+         * @description Только для администраторов (role=admin). Прочие роли → 403. Без userId возвращает всех сотрудников, с userId — конкретного.
          */
         get: {
             parameters: {
@@ -5330,8 +5330,12 @@ export interface components {
             kind: "mention" | "status_change" | "system" | "assignment" | "comment" | "chat_message";
             text: string;
             /** @enum {string|null} */
-            entityType?: "vacancy" | "candidate" | "client" | "contact" | "chat_message" | null;
+            entityType?: "vacancy" | "candidate" | "client" | "contact" | "chat_message" | "event" | null;
             entityId?: components["schemas"]["UUID"] | null;
+            /** @description Доп. данные для построения ссылки-перехода. Например, у chat_message entityId указывает на сообщение, а conversationId диалога лежит в payload.conversationId. */
+            payload?: {
+                [key: string]: unknown;
+            };
             read: boolean;
             /** Format: date-time */
             createdAt: string;
@@ -5688,6 +5692,8 @@ export interface components {
             description?: string | null;
             tags?: string[];
             ownerUserId?: components["schemas"]["UUID"];
+            /** @description Прикреплённый файл (из /files/confirm) */
+            fileId?: components["schemas"]["UUID"];
             /** @description HTML для kind=note */
             body?: string | null;
         };

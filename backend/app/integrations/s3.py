@@ -23,6 +23,8 @@ from botocore.client import Config
 from app.core.config import get_settings
 
 # Белый список MIME — ТЗ §5.9.
+# Помимо базовых типов резюме/вложений сюда добавлены форматы базы знаний
+# (документы): презентации, текст/markdown/csv, rtf и доп. изображения.
 ALLOWED_MIME_TYPES: frozenset[str] = frozenset(
     {
         "application/pdf",
@@ -30,8 +32,16 @@ ALLOWED_MIME_TYPES: frozenset[str] = frozenset(
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "application/vnd.ms-excel",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-powerpoint",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "application/rtf",
+        "text/plain",
+        "text/markdown",
+        "text/csv",
         "image/png",
         "image/jpeg",
+        "image/gif",
+        "image/webp",
     }
 )
 

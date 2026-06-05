@@ -73,6 +73,7 @@ import { EmojiPicker } from './EmojiPicker';
 import { TemplatesDialog } from './TemplatesDialog';
 import { NoteDialog } from './NoteDialog';
 import { bindBlobToDoc, formatBytes, getCachedBlobUrl } from './fileBlob';
+import { filesApi, uploadFile } from '@/api/files';
 
 type ScopeId = DocumentSectionId | 'all' | 'favorites';
 type SortBy = 'updated' | 'oldest' | 'title' | 'owner' | 'kind';
@@ -162,6 +163,7 @@ export function DocumentsPage() {
   const bulkDelete = useDocumentsStore((s) => s.bulkDelete);
   const bulkMove = useDocumentsStore((s) => s.bulkMove);
   const duplicateDocument = useDocumentsStore((s) => s.duplicateDocument);
+  const attachUploadedFile = useDocumentsStore((s) => s.attachUploadedFile);
 
   const [scope, setScope] = useState<ScopeId>('clients');
   const [folderPath, setFolderPath] = useState<string[]>([]);
@@ -363,10 +365,24 @@ export function DocumentsPage() {
     setFormPrefill(undefined);
     setFormOpen(true);
   };
-  const handleDownload = (d: DocumentItem) => {
-    const url = getCachedBlobUrl(d.id) ?? d.file?.dataUrl;
-    if (!url || !d.file) {
+  const handleDownload = async (d: DocumentItem) => {
+    if (!d.file) {
       toast.info(`«${d.title}» — файл ещё не прикреплён`);
+      return;
+    }
+    let url = getCachedBlobUrl(d.id) ?? d.file.dataUrl;
+    // Нет локального blob (например, после перезагрузки) — берём ссылку из S3.
+    if (!url && d.fileId) {
+      try {
+        const res = await filesApi.download(d.fileId);
+        url = res.url;
+      } catch {
+        toast.error(`Не удалось получить файл «${d.title}»`);
+        return;
+      }
+    }
+    if (!url) {
+      toast.info(`«${d.title}» — файл недоступен в этой сессии`);
       return;
     }
     const a = window.document.createElement('a');
@@ -431,16 +447,16 @@ export function DocumentsPage() {
     setSelected(new Set());
     setBulkMoveOpen(false);
   };
-  const handleBulkDownload = () => {
+  const handleBulkDownload = async () => {
     let ok = 0;
-    selected.forEach((id) => {
+    for (const id of selected) {
       const d = documents.find((x) => x.id === id);
-      if (!d) return;
-      if (d.file && (getCachedBlobUrl(id) || d.file.dataUrl)) {
-        handleDownload(d);
+      if (!d) continue;
+      if (d.file && (getCachedBlobUrl(id) || d.file.dataUrl || d.fileId)) {
+        await handleDownload(d);
         ok++;
       }
-    });
+    }
     if (ok === 0) toast.info('Нет файлов для скачивания');
   };
 
@@ -508,6 +524,7 @@ export function DocumentsPage() {
   const handleUploadSubmit = async (results: UploadResult[]) => {
     let created = 0;
     let switched = false;
+    let failedUploads = 0;
     for (const r of results) {
       const doc = await addDocument({
         title: r.title,
@@ -518,14 +535,40 @@ export function DocumentsPage() {
         file: r.file,
         parentId: currentFolderId,
       });
+      // Локальный blob — для мгновенного превью без обращения к S3.
       bindBlobToDoc(doc.id, r.blobUrl);
       created++;
+      // Реальная загрузка файла в S3 + привязка fileId к документу,
+      // чтобы файл сохранился на сервере и был доступен после перезагрузки.
+      try {
+        const rec = await uploadFile({
+          entityType: 'document',
+          entityId: doc.id,
+          file: r.rawFile,
+        });
+        await attachUploadedFile(doc.id, rec.id, {
+          fileName: rec.originalName,
+          mime: rec.mime,
+          size: rec.size,
+          dataUrl: r.file.dataUrl,
+        });
+      } catch (e) {
+        failedUploads++;
+      }
       if (doc.section !== scope && !switched) {
         setScope(doc.section);
         switched = true;
       }
     }
-    if (created > 0) toast.success(`Загружено: ${created}`);
+    if (created > 0) {
+      if (failedUploads > 0) {
+        toast.warning(
+          `Создано: ${created}, но файлов не загружено: ${failedUploads}. Проверьте формат/размер и попробуйте «Загрузить заново».`,
+        );
+      } else {
+        toast.success(`Загружено: ${created}`);
+      }
+    }
     setUploadInitialFiles(null);
   };
 

@@ -40,6 +40,8 @@ export interface UploadResult {
   file: DocumentFileMeta;
   /** временный blob URL — будет привязан к id созданного документа извне */
   blobUrl: string;
+  /** исходный File — для реальной загрузки в S3 (/files/presign → confirm) */
+  rawFile: File;
 }
 
 interface Props {
@@ -143,6 +145,7 @@ export function UploadDialog({
           owner: 'Я',
           file,
           blobUrl,
+          rawFile: q.file,
         });
       }
       onSubmit(results);

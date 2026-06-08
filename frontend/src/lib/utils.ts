@@ -1,8 +1,27 @@
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { HTTPError } from 'ky';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
+}
+
+/** Достаёт человекочитаемое сообщение из ApiError-ответа бэкенда ({ detail: { code, message } }). */
+export async function apiErrorMessage(
+  error: unknown,
+  fallback: string,
+): Promise<string> {
+  if (error instanceof HTTPError) {
+    try {
+      const body = (await error.response.json()) as
+        | { detail?: { code?: string; message?: string } }
+        | undefined;
+      if (body?.detail?.message) return body.detail.message;
+    } catch {
+      /* тело не JSON — отдаём fallback */
+    }
+  }
+  return fallback;
 }
 
 export function initials(fullName: string): string {

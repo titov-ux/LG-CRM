@@ -140,12 +140,17 @@ async def create_tender(
     db: AsyncSession, user: User, payload: CreateTenderRequest
 ) -> Tender:
     _ensure_can_mutate(user)
-    if user.role == Role.account_manager and payload.account_manager_id != user.id:
-        raise ApiError(
-            status.HTTP_403_FORBIDDEN,
-            "forbidden",
-            "Аккаунт-менеджер может создавать тендеры только на себя",
-        )
+    account_manager_id = payload.account_manager_id
+    if user.role == Role.account_manager:
+        # AM не указал ответственного — назначаем его самого; чужого назначить нельзя.
+        if account_manager_id is None:
+            account_manager_id = user.id
+        elif account_manager_id != user.id:
+            raise ApiError(
+                status.HTTP_403_FORBIDDEN,
+                "forbidden",
+                "Аккаунт-менеджер может создавать тендеры только на себя",
+            )
     order = await _next_order(db, user, payload.status)
     tender = Tender(
         title=payload.title,
@@ -162,7 +167,7 @@ async def create_tender(
         auction_date=payload.auction_date,
         status=payload.status,
         priority=payload.priority,
-        account_manager_id=payload.account_manager_id,
+        account_manager_id=account_manager_id,
         kanban_order=order,
         url=payload.url,
         note=payload.note,

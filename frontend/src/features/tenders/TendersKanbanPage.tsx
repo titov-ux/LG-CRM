@@ -16,6 +16,8 @@ import { EmptyState } from '@/components/common/EmptyState';
 import { Skeleton } from '@/components/ui/skeleton';
 import { FilterBar, FilterChip, MenuItem } from '@/components/common/FilterChip';
 import { useFiltersStore } from '@/stores/filters';
+import { apiErrorMessage } from '@/lib/utils';
+import { useAuthStore } from '@/stores/auth';
 import { useUsers } from '@/features/users/hooks';
 import type { Priority, Tender, TenderLaw, TenderStatus } from '@/api/types';
 import {
@@ -77,6 +79,7 @@ function formToPayload(values: TenderFormValues): Partial<Tender> {
 
 export function TendersKanbanPage() {
   const navigate = useNavigate();
+  const currentUser = useAuthStore((s) => s.user);
   const search = useFiltersStore((s) => s.search);
   const [law, setLaw] = useState<TenderLaw | null>(null);
   const [priority, setPriority] = useState<Priority | null>(null);
@@ -142,7 +145,8 @@ export function TendersKanbanPage() {
           toast.success(`Тендер «${values.title}» добавлен`);
           setCreateStatus(null);
         },
-        onError: () => toast.error('Не удалось создать тендер'),
+        onError: async (e) =>
+          toast.error(await apiErrorMessage(e, 'Не удалось создать тендер')),
       },
     );
   };
@@ -326,6 +330,11 @@ export function TendersKanbanPage() {
               onCancel={() => setCreateStatus(null)}
               isPending={createTender.isPending}
               submitLabel="Создать тендер"
+              defaultValues={
+                currentUser?.role === 'account_manager'
+                  ? { accountManagerId: currentUser.id }
+                  : undefined
+              }
             />
           )}
         </SheetContent>

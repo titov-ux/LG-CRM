@@ -28,6 +28,19 @@ export function forgetBlob(docId: string) {
   memCache.delete(docId);
 }
 
+/**
+ * Восстановить File из blob:/data: URL.
+ * Нужен для «дозагрузки» в S3 файлов, контент которых остался только
+ * в браузере (in-memory blob или dataURL из старого persist-стора).
+ */
+export async function urlToFile(url: string, fileName: string, mime: string): Promise<File> {
+  const res = await fetch(url);
+  const blob = await res.blob();
+  return new File([blob], fileName, {
+    type: mime || blob.type || 'application/octet-stream',
+  });
+}
+
 /** Прочитать File → dataURL */
 export function readAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {

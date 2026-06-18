@@ -1,15 +1,36 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { documentsApi } from '@/api/documents';
+import { uploadFile } from '@/api/files';
+import { getCachedBlobUrl, urlToFile } from '@/features/documents/fileBlob';
 import type { DocumentComment, DocumentFileMeta, DocumentItem, DocumentSectionId, DocumentVersion } from '@/features/documents/types';
+
+export interface SyncResult {
+  /** сколько файлов реально доехало в S3 */
+  uploaded: number;
+  /** сколько не удалось дозагрузить (нет контента или ошибка сети) */
+  failed: number;
+}
 
 interface DocumentsState {
   documents: DocumentItem[];
   favorites: string[]; // ids
   recentEmojis: string[]; // последние выбранные эмодзи
+  /** id «старых» локальных документов, уже пересозданных на сервере (чтобы не дублировать) */
+  syncedLegacyIds: string[];
   isLoaded: boolean;
   isLoading: boolean;
+  isSyncing: boolean;
   loadDocuments: () => Promise<void>;
+  /**
+   * Дозагрузка «забытых в браузере» файлов на сервер «под капотом».
+   * Покрывает два случая:
+   *  1) старые документы из localStorage (version ≤ 2), которые никогда
+   *     не уезжали на сервер — пересоздаём запись + грузим файл в S3;
+   *  2) документы на сервере с прикреплённым файлом, но без fileId
+   *     (загрузка в S3 не прошла) — берём контент из in-memory/dataURL и грузим.
+   */
+  syncPendingUploads: () => Promise<SyncResult>;
   reloadDocument: (id: string) => Promise<void>;
   loadDocumentExtras: (id: string) => Promise<void>;
   // CRUD
@@ -62,14 +83,42 @@ function mapDoc(d: Awaited<ReturnType<typeof documentsApi.byId>>): DocumentItem 
   };
 }
 
+// Снимок «старых» документов из localStorage ДО того, как zustand-persist
+// (version 3 migrate) затрёт их. В версиях ≤ 2 документы со встроенным
+// file.dataUrl хранились только в браузере и никогда не уезжали на сервер.
+// Читаем сырой payload здесь — на этом этапе модуля стор ещё не создан,
+// значит persist не успел перезаписать ключ.
+function salvageLegacyDocuments(): DocumentItem[] {
+  try {
+    const raw = localStorage.getItem('crm-lg.documents');
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as { state?: { documents?: DocumentItem[] } };
+    const docs = parsed?.state?.documents ?? [];
+    // только реальные файлы с восстановимым контентом, которых ещё нет на сервере
+    return docs.filter(
+      (d) =>
+        !!d.file?.dataUrl &&
+        !d.fileId &&
+        d.kind !== 'folder' &&
+        d.kind !== 'note',
+    );
+  } catch {
+    return [];
+  }
+}
+
+const LEGACY_PENDING = salvageLegacyDocuments();
+
 export const useDocumentsStore = create<DocumentsState>()(
   persist(
     (set, get) => ({
       documents: [],
       favorites: [],
       recentEmojis: [],
+      syncedLegacyIds: [],
       isLoaded: false,
       isLoading: false,
+      isSyncing: false,
 
       loadDocuments: async () => {
         if (get().isLoading) return;
@@ -95,6 +144,88 @@ export const useDocumentsStore = create<DocumentsState>()(
         } catch {
           set({ isLoading: false });
         }
+      },
+
+      syncPendingUploads: async () => {
+        if (get().isSyncing) return { uploaded: 0, failed: 0 };
+        set({ isSyncing: true });
+        let uploaded = 0;
+        let failed = 0;
+        try {
+          // 1) Старые локальные документы: их вообще нет на сервере — пересоздаём
+          //    запись и грузим файл в S3. parentId не переносим (старые id папок
+          //    на сервере не существуют) — кладём в корень раздела.
+          const synced = new Set(get().syncedLegacyIds);
+          for (const legacy of LEGACY_PENDING) {
+            if (synced.has(legacy.id)) continue;
+            if (!legacy.file?.dataUrl) continue;
+            try {
+              const created = await get().addDocument({
+                title: legacy.title,
+                emoji: legacy.emoji,
+                kind: legacy.kind,
+                section: legacy.section,
+                owner: legacy.owner || 'Я',
+                tags: legacy.tags,
+                description: legacy.description,
+                file: legacy.file,
+                body: legacy.body,
+              });
+              const file = await urlToFile(
+                legacy.file.dataUrl,
+                legacy.file.fileName,
+                legacy.file.mime,
+              );
+              const rec = await uploadFile({
+                entityType: 'document',
+                entityId: created.id,
+                file,
+              });
+              await get().attachUploadedFile(created.id, rec.id, {
+                fileName: rec.originalName,
+                mime: rec.mime,
+                size: rec.size,
+              });
+              uploaded++;
+            } catch {
+              failed++;
+            } finally {
+              // помечаем как обработанный в любом случае, чтобы не плодить дубли
+              synced.add(legacy.id);
+            }
+          }
+          set({ syncedLegacyIds: Array.from(synced) });
+
+          // 2) Документы на сервере с файлом, но без fileId (S3-загрузка не прошла).
+          //    Контент берём из in-memory blob текущей сессии или dataURL.
+          const pending = get().documents.filter(
+            (d) => !!d.file && !d.fileId && d.kind !== 'folder' && d.kind !== 'note',
+          );
+          for (const d of pending) {
+            const url = getCachedBlobUrl(d.id) ?? d.file?.dataUrl;
+            if (!url || !d.file) continue; // контент потерян (перезагрузка) — пропускаем
+            try {
+              const file = await urlToFile(url, d.file.fileName, d.file.mime);
+              const rec = await uploadFile({
+                entityType: 'document',
+                entityId: d.id,
+                file,
+              });
+              await get().attachUploadedFile(d.id, rec.id, {
+                fileName: rec.originalName,
+                mime: rec.mime,
+                size: rec.size,
+                dataUrl: d.file.dataUrl,
+              });
+              uploaded++;
+            } catch {
+              failed++;
+            }
+          }
+        } finally {
+          set({ isSyncing: false });
+        }
+        return { uploaded, failed };
       },
 
       reloadDocument: async (id) => {
@@ -339,11 +470,15 @@ export const useDocumentsStore = create<DocumentsState>()(
     {
       name: 'crm-lg.documents',
       version: 3,
-      partialize: (state) => ({ recentEmojis: state.recentEmojis }),
+      partialize: (state) => ({
+        recentEmojis: state.recentEmojis,
+        syncedLegacyIds: state.syncedLegacyIds,
+      }),
       migrate: (state: unknown) => {
         const s = (state ?? {}) as Partial<DocumentsState>;
         return {
           recentEmojis: s.recentEmojis ?? [],
+          syncedLegacyIds: s.syncedLegacyIds ?? [],
           documents: [],
           favorites: [],
           isLoaded: false,

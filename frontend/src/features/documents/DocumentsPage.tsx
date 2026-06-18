@@ -164,6 +164,7 @@ export function DocumentsPage() {
   const bulkMove = useDocumentsStore((s) => s.bulkMove);
   const duplicateDocument = useDocumentsStore((s) => s.duplicateDocument);
   const attachUploadedFile = useDocumentsStore((s) => s.attachUploadedFile);
+  const syncPendingUploads = useDocumentsStore((s) => s.syncPendingUploads);
 
   const [scope, setScope] = useState<ScopeId>('clients');
   const [folderPath, setFolderPath] = useState<string[]>([]);
@@ -199,6 +200,24 @@ export function DocumentsPage() {
     if (isLoaded) return;
     void loadDocuments();
   }, [isLoaded, loadDocuments]);
+
+  // «Под капотом» дозагружаем на сервер файлы, которые раньше оседали только
+  // в браузере (старый локальный стор / неудавшаяся S3-загрузка). Запускаем
+  // один раз после загрузки списка; контент берётся из dataURL/in-memory blob.
+  useEffect(() => {
+    if (!isLoaded) return;
+    void syncPendingUploads().then((res) => {
+      if (res.uploaded > 0) {
+        toast.success(`Дозагружено на сервер: ${res.uploaded}`);
+      }
+      if (res.failed > 0) {
+        toast.warning(
+          `Не удалось дозагрузить: ${res.failed}. Контент части файлов мог не сохраниться в браузере.`,
+        );
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoaded]);
 
   // persist UI prefs
   useEffect(() => {

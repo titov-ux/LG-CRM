@@ -84,17 +84,26 @@ export function ChatPage() {
     return m;
   }, [usersData]);
 
-  // Авто-выбор первого доступного диалога и сброс «битого» activeId.
+  // На desktop чат двухпанельный, поэтому удобно сразу открыть первый диалог.
+  // На мобильном панель одна: авто-открытие пряталo бы список — поэтому там
+  // оставляем список, пользователь выбирает диалог сам.
+  const isDesktop = useIsDesktopChat();
+
+  // Авто-выбор первого доступного диалога (только desktop) и сброс «битого» activeId.
   useEffect(() => {
     if (conversations.length === 0) {
       if (activeId !== null) setActive(null);
       return;
     }
     const hasActive = !!activeId && conversations.some((c) => c.id === activeId);
-    if (!hasActive) {
+    if (hasActive) return;
+    if (isDesktop) {
       setActive(conversations[0].id);
+    } else if (activeId !== null) {
+      // На мобильном просто сбрасываем несуществующий activeId → показываем список.
+      setActive(null);
     }
-  }, [activeId, conversations, setActive]);
+  }, [activeId, conversations, setActive, isDesktop]);
 
   const currentUser = useAuthStore((s) => s.user);
 
@@ -845,4 +854,25 @@ function SearchHits({
       onPick={onPick}
     />
   );
+}
+
+/**
+ * true на desktop-ширине (≥ md = 768px). На мобильном чат однопанельный, и
+ * авто-открытие диалога не нужно — сперва показываем список.
+ */
+function useIsDesktopChat(): boolean {
+  const [isDesktop, setIsDesktop] = useState(
+    () =>
+      typeof window !== 'undefined' &&
+      window.matchMedia('(min-width: 768px)').matches,
+  );
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mq = window.matchMedia('(min-width: 768px)');
+    const update = () => setIsDesktop(mq.matches);
+    update();
+    mq.addEventListener?.('change', update);
+    return () => mq.removeEventListener?.('change', update);
+  }, []);
+  return isDesktop;
 }

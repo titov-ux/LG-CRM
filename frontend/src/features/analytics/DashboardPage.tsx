@@ -48,7 +48,7 @@ export function DashboardPage() {
   const deltaCaption = compare === 'none' ? undefined : COMPARE_LABEL[compare];
 
   return (
-    <div className="flex-1 space-y-3 overflow-auto px-6 pb-6 pt-5">
+    <div className="flex-1 space-y-3 overflow-auto px-4 pb-6 pt-5 sm:px-6">
       {/* Заголовок + селектор периода */}
       <div className="flex items-center justify-between">
         <div>
@@ -61,7 +61,7 @@ export function DashboardPage() {
       </div>
 
       {/* KPI */}
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {isLoading || !summary ? (
           Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24" />)
         ) : (
@@ -110,7 +110,7 @@ export function DashboardPage() {
       </Card>
 
       {/* Воронка + Time-to-hire */}
-      <div className="grid grid-cols-[1.4fr_1fr] gap-3">
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1.4fr_1fr]">
         <Card>
           <CardHeader>
             <CardTitle>Воронка matching</CardTitle>

@@ -195,7 +195,7 @@ export function MobileSidebar() {
       <SheetContent
         side="left"
         hideClose
-        className="flex w-[260px] flex-col gap-0 bg-muted/30 p-0 md:hidden"
+        className="flex w-[260px] flex-col gap-0 bg-background p-0 md:hidden"
       >
         <SidebarNav onNavigate={() => setOpen(false)} />
       </SheetContent>

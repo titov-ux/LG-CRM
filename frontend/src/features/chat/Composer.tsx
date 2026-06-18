@@ -239,7 +239,7 @@ export function Composer({ disabled, candidates, onSend }: Props) {
   return (
     <div
       className={cn(
-        'shrink-0 border-t px-5 py-3 transition-colors',
+        'shrink-0 border-t px-3 py-2.5 transition-colors sm:px-5 sm:py-3',
         dragOver && 'bg-muted/40',
       )}
       onDragOver={(e) => {
@@ -303,7 +303,7 @@ export function Composer({ disabled, candidates, onSend }: Props) {
 
       <div className="relative">
         {mention.open && filtered.length > 0 && (
-          <div className="absolute bottom-full left-0 z-30 mb-1.5 w-72 overflow-hidden rounded-md border bg-background shadow-md">
+          <div className="absolute bottom-full left-0 z-30 mb-1.5 w-72 max-w-[calc(100vw-1.5rem)] overflow-hidden rounded-md border bg-background shadow-md">
             <div className="border-b px-2.5 py-1 text-[10.5px] uppercase tracking-wider text-muted-foreground/70">
               Упомянуть
             </div>

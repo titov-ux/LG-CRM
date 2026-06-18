@@ -76,7 +76,7 @@ export function AttentionList({ data, isLoading }: AttentionListProps) {
   return (
     <div className="space-y-3">
       {/* строка сводок */}
-      <div className="grid grid-cols-5 gap-2">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
         <Summary
           label="Зависшие вакансии"
           total={data.stuckVacancies.total}
@@ -195,10 +195,10 @@ function Summary({
         ? 'border-amber-300/60 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-900/20 dark:text-amber-200'
         : 'border-sky-300/60 bg-sky-50 text-sky-700 dark:border-sky-900 dark:bg-sky-900/20 dark:text-sky-200';
   return (
-    <div className={cn('rounded-md border px-2.5 py-2', toneClass)}>
+    <div className={cn('overflow-hidden rounded-md border px-2.5 py-2', toneClass)}>
       <div className="mb-0.5 flex items-center gap-1 text-[10.5px] uppercase tracking-wide opacity-80">
-        <Icon className="h-3 w-3" />
-        {label}
+        <Icon className="h-3 w-3 shrink-0" />
+        <span className="min-w-0 break-words">{label}</span>
       </div>
       <div className="tnum text-[18px] font-bold leading-none">{total}</div>
     </div>

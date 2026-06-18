@@ -50,6 +50,10 @@ export function MessageItem({
 }: Props) {
   const [editing, setEditing] = useState(false);
   const [isReactionPickerOpen, setIsReactionPickerOpen] = useState(false);
+  // На touch-устройствах нет hover, поэтому панель действий раскрывается по
+  // тапу на сообщение. На desktop поведение прежнее (hover).
+  const coarsePointer = useCoarsePointer();
+  const [touchActionsOpen, setTouchActionsOpen] = useState(false);
   const update = useUpdateMessage(message.conversationId);
   const remove = useDeleteMessage(message.conversationId);
   const toggleReaction = useToggleReaction(message.conversationId);
@@ -96,7 +100,12 @@ export function MessageItem({
   };
 
   return (
-    <div className="group/msg relative">
+    <div
+      className={cn('group/msg relative', coarsePointer && 'cursor-pointer')}
+      onClick={
+        coarsePointer ? () => setTouchActionsOpen((v) => !v) : undefined
+      }
+    >
       <div className="whitespace-pre-wrap break-words text-[13.5px] leading-[1.55] text-foreground/95">
         {renderMessageText(message.text, userMap, { highlightMeId: meId })}
         {message.editedAt && (
@@ -150,7 +159,9 @@ export function MessageItem({
       <div
         className={cn(
           'absolute right-0 top-0 gap-0.5 rounded-md border bg-background px-1 py-0.5 shadow-sm',
-          isReactionPickerOpen ? 'flex' : 'hidden group-hover/msg:flex',
+          isReactionPickerOpen || touchActionsOpen
+            ? 'flex'
+            : 'hidden group-hover/msg:flex',
         )}
       >
         <EmojiPicker
@@ -320,4 +331,21 @@ function pluralizeReplies(n: number): string {
   if (mod10 === 1 && mod100 !== 11) return 'ответ';
   if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return 'ответа';
   return 'ответов';
+}
+
+/**
+ * true на устройствах без точного указателя (телефоны/планшеты), где нет
+ * hover. Используется, чтобы раскрывать панель действий по тапу.
+ */
+function useCoarsePointer(): boolean {
+  const [coarse, setCoarse] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mq = window.matchMedia('(hover: none)');
+    const update = () => setCoarse(mq.matches);
+    update();
+    mq.addEventListener?.('change', update);
+    return () => mq.removeEventListener?.('change', update);
+  }, []);
+  return coarse;
 }

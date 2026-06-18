@@ -20,6 +20,7 @@ import {
   ArchiveRestore,
   Bell,
   BellOff,
+  ChevronLeft,
   MoreHorizontal,
   Plus,
   Search,
@@ -111,8 +112,14 @@ export function ChatPage() {
 
   return (
     <div className="flex h-[calc(100vh-var(--app-header-h,56px))] min-h-0 flex-1 overflow-hidden bg-background">
-      {/* Левая колонка — список диалогов. */}
-      <aside className="flex w-72 shrink-0 flex-col border-r bg-muted/20">
+      {/* Левая колонка — список диалогов. На мобильном занимает весь экран и
+          скрывается, когда открыт конкретный диалог. */}
+      <aside
+        className={cn(
+          'w-full shrink-0 flex-col border-r bg-muted/20 md:flex md:w-72',
+          activeConversation ? 'hidden md:flex' : 'flex',
+        )}
+      >
         <div className="flex shrink-0 items-center gap-1 px-3 pb-2 pt-3">
           <div className="relative flex-1">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -200,14 +207,21 @@ export function ChatPage() {
         </div>
       </aside>
 
-      {/* Центральная колонка — лента и composer. */}
-      <section className="flex min-w-0 flex-1 flex-col">
+      {/* Центральная колонка — лента и composer. На мобильном показывается
+          только при выбранном диалоге (иначе виден список). */}
+      <section
+        className={cn(
+          'min-w-0 flex-1 flex-col',
+          activeConversation ? 'flex' : 'hidden md:flex',
+        )}
+      >
         {activeConversation ? (
           <ConversationView
             conversation={activeConversation}
             meId={currentUser?.id ?? null}
             userMap={userMap}
             onlineUserIds={onlineUserIds}
+            onBack={() => setActive(null)}
           />
         ) : (
           <EmptyCenter onCreate={() => setNewOpen(true)} />
@@ -479,11 +493,14 @@ function ConversationView({
   meId,
   userMap,
   onlineUserIds,
+  onBack,
 }: {
   conversation: ChatConversation;
   meId: UUID | null;
   userMap: Map<UUID, User>;
   onlineUserIds: Set<UUID>;
+  /** Назад к списку диалогов (используется на мобильном). */
+  onBack?: () => void;
 }) {
   const title = titleOf(conversation, meId, userMap);
   const initials = initialsOf(conversation, meId, userMap);
@@ -585,7 +602,18 @@ function ConversationView({
 
   return (
     <>
-      <header className="flex shrink-0 items-center gap-3 border-b px-5 py-3">
+      <header className="flex shrink-0 items-center gap-2 border-b px-3 py-3 sm:gap-3 sm:px-5">
+        {onBack && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="-ml-1 h-8 w-8 shrink-0 md:hidden"
+            aria-label="К списку диалогов"
+            onClick={onBack}
+          >
+            <ChevronLeft className="h-5 w-5" />
+          </Button>
+        )}
         <AvatarWithStatusDot initials={initials} online={isOnline} />
         <div className="min-w-0 flex-1">
           <div className="truncate text-[14px] font-semibold leading-tight">
@@ -611,7 +639,7 @@ function ConversationView({
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="min-h-0 flex-1 overflow-y-auto px-6 py-5"
+        className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-6 sm:py-5"
       >
         {isFetching && messages.length === 0 ? (
           <div className="py-12 text-center text-[12px] text-muted-foreground">

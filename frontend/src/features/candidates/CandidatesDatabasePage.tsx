@@ -240,6 +240,8 @@ export function CandidatesDatabasePage() {
       </div>
 
         <FilterBar
+          globalSearch
+          searchPlaceholder="Поиск кандидатов…"
           hasActiveFilters={hasActiveBoardFilters}
           onReset={resetBoardFilters}
           rightSlot={

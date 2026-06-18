@@ -108,6 +108,8 @@ export function ContactsListPage() {
   return (
     <div className="flex-1 overflow-auto px-6 pb-6 pt-5">
       <FilterBar
+        globalSearch
+        searchPlaceholder="Поиск контактов…"
         hasActiveFilters={hasActiveFilters}
         onReset={() => setFilters(EMPTY)}
         leftSlot={

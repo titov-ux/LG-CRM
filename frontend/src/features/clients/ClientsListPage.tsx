@@ -154,6 +154,8 @@ export function ClientsListPage() {
   return (
     <div className="flex-1 overflow-auto px-6 pb-6 pt-5">
       <FilterBar
+        globalSearch
+        searchPlaceholder="Поиск клиентов…"
         hasActiveFilters={hasActiveFilters}
         onReset={() => setFilters(EMPTY)}
         leftSlot={

@@ -1,6 +1,8 @@
-import { Check, ChevronDown, Filter, X } from 'lucide-react';
+import { Check, ChevronDown, Filter, Search, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { useFiltersStore } from '@/stores/filters';
 import { cn } from '@/lib/utils';
 
 // === FilterChip ===
@@ -103,15 +105,27 @@ export function FilterBar({
   rightSlot,
   onReset,
   hasActiveFilters,
+  globalSearch = false,
+  searchPlaceholder = 'Поиск…',
 }: {
   children: React.ReactNode;
   leftSlot?: React.ReactNode;
   rightSlot?: React.ReactNode;
   onReset?: () => void;
   hasActiveFilters?: boolean;
+  /**
+   * Показать строку поиска, привязанную к общему стору фильтров. На desktop
+   * поиск живёт в шапке; на мобильном шапочный поиск скрыт, поэтому страницы
+   * со списками/канбанами включают этот флаг, чтобы поиск был доступен.
+   * Поле рендерится только на узких экранах (md:hidden).
+   */
+  globalSearch?: boolean;
+  searchPlaceholder?: string;
 }) {
   return (
-    <div className="mb-3 flex flex-wrap items-center gap-1 -mx-1 px-1 text-[12px]">
+    <>
+      {globalSearch && <MobileGlobalSearch placeholder={searchPlaceholder} />}
+      <div className="mb-3 flex flex-wrap items-center gap-1 -mx-1 px-1 text-[12px]">
       {leftSlot && (
         <>
           <div className="flex items-center pr-1">{leftSlot}</div>
@@ -137,6 +151,26 @@ export function FilterBar({
           </Button>
         )}
       </div>
+      </div>
+    </>
+  );
+}
+
+// === MobileGlobalSearch ===
+// Поле поиска для мобильных экранов, привязанное к общему стору фильтров.
+// На desktop (md+) скрыто — там поиск находится в шапке.
+function MobileGlobalSearch({ placeholder }: { placeholder?: string }) {
+  const search = useFiltersStore((s) => s.search);
+  const setSearch = useFiltersStore((s) => s.setSearch);
+  return (
+    <div className="relative mb-2 md:hidden">
+      <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+      <Input
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder={placeholder}
+        className="h-9 pl-8 text-[13px]"
+      />
     </div>
   );
 }

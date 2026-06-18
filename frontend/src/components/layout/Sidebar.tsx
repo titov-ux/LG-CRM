@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import {
   Activity,
   Bell,
@@ -22,6 +23,8 @@ import { Link, useRouterState } from '@tanstack/react-router';
 import { cn } from '@/lib/utils';
 import { useNotifications } from '@/features/notifications/hooks';
 import { useAuthStore } from '@/stores/auth';
+import { useUIStore } from '@/stores/ui';
+import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { AppInfoPopover } from './AppInfoPopover';
 
 interface NavItem {
@@ -80,14 +83,19 @@ const GROUPS: NavGroup[] = [
   },
 ];
 
-export function Sidebar() {
+/**
+ * Внутреннее содержимое сайдбара (бренд + навигация). Используется и в
+ * desktop-aside, и в мобильном выезжающем drawer. onNavigate вызывается при
+ * клике по пункту — на мобильном это закрывает drawer.
+ */
+function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const { data: notifications } = useNotifications();
   const unreadCount = notifications?.filter((n) => !n.read).length ?? 0;
   const isAdmin = useAuthStore((s) => s.user?.role) === 'admin';
 
   return (
-    <aside className="flex w-[232px] shrink-0 flex-col border-r bg-muted/30">
+    <>
       <AppInfoPopover>
         <button
           type="button"
@@ -104,7 +112,7 @@ export function Sidebar() {
         </button>
       </AppInfoPopover>
 
-      <nav className="flex-1 space-y-4 px-2 py-2">
+      <nav className="flex-1 space-y-4 overflow-y-auto px-2 py-2">
         {GROUPS.map((group, gi) => (
           <div key={gi}>
             {group.label && (
@@ -116,44 +124,81 @@ export function Sidebar() {
               {group.items
                 .filter((item) => !item.adminOnly || isAdmin)
                 .map((item) => {
-                const Icon = item.icon;
-                const active = pathname.startsWith(item.to);
-                const badge =
-                  item.to === '/notifications' ? unreadCount : item.badge;
-                return (
-                  <li key={item.to}>
-                    <Link
-                      to={item.to}
-                      className={cn(
-                        'group flex items-center gap-2.5 rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors',
-                        active
-                          ? 'bg-background text-foreground shadow-sm'
-                          : 'text-muted-foreground hover:bg-background/60 hover:text-foreground',
-                      )}
-                    >
-                      <Icon className="h-4 w-4" strokeWidth={1.8} />
-                      <span className="flex-1">{item.label}</span>
-                      {item.tag && (
-                        <span
-                          title={item.tagHint}
-                          className="rounded border border-border/60 bg-muted/60 px-1.5 text-[10px] font-semibold uppercase leading-4 tracking-wide text-muted-foreground"
-                        >
-                          {item.tag}
-                        </span>
-                      )}
-                      {badge != null && badge > 0 && (
-                        <span className="tnum rounded bg-red-500 px-1.5 text-[10px] font-semibold leading-4 text-white">
-                          {badge}
-                        </span>
-                      )}
-                    </Link>
-                  </li>
-                );
-              })}
+                  const Icon = item.icon;
+                  const active = pathname.startsWith(item.to);
+                  const badge =
+                    item.to === '/notifications' ? unreadCount : item.badge;
+                  return (
+                    <li key={item.to}>
+                      <Link
+                        to={item.to}
+                        onClick={onNavigate}
+                        className={cn(
+                          'group flex items-center gap-2.5 rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors',
+                          active
+                            ? 'bg-background text-foreground shadow-sm'
+                            : 'text-muted-foreground hover:bg-background/60 hover:text-foreground',
+                        )}
+                      >
+                        <Icon className="h-4 w-4" strokeWidth={1.8} />
+                        <span className="flex-1">{item.label}</span>
+                        {item.tag && (
+                          <span
+                            title={item.tagHint}
+                            className="rounded border border-border/60 bg-muted/60 px-1.5 text-[10px] font-semibold uppercase leading-4 tracking-wide text-muted-foreground"
+                          >
+                            {item.tag}
+                          </span>
+                        )}
+                        {badge != null && badge > 0 && (
+                          <span className="tnum rounded bg-red-500 px-1.5 text-[10px] font-semibold leading-4 text-white">
+                            {badge}
+                          </span>
+                        )}
+                      </Link>
+                    </li>
+                  );
+                })}
             </ul>
           </div>
         ))}
       </nav>
+    </>
+  );
+}
+
+/** Desktop-сайдбар: фиксированный столбец, скрыт на узких экранах (< md). */
+export function Sidebar() {
+  return (
+    <aside className="hidden w-[232px] shrink-0 flex-col border-r bg-muted/30 md:flex">
+      <SidebarNav />
     </aside>
+  );
+}
+
+/**
+ * Мобильный сайдбар: выезжающая слева панель. Управляется через ui-стор,
+ * автоматически закрывается при смене маршрута. Скрыт на desktop (md+).
+ */
+export function MobileSidebar() {
+  const open = useUIStore((s) => s.mobileNavOpen);
+  const setOpen = useUIStore((s) => s.setMobileNavOpen);
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+
+  // Закрываем drawer при любой смене маршрута (в т.ч. программной навигации).
+  useEffect(() => {
+    setOpen(false);
+  }, [pathname, setOpen]);
+
+  return (
+    <Sheet open={open} onOpenChange={setOpen}>
+      <SheetContent
+        side="left"
+        hideClose
+        className="flex w-[260px] flex-col gap-0 bg-muted/30 p-0 md:hidden"
+      >
+        <SidebarNav onNavigate={() => setOpen(false)} />
+      </SheetContent>
+    </Sheet>
   );
 }

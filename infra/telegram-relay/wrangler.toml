@@ -1,0 +1,9 @@
+# Cloudflare Worker — релей Telegram Bot API. Деплой: см. README.md.
+# BOT_TOKEN задаётся НЕ здесь, а секретом: `wrangler secret put BOT_TOKEN`.
+name = "crm-lg-tg-relay"
+main = "worker.js"
+compatibility_date = "2026-06-01"
+
+# Лог только об ошибках достаточно; при желании включить observability:
+# [observability]
+# enabled = true

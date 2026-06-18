@@ -155,6 +155,8 @@ export function TendersKanbanPage() {
     <div className="flex h-full flex-col">
       <div className="px-6 pt-4">
         <FilterBar
+          globalSearch
+          searchPlaceholder="Поиск тендеров…"
           hasActiveFilters={hasActiveBoardFilters}
           onReset={resetBoardFilters}
           leftSlot={

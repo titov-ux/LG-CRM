@@ -152,6 +152,8 @@ export function VacanciesKanbanPage() {
     <div className="flex h-full flex-col">
       <div className="px-6 pt-4">
         <FilterBar
+          globalSearch
+          searchPlaceholder="Поиск вакансий…"
           hasActiveFilters={hasActiveBoardFilters}
           onReset={resetBoardFilters}
           rightSlot={

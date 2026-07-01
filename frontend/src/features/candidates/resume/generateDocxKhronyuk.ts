@@ -2,7 +2,7 @@ import {
   AlignmentType,
   BorderStyle,
   Document,
-  LevelFormat,
+  Footer,
   Packer,
   Paragraph,
   Table,
@@ -10,46 +10,59 @@ import {
   TableRow,
   TextRun,
   WidthType,
+  type IBorderOptions,
   type ISectionOptions,
 } from 'docx';
 import type { Candidate } from '@/api/types';
-import { buildResumeModel, calcExperienceLabel, type ResumeModel } from './buildResumeModel';
+import { buildResumeModel, type ResumeModel } from './buildResumeModel';
 
 /**
- * Альтернативный шаблон резюме «Хронюк / Цифровые привычки» (для МБ).
+ * Шаблон резюме для Московской биржи (МБ) — «Шаблон Резюме ПАП для B2B 06/2026».
  *
- * Визуальные правила (см. ПРОМПТ_Шабло.md):
- *   - шрифт Calibri, ВЕСЬ текст жирный (bold=true);
- *   - заголовки разделов — красные (#ff0000), sz=36 (18pt);
- *   - тело — sz=24 (12pt) #0f1115 или #111827;
- *   - проекты идут нумерованным списком «1. … 2. … N. …».
+ * Структура (порядок полей менять нельзя — требование МБ):
+ *   1. Заголовок «Резюме кандидата» (по центру, тёмно-синий).
+ *   2. ФИО (красный) + Позиция / Уровень / Готов выйти на проект с / Локация.
+ *   3. Разделительная линия.
+ *   4. Сопроводительное письмо (О себе, знания и навыки).
+ *   5. Чек-лист (заполняется вручную из Excel — выводим только пометку).
+ *   6. Ключевые навыки (Основной стек) — таблица: Платформы / Языки
+ *      программирования / Инструменты / Базы данных.
+ *   7. Образование.
+ *   8. Опыт работы (Роль-Уровень-Компетенция).
+ *   9. Недавние проекты (Описание проекта + Что было сделано).
+ *   Футер на каждой странице: пометка об обязательности полей.
  *
- * Источник данных — обычная Candidate-модель (тот же механизм, что у
- * базового generateDocx). Поля, которых нет в карточке (чеклист, доп.
- * информация, «Готов выйти на проект с»), берутся из доступных данных
- * или скипаются.
+ * Визуальные правила:
+ *   - шрифт Arial;
+ *   - заголовки разделов — красные (#FF0000), body — обычного начертания
+ *     тёмно-серым (#333333), заголовки проектов/подзаголовки — тёмно-синие
+ *     (#1F3864) и жирные.
  */
 
-const FONT = 'Calibri';
+const FONT = 'Arial';
 
 // Цвета
-const C_HEADER = '111827';
-const C_LABEL = '2C2C36';
-const C_RED = 'FF0000';
-const C_BODY = '0F1115';
+const C_NAVY = '1F3864'; // заголовок, названия проектов, подзаголовки
+const C_RED = 'FF0000'; // заголовки секций, ФИО
+const C_BODY = '333333'; // основной текст
+const C_MUTED = '595959'; // даты, технологии, мелкие пометки
+const C_FOOT = '808080'; // футер
+const C_BORDER = 'BFBFBF'; // границы таблицы навыков
 
 // Размеры (half-points: 24 = 12pt)
-const SZ_DEF = 24;
-const SZ_SM = 22;
-const SZ_COVER = 32;
-const SZ_SEC = 36;
+const SZ_TITLE = 36; // «Резюме кандидата»
+const SZ_NAME = 32; // ФИО
+const SZ_SEC = 30; // красные заголовки секций
+const SZ_PROJ = 28; // название проекта
+const SZ_BODY = 22; // основной текст (11pt)
+const SZ_SM = 18; // даты / технологии / футер (9pt)
 
-const NIL_BORDER = { style: BorderStyle.NIL, size: 0, color: 'FFFFFF' } as const;
-const NIL_BORDERS = {
-  top: NIL_BORDER,
-  bottom: NIL_BORDER,
-  left: NIL_BORDER,
-  right: NIL_BORDER,
+const CELL_BORDER: IBorderOptions = { style: BorderStyle.SINGLE, size: 4, color: C_BORDER };
+const CELL_BORDERS = {
+  top: CELL_BORDER,
+  bottom: CELL_BORDER,
+  left: CELL_BORDER,
+  right: CELL_BORDER,
 } as const;
 
 interface RunOpts {
@@ -57,19 +70,13 @@ interface RunOpts {
   sz?: number;
   color?: string;
   br?: number;
+  italics?: boolean;
 }
 
-/** В шаблоне Хронюк bold=true ПО УМОЛЧАНИЮ — это не опечатка. */
+/** По умолчанию текст ОБЫЧНЫЙ (не жирный) — жирность включается явно. */
 function r(text: string, opts: RunOpts = {}): TextRun {
-  const { bold = true, sz = SZ_DEF, color, br = 0 } = opts;
-  return new TextRun({
-    text,
-    bold,
-    size: sz,
-    font: FONT,
-    color,
-    break: br,
-  });
+  const { bold = false, sz = SZ_BODY, color = C_BODY, br = 0, italics = false } = opts;
+  return new TextRun({ text, bold, size: sz, font: FONT, color, break: br, italics });
 }
 
 function sanitizeText(text: string): string {
@@ -95,67 +102,24 @@ function formatProjectPeriodMb(startMonth: string, endMonth: string | null | und
 
 function pa(
   children: TextRun | TextRun[],
-  spacing: { after?: number; before?: number } = {},
+  spacing: { after?: number; before?: number; line?: number } = {},
+  alignment?: (typeof AlignmentType)[keyof typeof AlignmentType],
 ): Paragraph {
   return new Paragraph({
     children: Array.isArray(children) ? children : [children],
-    spacing: { after: spacing.after ?? 0, before: spacing.before ?? 0 },
+    spacing: { after: spacing.after ?? 0, before: spacing.before ?? 0, line: spacing.line },
+    alignment,
   });
 }
 
-function redHeader(text: string, sz: number = SZ_SEC): Paragraph {
+/** Красный заголовок секции. */
+function redHeader(text: string, spacing: { before?: number; after?: number } = {}): Paragraph {
   return new Paragraph({
-    children: [r(text, { bold: true, sz, color: C_RED })],
-    spacing: { before: 240, after: 120 },
+    children: [r(text, { bold: true, sz: SZ_SEC, color: C_RED })],
+    spacing: { before: spacing.before ?? 260, after: spacing.after ?? 120 },
   });
 }
 
-function tcNoB(width: number, children: Paragraph[]): TableCell {
-  return new TableCell({
-    width: { size: width, type: WidthType.DXA },
-    borders: NIL_BORDERS,
-    margins: { top: 40, bottom: 40, left: 0, right: 80 },
-    children,
-  });
-}
-
-function tbl2(columnWidths: [number, number], rows: TableRow[]): Table {
-  return new Table({
-    width: { size: columnWidths[0] + columnWidths[1], type: WidthType.DXA },
-    columnWidths,
-    borders: NIL_BORDERS,
-    rows,
-  });
-}
-
-function numItem(text: string): Paragraph {
-  return new Paragraph({
-    numbering: { reference: 'khronyuk-decimal', level: 0 },
-    children: [r(text, { bold: true, sz: SZ_DEF, color: C_BODY })],
-    spacing: { after: 60, before: 0 },
-  });
-}
-
-function projHeader(name: string, dates: string, role: string, desc: string): Paragraph {
-  const lines: TextRun[] = [
-    r('Проект: ' + name, { bold: true, sz: SZ_DEF, color: C_BODY }),
-    r(dates, { bold: true, sz: SZ_DEF, color: C_BODY, br: 1 }),
-    r('Роль в проекте - ' + role, { bold: true, sz: SZ_DEF, color: C_BODY, br: 1 }),
-  ];
-  if (desc) {
-    lines.push(r('Описание проекта:', { bold: true, sz: SZ_DEF, color: C_BODY, br: 1 }));
-    lines.push(r(desc, { bold: true, sz: SZ_DEF, color: C_BODY, br: 1 }));
-  }
-  return new Paragraph({
-    children: lines,
-    spacing: { before: 200, after: 80 },
-  });
-}
-
-/**
- * Достаём «уровень» (Senior / Middle / Junior / Lead) — это grade
- * кандидата, но шаблону всё равно без него, поэтому скипаем при пустом.
- */
 function getLevel(candidate: Candidate): string {
   return candidate.grade ?? '';
 }
@@ -168,234 +132,271 @@ function getReadyDate(): string {
   return 'ASAP';
 }
 
-/**
- * Чек лист по шаблону — короткие предложения о том, что кандидат умеет
- * под вакансию. У нас нет отдельного поля, поэтому собираем по приоритету:
- *   1) summary, разбитый по строкам/предложениям с «- » или «+ »;
- *   2) если в summary нет буллетов — берём первые несколько achievements
- *      из самого свежего места работы (это близко к смыслу «чеклиста»).
- */
-function buildChecklistItems(candidate: Candidate, model: ResumeModel): string[] {
-  // 1. Попробуем вытащить буллеты из summary
-  if (model.summary) {
-    const bulletLines = model.summary
-      .split(/\r?\n/)
-      .map((line) => line.replace(/^[-•+*·]\s*/, '').trim())
-      .filter(Boolean);
-    if (bulletLines.length >= 2) return bulletLines.map(sanitizeText);
-  }
-  // 2. Иначе — достижения свежего опыта (до 15 пунктов)
-  const recent = candidate.experience?.[0];
-  if (recent?.achievements?.length) {
-    return recent.achievements.slice(0, 15).map(sanitizeText);
-  }
-  return [];
-}
+// ─────────────────────────────────────────────────────────────────────────
+// Заголовок + шапка
+// ─────────────────────────────────────────────────────────────────────────
 
-/**
- * Доп. информация — собираем то, что не вошло в чеклист, но полезно
- * для МБ: сертификаты и языки.
- */
-function buildExtraItems(model: ResumeModel): string[] {
-  const items: string[] = [];
-  for (const c of model.certifications) {
-    if (c.line) items.push(c.line);
-  }
-  if (model.languages?.line) {
-    items.push('Языки: ' + model.languages.line);
-  }
-  return items;
-}
-
-function buildHeaderBlock(candidate: Candidate, model: ResumeModel): Paragraph {
-  const level = getLevel(candidate);
-  const lines: TextRun[] = [
-    r(model.fullName.toUpperCase(), { bold: true, sz: SZ_SEC, color: C_HEADER }),
-  ];
-  if (model.position) {
-    lines.push(r('Позиция: ' + model.position, { bold: true, sz: SZ_DEF, color: C_HEADER, br: 1 }));
-  }
-  if (level) {
-    lines.push(r('Уровень: ' + level, { bold: true, sz: SZ_DEF, color: C_HEADER, br: 1 }));
-  }
-  lines.push(
-    r('Готов выйти на проект с: ' + getReadyDate(), {
-      bold: true,
-      sz: SZ_DEF,
-      color: C_HEADER,
-      br: 1,
-    }),
-  );
-  if (model.location) {
-    lines.push(r('Локация: ' + model.location, { bold: true, sz: SZ_DEF, color: C_HEADER, br: 1 }));
-  }
+function buildTitle(): Paragraph {
   return new Paragraph({
-    children: lines,
-    spacing: { after: 180, before: 0, line: 276 },
+    children: [r('Резюме кандидата', { bold: true, sz: SZ_TITLE, color: C_NAVY })],
+    alignment: AlignmentType.CENTER,
+    spacing: { after: 260, before: 0 },
   });
 }
 
-/** Дата рождения и опыт работы. */
-function buildBirthdayExperience(candidate: Candidate, model: ResumeModel): Paragraph[] {
+function buildHeaderBlock(candidate: Candidate, model: ResumeModel): Paragraph[] {
+  const level = getLevel(candidate);
   const out: Paragraph[] = [];
-  if (model.birthday) {
-    out.push(pa([r(model.birthday, { bold: true, color: C_HEADER })], { after: 0 }));
-  }
-  const expLabel = calcExperienceLabel(
-    (candidate.experience ?? []).map((e) => ({ startMonth: e.startMonth, endMonth: e.endMonth })),
-  );
-  out.push(
-    pa(
-      [
-        r('Опыт работы: ', { bold: true, sz: SZ_SM, color: C_LABEL }),
-        r(expLabel, { bold: true, sz: SZ_SM, color: C_LABEL }),
-      ],
-      { after: 160 },
-    ),
-  );
-  return out;
-}
 
-function buildCoverLetter(model: ResumeModel, checklist: string[], extra: string[]): Paragraph[] {
-  const out: Paragraph[] = [];
   out.push(
     new Paragraph({
-      children: [
-        r('Сопроводительное письмо (О себе, знания и навыки)', {
-          bold: true,
-          sz: SZ_COVER,
-          color: C_RED,
-        }),
-      ],
-      spacing: { before: 200, after: 120 },
+      children: [r(model.fullName, { bold: true, sz: SZ_NAME, color: C_RED })],
+      spacing: { after: 80, before: 0 },
     }),
   );
+
+  if (model.position) {
+    out.push(pa([r('Позиция: ' + model.position)], { after: 20 }));
+  }
+  if (level) {
+    out.push(pa([r('Уровень: ' + level)], { after: 20 }));
+  }
+  out.push(
+    pa([r('Готов(-а) выйти на проект с: ' + getReadyDate(), { bold: true })], { after: 20 }),
+  );
+  if (model.location) {
+    out.push(pa([r('Локация: ' + model.location, { bold: true })], { after: 20 }));
+  }
+
+  // Разделительная линия
+  out.push(
+    new Paragraph({
+      children: [r('', { sz: 2 })],
+      border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: C_BORDER, space: 1 } },
+      spacing: { after: 60, before: 60 },
+    }),
+  );
+
+  return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Сопроводительное письмо + Чек-лист
+// ─────────────────────────────────────────────────────────────────────────
+
+function buildCoverLetter(model: ResumeModel): Paragraph[] {
+  const out: Paragraph[] = [];
+  out.push(redHeader('Сопроводительное письмо (О себе, знания и навыки)'));
   if (model.summary) {
-    // Если summary не «буллетный» — выводим как абзац-текст письма
-    const isBulletSummary = /^[-•+*·]\s/m.test(model.summary);
-    if (!isBulletSummary) {
-      out.push(pa([r(model.summary, { bold: true })], { after: 80 }));
+    for (const line of model.summary.split(/\r?\n/)) {
+      const clean = line.replace(/^[-•+*·]\s*/, '').trim();
+      if (clean) out.push(pa([r(clean)], { after: 40 }));
     }
-  }
-  out.push(pa([r('Чек лист:', { bold: true, sz: SZ_SEC, color: C_RED })], { after: 60 }));
-  for (const item of checklist) {
-    out.push(
-      pa(
-        [
-          r('+ ', { bold: true, color: C_BODY }),
-          r(item, { bold: true, color: C_BODY }),
-        ],
-        { after: 40 },
-      ),
-    );
-  }
-  if (extra.length > 0) {
-    out.push(
-      pa([r('Дополнительная информация:', { bold: true, sz: SZ_COVER })], {
-        after: 60,
-        before: 100,
-      }),
-    );
-    for (const item of extra) {
-      out.push(
-        pa(
-          [
-            r('+ ', { bold: true, color: C_BODY }),
-            r(item, { bold: true, color: C_BODY }),
-          ],
-          { after: 40 },
-        ),
-      );
-    }
-  } else {
-    out.push(pa([r('Дополнительная информация:', { bold: true, sz: SZ_COVER })], { before: 100 }));
   }
   return out;
 }
 
-function buildSkillsBlock(model: ResumeModel): Paragraph[] | Array<Paragraph | Table> {
-  if (model.skillCategories.length === 0) return [];
-  const out: Array<Paragraph | Table> = [];
-  out.push(redHeader('Ключевые навыки (Основной стек)'));
+function buildChecklist(): Paragraph[] {
+  return [
+    redHeader('Чек-лист'),
+    pa([r('(скопировать заполненный чек-лист из Excel, приложенного к запросу)', {
+      sz: SZ_SM,
+      color: C_MUTED,
+    })]),
+  ];
+}
 
-  // Правая колонка — список «Категория: items»
-  const rightCellParas: Paragraph[] = model.skillCategories.map((cat) =>
-    pa(
-      [
-        r(cat.name + ':', { bold: true, color: C_BODY }),
-        r(' ' + cat.items.join(', '), { bold: true, color: C_BODY }),
-      ],
-      { after: 40 },
-    ),
+// ─────────────────────────────────────────────────────────────────────────
+// Ключевые навыки — таблица с 4 фиксированными строками
+// ─────────────────────────────────────────────────────────────────────────
+
+type SkillBucketKey = 'platforms' | 'languages' | 'tools' | 'databases';
+
+const SKILL_ROWS: { key: SkillBucketKey; label: string }[] = [
+  { key: 'platforms', label: 'Платформы' },
+  { key: 'languages', label: 'Языки программирования' },
+  { key: 'tools', label: 'Инструменты' },
+  { key: 'databases', label: 'Базы данных' },
+];
+
+/** Раскладывает произвольные категории навыков кандидата по 4 строкам МБ. */
+function bucketSkills(model: ResumeModel): Record<SkillBucketKey, string[]> {
+  const buckets: Record<SkillBucketKey, string[]> = {
+    platforms: [],
+    languages: [],
+    tools: [],
+    databases: [],
+  };
+  for (const cat of model.skillCategories) {
+    const name = cat.name.toLowerCase();
+    let key: SkillBucketKey;
+    if (/платформ|операционн|\bос\b|\bos\b/.test(name)) {
+      key = 'platforms';
+    } else if (/язык|language/.test(name)) {
+      key = 'languages';
+    } else if (/баз.*данн|\bбд\b|\bсубд\b|database|\bsql\b/.test(name)) {
+      key = 'databases';
+    } else {
+      key = 'tools';
+    }
+    buckets[key].push(...cat.items);
+  }
+  return buckets;
+}
+
+function skillCell(width: number, paras: Paragraph[]): TableCell {
+  return new TableCell({
+    width: { size: width, type: WidthType.DXA },
+    borders: CELL_BORDERS,
+    margins: { top: 60, bottom: 60, left: 100, right: 100 },
+    children: paras,
+  });
+}
+
+function buildSkillsBlock(model: ResumeModel): Array<Paragraph | Table> {
+  if (model.skillCategories.length === 0) return [];
+  const buckets = bucketSkills(model);
+  const out: Array<Paragraph | Table> = [redHeader('Ключевые навыки (Основной стек)')];
+
+  const rows = SKILL_ROWS.map(
+    ({ key, label }) =>
+      new TableRow({
+        children: [
+          skillCell(2900, [pa([r(label, { bold: true })])]),
+          skillCell(6738, [pa([r(buckets[key].join(', '))])]),
+        ],
+      }),
   );
 
   out.push(
-    tbl2(
-      [2500, 7138],
-      [
-        new TableRow({
-          children: [
-            tcNoB(2500, [pa([r('Ключевые навыки', { bold: true, sz: SZ_SM })], { after: 0 })]),
-            tcNoB(7138, rightCellParas),
-          ],
-        }),
-      ],
-    ),
+    new Table({
+      width: { size: 9638, type: WidthType.DXA },
+      columnWidths: [2900, 6738],
+      borders: CELL_BORDERS,
+      rows,
+    }),
   );
   return out;
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Образование
+// ─────────────────────────────────────────────────────────────────────────
 
 function buildEducationBlock(model: ResumeModel): Paragraph[] {
   if (model.education.length === 0) return [];
   const out: Paragraph[] = [redHeader('Образование')];
   for (const edu of model.education) {
-    const parts: TextRun[] = [];
-    parts.push(r(edu.degree + '  ', { bold: true, color: C_HEADER }));
-    if (edu.institutionLine) {
-      parts.push(r(edu.institutionLine + '  ', { bold: true, color: C_HEADER }));
-    }
-    if (edu.specialty) {
-      parts.push(r(edu.specialty, { bold: true, color: C_HEADER }));
-    }
-    out.push(pa(parts, { after: 120 }));
+    const line1 = [edu.specialty, edu.degree].filter(Boolean).join(', ');
+    if (line1) out.push(pa([r(line1, { bold: true, color: C_NAVY })], { after: 20 }));
+    if (edu.institutionLine) out.push(pa([r(edu.institutionLine)], { after: 120 }));
   }
   return out;
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Опыт работы (Роль-Уровень-Компетенция)
+// ─────────────────────────────────────────────────────────────────────────
+
+function buildExperienceBlock(candidate: Candidate, model: ResumeModel): Paragraph[] {
+  if (model.experience.length === 0) return [];
+  const level = getLevel(candidate);
+  const out: Paragraph[] = [redHeader('Опыт работы')];
+  out.push(pa([r('(Роль-Уровень-Компетенция)', { bold: true, color: C_NAVY, sz: SZ_BODY })], {
+    after: 120,
+  }));
+
+  for (const [idx, exp] of model.experience.entries()) {
+    const rawExp = candidate.experience?.[idx];
+    const period = rawExp
+      ? formatProjectPeriodMb(rawExp.startMonth, rawExp.endMonth)
+      : sanitizeText(exp.period);
+    const roleLine = [exp.position, level].filter(Boolean).join(', ');
+    out.push(
+      pa(
+        [r([roleLine, exp.company].filter(Boolean).join(' - '), { bold: true, color: C_NAVY })],
+        { after: 20, before: idx === 0 ? 0 : 120 },
+      ),
+    );
+    out.push(pa([r(period, { sz: SZ_SM, color: C_MUTED })], { after: 40 }));
+    if (exp.project) out.push(pa([r(exp.project)], { after: 40 }));
+  }
+  return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Недавние проекты
+// ─────────────────────────────────────────────────────────────────────────
 
 function buildProjectsBlock(candidate: Candidate, model: ResumeModel): Paragraph[] {
   if (model.experience.length === 0) return [];
-  const out: Paragraph[] = [
-    new Paragraph({
-      children: [r('Недавние проекты', { bold: true, color: C_HEADER })],
-      spacing: { before: 240, after: 120 },
-    }),
-  ];
+  const out: Paragraph[] = [redHeader('Недавние проекты')];
+
   for (const [idx, exp] of model.experience.entries()) {
     const rawExp = candidate.experience?.[idx];
-    const strictPeriod = rawExp
+    const period = rawExp
       ? formatProjectPeriodMb(rawExp.startMonth, rawExp.endMonth)
       : sanitizeText(exp.period);
-    out.push(projHeader(exp.company, strictPeriod, exp.position, exp.project ?? ''));
-    for (const a of exp.achievements) {
-      out.push(numItem(a));
-    }
+
+    out.push(
+      pa([r(exp.company, { bold: true, sz: SZ_PROJ, color: C_NAVY })], {
+        after: 20,
+        before: idx === 0 ? 0 : 160,
+      }),
+    );
+    out.push(pa([r(period, { sz: SZ_SM, color: C_MUTED })], { after: 20 }));
     if (exp.stack) {
-      out.push(numItem('Стек: ' + exp.stack));
+      out.push(
+        pa([r('Набор использованных технологий: ' + exp.stack, { sz: SZ_SM, color: C_MUTED })], {
+          after: 80,
+        }),
+      );
+    }
+
+    out.push(pa([r('Описание проекта', { bold: true, color: C_NAVY })], { after: 20 }));
+    out.push(pa([r(exp.project || '-')], { after: 80 }));
+
+    out.push(pa([r('Что было сделано', { bold: true, color: C_NAVY })], { after: 20 }));
+    if (exp.achievements.length > 0) {
+      for (const a of exp.achievements) {
+        out.push(pa([r('- ' + a)], { after: 20 }));
+      }
+    } else {
+      out.push(pa([r('-')], { after: 20 }));
     }
   }
   return out;
 }
 
-function buildDocument(candidate: Candidate, model: ResumeModel): Document {
-  const checklist = buildChecklistItems(candidate, model);
-  const extra = buildExtraItems(model);
+// ─────────────────────────────────────────────────────────────────────────
+// Сборка документа
+// ─────────────────────────────────────────────────────────────────────────
 
+function buildFooter(): Footer {
+  return new Footer({
+    children: [
+      new Paragraph({
+        children: [
+          r(
+            '* Все поля обязательны для заполнения, изменение порядка полей не допускается.',
+            { sz: SZ_SM, color: C_FOOT },
+          ),
+        ],
+        spacing: { before: 120, after: 0 },
+      }),
+    ],
+  });
+}
+
+function buildDocument(candidate: Candidate, model: ResumeModel): Document {
   const children: Array<Paragraph | Table> = [];
-  children.push(buildHeaderBlock(candidate, model));
-  for (const p of buildBirthdayExperience(candidate, model)) children.push(p);
-  for (const p of buildCoverLetter(model, checklist, extra)) children.push(p);
+  children.push(buildTitle());
+  for (const p of buildHeaderBlock(candidate, model)) children.push(p);
+  for (const p of buildCoverLetter(model)) children.push(p);
+  for (const p of buildChecklist()) children.push(p);
   for (const p of buildSkillsBlock(model)) children.push(p);
   for (const p of buildEducationBlock(model)) children.push(p);
+  for (const p of buildExperienceBlock(candidate, model)) children.push(p);
   for (const p of buildProjectsBlock(candidate, model)) children.push(p);
 
   const section: ISectionOptions = {
@@ -405,36 +406,16 @@ function buildDocument(candidate: Candidate, model: ResumeModel): Document {
         margin: { top: 1134, right: 1134, bottom: 1134, left: 1134 },
       },
     },
+    footers: { default: buildFooter() },
     children,
   };
 
   return new Document({
     creator: 'CRM ЛГ',
     title: `Резюме для МБ - ${model.fullName}`,
-    numbering: {
-      config: [
-        {
-          reference: 'khronyuk-decimal',
-          levels: [
-            {
-              level: 0,
-              format: LevelFormat.DECIMAL,
-              text: '%1.',
-              alignment: AlignmentType.LEFT,
-              style: {
-                paragraph: {
-                  indent: { left: 720, hanging: 360 },
-                  spacing: { after: 60, before: 0 },
-                },
-              },
-            },
-          ],
-        },
-      ],
-    },
     styles: {
       default: {
-        document: { run: { font: FONT, size: SZ_DEF, bold: true } },
+        document: { run: { font: FONT, size: SZ_BODY, color: C_BODY } },
       },
     },
     sections: [section],
@@ -442,9 +423,7 @@ function buildDocument(candidate: Candidate, model: ResumeModel): Document {
 }
 
 /**
- * Собирает резюме в Blob (.docx) по альтернативному шаблону «для МБ».
- * Принимает Candidate, нормализует через buildResumeModel и собирает
- * документ — точно так же, как обычный generateResumeDocxBlob.
+ * Собирает резюме в Blob (.docx) по шаблону «для МБ».
  */
 export async function generateResumeDocxBlobKhronyuk(candidate: Candidate): Promise<Blob> {
   const model = buildResumeModel(candidate);

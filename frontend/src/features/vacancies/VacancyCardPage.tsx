@@ -282,8 +282,16 @@ export function VacancyCardPage() {
   const buildCandidateText = (v: Vacancy): string => {
     const blocks: string[] = [];
     blocks.push(v.title);
+    // Краткие условия одной строкой: грейд · формат работы.
+    const meta = [v.grade, v.format].filter(Boolean).join(' · ');
+    if (meta) {
+      blocks.push(meta);
+    }
     if (v.project?.trim()) {
       blocks.push(`Проект: ${v.project.trim()}`);
+    }
+    if (v.stack?.length) {
+      blocks.push(`Стек: ${v.stack.join(', ')}`);
     }
     if (v.description?.trim()) {
       blocks.push(`Описание:\n${v.description.trim()}`);
@@ -585,7 +593,7 @@ export function VacancyCardPage() {
 
             <Separator />
 
-            <div className="grid grid-cols-2 gap-x-7 gap-y-3.5 text-sm">
+            <div className="grid grid-cols-1 gap-x-7 gap-y-3.5 text-sm sm:grid-cols-2">
               <Field label="Клиент" value={client?.name} />
               <Field label="Проект" value={vacancy.project} />
               <Field
@@ -935,9 +943,9 @@ export function VacancyCardPage() {
 
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div>
+    <div className="min-w-0">
       <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</div>
-      <div>{value ?? '—'}</div>
+      <div className="break-words">{value ?? '—'}</div>
     </div>
   );
 }

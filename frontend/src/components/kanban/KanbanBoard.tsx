@@ -5,7 +5,8 @@ import {
   type DragOverEvent,
   type DragStartEvent,
   DragOverlay,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
@@ -56,7 +57,14 @@ export function KanbanBoard<TStatus extends string, TItem extends KanbanItem<TSt
   const [activeId, setActiveId] = useState<string | null>(null);
   const [previewItems, setPreviewItems] = useState<TItem[] | null>(null);
   const lastOverKeyRef = useRef<string | null>(null);
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
+  // Мышь: драг стартует после смещения на 4px — обычный клик/скролл не мешает.
+  // Тач: драг стартует только после удержания пальца (long-press) 220мс с
+  // допуском 8px. Без этого dnd-kit ставит touch-action:none и перехватывает
+  // любое движение пальца → канбан невозможно проскроллить на телефоне.
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 220, tolerance: 8 } }),
+  );
 
   const statusIds = useMemo(() => new Set(statuses.map((s) => s.id)), [statuses]);
   const collisionDetection = useMemo(() => createKanbanCollisionDetection(statusIds), [statusIds]);

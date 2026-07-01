@@ -1,11 +1,13 @@
 import type { ReactNode } from 'react';
-import { Navigate } from '@tanstack/react-router';
+import { Navigate, useRouterState } from '@tanstack/react-router';
 import { useMe } from './useAuth';
 import { useAuthStore } from '@/stores/auth';
 import { Skeleton } from '@/components/ui/skeleton';
 
 export function AuthGuard({ children }: { children: ReactNode }) {
   const token = useAuthStore((s) => s.accessToken);
+  // Полный текущий адрес (path+search+hash), чтобы вернуть сюда после логина.
+  const href = useRouterState({ select: (s) => s.location.href });
   const { data: user, isLoading, isError } = useMe();
 
   // В dev-режиме MSW сразу отдаёт /auth/me даже без токена — так удобнее зайти после reload.
@@ -19,7 +21,7 @@ export function AuthGuard({ children }: { children: ReactNode }) {
   }
 
   if (isError && !token) {
-    return <Navigate to="/login" />;
+    return <Navigate to="/login" search={{ redirect: href }} />;
   }
 
   return <>{children}</>;

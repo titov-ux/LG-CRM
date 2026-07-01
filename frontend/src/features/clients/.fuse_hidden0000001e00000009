@@ -427,7 +427,7 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="min-w-0">
       <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</div>
-      <div className="break-words">{value ?? '—'}</div>
+      <div>{value ?? '—'}</div>
     </div>
   );
 }

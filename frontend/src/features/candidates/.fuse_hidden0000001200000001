@@ -714,7 +714,7 @@ export function CandidateCardPage({ source: sourceProp }: CandidateCardPageProps
 
             <Separator />
 
-            <div className="grid grid-cols-1 gap-x-7 gap-y-3.5 text-sm sm:grid-cols-2">
+            <div className="grid grid-cols-2 gap-x-7 gap-y-3.5 text-sm">
               <Field
                 label="Telegram"
                 value={candidate.telegram && (
@@ -1144,9 +1144,9 @@ export function CandidateCardPage({ source: sourceProp }: CandidateCardPageProps
 
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="min-w-0">
+    <div>
       <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</div>
-      <div className="break-words">{value ?? '—'}</div>
+      <div>{value ?? '—'}</div>
     </div>
   );
 }

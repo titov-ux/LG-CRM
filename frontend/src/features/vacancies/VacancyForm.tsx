@@ -36,7 +36,8 @@ import { useClients } from '@/features/clients/hooks';
 import { useUsers } from '@/features/users/hooks';
 import { EngagementTypeField } from '@/components/forms/EngagementTypeField';
 import { DateField } from '@/components/forms/DateField';
-import { cn, formatMoneyRub } from '@/lib/utils';
+import { MoneyInput } from '@/components/forms/MoneyInput';
+import { cn } from '@/lib/utils';
 import type { EngagementType, Grade, Priority, WorkFormat } from '@/api/types';
 
 // Полная форма вакансии. Используется и в quick-create, и в drawer редактирования.
@@ -312,22 +313,13 @@ export function VacancyForm({
                 <FormItem>
                   <FormLabel>Оклад до (₽/мес)</FormLabel>
                   <FormControl>
-                    <Input
-                      // type=text + inputMode=numeric, чтобы рисовать «1 000» с разделителями
-                      // (type=number не разрешает пробелы внутри value). В форму и БД летит
-                      // чистое число — onChange приводит digits к Number. Поле опциональное:
-                      // пусто/0 → undefined (иначе зод-схема .positive() выдаст ошибку).
-                      type="text"
-                      inputMode="numeric"
+                    <MoneyInput
                       placeholder="0"
                       name={field.name}
                       ref={field.ref}
+                      value={field.value}
                       onBlur={field.onBlur}
-                      value={field.value ? formatMoneyRub(field.value) : ''}
-                      onChange={(e) => {
-                        const n = Number(e.target.value.replace(/\D/g, ''));
-                        field.onChange(n > 0 ? n : undefined);
-                      }}
+                      onChange={field.onChange}
                     />
                   </FormControl>
                   <FormMessage />
@@ -342,18 +334,13 @@ export function VacancyForm({
                 <FormItem>
                   <FormLabel>Ставка клиента (₽/ч)</FormLabel>
                   <FormControl>
-                    <Input
-                      type="text"
-                      inputMode="numeric"
+                    <MoneyInput
                       placeholder="0"
                       name={field.name}
                       ref={field.ref}
+                      value={field.value}
                       onBlur={field.onBlur}
-                      value={field.value ? formatMoneyRub(field.value) : ''}
-                      onChange={(e) => {
-                        const n = Number(e.target.value.replace(/\D/g, ''));
-                        field.onChange(n > 0 ? n : undefined);
-                      }}
+                      onChange={field.onChange}
                     />
                   </FormControl>
                   <FormMessage />

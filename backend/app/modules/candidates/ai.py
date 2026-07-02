@@ -31,6 +31,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from datetime import date
@@ -404,6 +405,209 @@ Hard Skills:) и перечислениями; если блок на друго
 
 Сегодняшняя дата: {today}.
 """
+
+
+# ─── Chunked-парсинг больших резюме ──────────────────────────────────────────
+# Проблема: HH-резюме на 10+ страниц (десятки мест работы, сотни буллетов)
+# физически не влезает в один вызов yandexgpt/rc: контекст модели 32к токенов,
+# а промпт требует переносить каждый буллет ДОСЛОВНО, т.е. выход почти
+# зеркалит вход. На 12-страничном резюме вход ~15-18к токенов + выход ~15к
+# токенов → модель обрывает JSON по лимиту → AiTruncatedJsonError → 413.
+#
+# Решение: большие резюме режем на части и вызываем модель несколько раз
+# ПАРАЛЛЕЛЬНО:
+#   • «шапка + хвост» (всё, кроме тела секции «Опыт работы») → один вызов со
+#     схемой без `experience` — контакты, грейд, навыки, образование, языки;
+#   • тело «Опыта работы» режем по границам мест работы (строка вида
+#     «Декабрь 2023 —») и группируем в чанки ≤ _EXP_CHUNK_MAX_CHARS → по
+#     вызову на чанк со схемой из одного поля `experience`.
+# Результаты склеиваем с сохранением порядка мест работы.
+#
+# Маленькие резюме (≤ _CHUNK_THRESHOLD_CHARS) идут по старому пути одним
+# вызовом — это быстрее и дешевле.
+
+_CHUNK_THRESHOLD_CHARS = 15_000
+_EXP_CHUNK_MAX_CHARS = 9_000
+# Выход чанка ~зеркалит вход (9к символов ≈ 3.5к токенов) + JSON-обвязка.
+_EXP_CHUNK_MAX_TOKENS = 10_000
+_HEADER_MAX_TOKENS = 6_000
+# Таймаут одного вызова. Дефолтные 30с (yandex_ai_timeout_seconds) впритык
+# даже для чанка: на больших ответах модель генерирует 20-30с.
+_RESUME_CALL_TIMEOUT_SECONDS = 60.0
+
+_MONTHS_RU = (
+    "Январь|Февраль|Март|Апрель|Май|Июнь|Июль|Август|"
+    "Сентябрь|Октябрь|Ноябрь|Декабрь"
+)
+_MONTHS_EN = (
+    "January|February|March|April|May|June|July|August|"
+    "September|October|November|December"
+)
+# Начало места работы в HH-выгрузке: строка «<Месяц> <год> —…».
+# Только горизонтальные пробелы ([ \t ]) — `\s` пересекал бы перенос
+# строки и строка конца работы («Декабрь 2023») слипалась бы со следующей.
+_EXP_ENTRY_RE = re.compile(
+    rf"^(?:{_MONTHS_RU}|{_MONTHS_EN})[ \t ]+\d{{4}}[ \t ]*[—–-]",
+    re.MULTILINE,
+)
+# Заголовок секции опыта: «Опыт работы — 24 года 7 месяцев».
+_EXP_SECTION_RE = re.compile(
+    r"^(?:Опыт работы|Work experience)\b[^\n]*$", re.MULTILINE
+)
+# Секции ПОСЛЕ опыта (границы хвоста). Матчим строку целиком, чтобы не
+# спутать с индустрией места работы («Повышение квалификации, переквалификация»).
+_TAIL_SECTION_RE = re.compile(
+    r"^(?:Образование|Education|Навыки|Skills|Ключевые навыки|Key skills|"
+    r"Повышение квалификации, курсы|Знание языков|Languages|"
+    r"Тесты, экзамены|Электронные сертификаты|"
+    r"Дополнительная информация|Additional information|Обо мне|About me|"
+    r"Комментарии к резюме|Resume comments)\s*$",
+    re.MULTILINE,
+)
+
+_EXPERIENCE_ONLY_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"experience": PARSED_CANDIDATE_SCHEMA["properties"]["experience"]},
+    "additionalProperties": False,
+}
+
+_HEADER_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        k: v for k, v in PARSED_CANDIDATE_SCHEMA["properties"].items() if k != "experience"
+    },
+    "additionalProperties": False,
+}
+
+_EXPERIENCE_SYSTEM_PROMPT = """\
+Ты — помощник CRM рекрутингового агентства. Тебе дан ФРАГМЕНТ резюме — одно \
+или несколько мест работы (выгрузка из PDF с hh.ru). Разложи КАЖДОЕ место \
+работы в массив `experience`, сохраняя порядок из текста.
+
+ГЛАВНОЕ ПРАВИЛО: структурировать, а НЕ пересказывать. Текст пунктов переноси \
+ДОСЛОВНО. Ничего не выдумывай и ничего не выкидывай.
+
+Правила:
+1. `achievements` — это ВСЕ буллеты под должностью разом: и обязанности, и \
+пункты блока 'Достижения:', и любые перечисления через '-', '•', '—'. Сколько \
+пунктов в исходнике — столько же в `achievements`. Каждый пункт дословно, без \
+префиксов '-', '•'.
+2. ЯЗЫК ВЫВОДА — РУССКИЙ. Если фрагмент на другом языке — переведи \
+должности, обязанности и описания проектов на грамотный русский полностью, \
+без сокращения пунктов. Названия технологий в `stack` оставляй латиницей \
+(PostgreSQL, Kubernetes, Java). Названия компаний переведи или \
+транслитерируй, если есть устоявшийся русский вариант.
+3. Даты: `startMonth`/`endMonth` — формат YYYY-MM. Для текущей работы \
+('по настоящее время', 'till now', 'present') `endMonth` — пустая строка.
+4. `stack` места работы — из явного блока 'Технологии:'/'Стек:'; если его \
+нет — пусто.
+5. Если во фрагменте нет мест работы — верни пустой массив.
+
+Сегодняшняя дата: {today}.
+"""
+
+
+def _split_hh_resume(text: str) -> tuple[str, list[str], str] | None:
+    """Разрезать HH-выгрузку на (шапка, места работы, хвост).
+
+    Шапка включает заголовок секции опыта («Опыт работы — 24 года…») — из
+    него модель берёт `experienceYears`. Возвращает None, если структура не
+    распознана — вызывающий код падает обратно на одиночный вызов.
+    """
+    section_m = _EXP_SECTION_RE.search(text)
+    if not section_m:
+        return None
+    exp_start = section_m.end()
+
+    tail_m = _TAIL_SECTION_RE.search(text, exp_start)
+    exp_end = tail_m.start() if tail_m else len(text)
+
+    head = text[:exp_start]
+    exp_block = text[exp_start:exp_end]
+    tail = text[exp_end:]
+
+    starts = [m.start() for m in _EXP_ENTRY_RE.finditer(exp_block)]
+    if not starts:
+        return None
+    entries: list[str] = []
+    for i, s in enumerate(starts):
+        e = starts[i + 1] if i + 1 < len(starts) else len(exp_block)
+        entry = exp_block[s:e].strip()
+        if entry:
+            entries.append(entry)
+    if not entries:
+        return None
+    return head, entries, tail
+
+
+def _pack_entries(entries: list[str], max_chars: int) -> list[str]:
+    """Сгруппировать места работы в чанки ≤ max_chars (жадно, порядок сохраняем)."""
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    for entry in entries:
+        entry_len = len(entry) + 2
+        if current and current_len + entry_len > max_chars:
+            chunks.append("\n\n".join(current))
+            current = []
+            current_len = 0
+        current.append(entry)
+        current_len += entry_len
+    if current:
+        chunks.append("\n\n".join(current))
+    return chunks
+
+
+async def _parse_resume_chunked(
+    client: YandexGptClient,
+    head: str,
+    entries: list[str],
+    tail: str,
+    *,
+    today: str,
+    max_chars: int,
+) -> dict[str, Any]:
+    """Chunked-путь: шапка+хвост и чанки опыта — параллельными вызовами."""
+    header_input = f"{head}\n{tail}".strip()[:max_chars]
+    exp_chunks = _pack_entries(entries, _EXP_CHUNK_MAX_CHARS)
+
+    header_task = client.json_completion(
+        system=_SYSTEM_PROMPT.format(today=today),
+        user=header_input,
+        schema_name="parsed_candidate_header",
+        schema=_HEADER_SCHEMA,
+        max_tokens=_HEADER_MAX_TOKENS,
+    )
+    exp_tasks = [
+        client.json_completion(
+            system=_EXPERIENCE_SYSTEM_PROMPT.format(today=today),
+            user=chunk[:max_chars],
+            schema_name="parsed_candidate_experience",
+            schema=_EXPERIENCE_ONLY_SCHEMA,
+            max_tokens=_EXP_CHUNK_MAX_TOKENS,
+        )
+        for chunk in exp_chunks
+    ]
+
+    header_raw, *exp_raws = await asyncio.gather(header_task, *exp_tasks)
+
+    merged: dict[str, Any] = dict(header_raw)
+    merged.pop("experience", None)  # схема не должна была его вернуть, но перестрахуемся
+    experience: list[Any] = []
+    for raw in exp_raws:
+        items = raw.get("experience")
+        if isinstance(items, list):
+            experience.extend(items)
+    if experience:
+        merged["experience"] = experience
+
+    logger.info(
+        "candidates.ai chunked parse: %d experience chunks, %d entries, %d merged jobs",
+        len(exp_chunks),
+        len(entries),
+        len(experience),
+    )
+    return merged
 
 
 # ─── Нормализация ответа ────────────────────────────────────────────────────
@@ -835,14 +1039,36 @@ def _coerce_parsed(raw: dict[str, Any]) -> dict[str, Any]:
 async def parse_resume_text(text: str, *, today: str) -> dict[str, Any]:
     """Распарсить сплошной текст резюме.
 
+    Маленькие резюме (≤ _CHUNK_THRESHOLD_CHARS) — одним вызовом модели, как
+    раньше. Большие — chunked-путём (см. блок «Chunked-парсинг» выше): раньше
+    они гарантированно упирались в 32к-контекст yandexgpt/rc и падали с 413
+    resume_too_long, потому что «дословный» JSON-выход почти зеркалит вход.
+
     Возвращает dict с camelCase-ключами, готовый к сериализации в ParsedCandidate.
     Бросает `AiUnavailableError` / `AiBadRequestError` — обрабатывается в эндпоинте.
     """
     settings = get_settings()
     max_chars = settings.yandex_ai_max_input_chars
-    snippet = text if len(text) <= max_chars else text[:max_chars]
 
-    client = YandexGptClient()
+    client = YandexGptClient(timeout_seconds=_RESUME_CALL_TIMEOUT_SECONDS)
+
+    if len(text) > _CHUNK_THRESHOLD_CHARS:
+        split = _split_hh_resume(text)
+        if split is not None:
+            head, entries, tail = split
+            raw = await _parse_resume_chunked(
+                client, head, entries, tail, today=today, max_chars=max_chars
+            )
+            return _coerce_parsed(raw)
+        # Структура не распозналась (не HH-выгрузка?) — best effort одним
+        # вызовом с обрезкой входа, как раньше.
+        logger.warning(
+            "candidates.ai big resume (%d chars) but HH structure not detected, "
+            "falling back to single call",
+            len(text),
+        )
+
+    snippet = text if len(text) <= max_chars else text[:max_chars]
     raw = await client.json_completion(
         system=_SYSTEM_PROMPT.format(today=today),
         user=snippet,

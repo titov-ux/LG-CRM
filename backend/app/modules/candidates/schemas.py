@@ -178,7 +178,10 @@ class CandidatePage(CamelModel):
 
 
 class ParseResumeTextRequest(CamelModel):
-    text: str = Field(min_length=1, max_length=50_000)
+    # 150к: HH-PDF на 10-12 страниц даёт 45-50к символов, а прежний лимит
+    # 50к отбивал такие резюме 422-й ещё до AI. Парсер режет большие резюме
+    # на чанки (см. ai.py), так что верхняя граница — только санитарная.
+    text: str = Field(min_length=1, max_length=150_000)
 
 
 # Резюме-блоки для распознавания. ВНИМАНИЕ: эти схемы похожи на

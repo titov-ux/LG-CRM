@@ -91,28 +91,7 @@ def test_split_hh_resume_none_for_non_hh_text():
     assert ai._split_hh_resume("Просто произвольный текст без структуры") is None
 
 
-# === Упаковка чанков =========================================================
-
-
-def test_pack_entries_respects_max_chars_and_order():
-    entries = [f"entry-{i} " + "x" * 400 for i in range(10)]
-    chunks = ai._pack_entries(entries, max_chars=1000)
-    assert len(chunks) > 1
-    for chunk in chunks:
-        assert len(chunk) <= 1000 or chunk.count("entry-") == 1
-    # Порядок сохранён.
-    joined = "\n\n".join(chunks)
-    positions = [joined.index(f"entry-{i} ") for i in range(10)]
-    assert positions == sorted(positions)
-
-
-def test_pack_entries_oversized_entry_gets_own_chunk():
-    entries = ["small", "y" * 5000, "small2"]
-    chunks = ai._pack_entries(entries, max_chars=1000)
-    assert len(chunks) == 3
-
-
-# === Chunked-парсинг (склейка) ==============================================
+# === Chunked-парсинг (по одному месту работы на вызов) ======================
 
 
 async def test_parse_resume_text_big_resume_is_chunked(monkeypatch):
@@ -132,7 +111,7 @@ async def test_parse_resume_text_big_resume_is_chunked(monkeypatch):
                 "location": "Москва",
                 "languages": [{"language": "Русский", "level": "родной"}],
             }
-        # Чанк опыта: вернём по одному месту работы на каждую «Компанию» в тексте.
+        # Вызов опыта: по одному месту работы на каждую «Компанию» во фрагменте.
         user = kwargs["user"]
         jobs = [
             {
@@ -162,19 +141,61 @@ async def test_parse_resume_text_big_resume_is_chunked(monkeypatch):
     header_calls = [c for c in calls if c["schema_name"] == "parsed_candidate_header"]
     exp_calls = [c for c in calls if c["schema_name"] == "parsed_candidate_experience"]
     assert len(header_calls) == 1
-    assert len(exp_calls) >= 2, "большое резюме должно разъехаться минимум на 2 чанка опыта"
+    # Одно место работы = один вызов. Группировать нельзя: yandexgpt на чанках
+    # с несколькими местами возвращал не все (5 из 12 на реальном резюме).
+    assert len(exp_calls) == 10
+    for call in exp_calls:
+        companies = [i for i in range(10) if f"Компания №{i}\n" in call["user"]]
+        assert len(companies) == 1, "во фрагменте должно быть ровно одно место работы"
     # В header-вызов не должно попасть тело опыта, но должен попасть хвост.
     assert "пункт обязанностей" not in header_calls[0]["user"]
     assert "Обо мне" in header_calls[0]["user"]
     # Схема header-вызова — без experience.
     assert "experience" not in header_calls[0]["schema"]["properties"]
 
-    # Склейка: все 10 мест работы, в исходном порядке.
+    # Склейка: ВСЕ 10 мест работы, в исходном порядке.
     assert parsed["fullName"] == "Малышев Александр Евгеньевич"
     assert [e["company"] for e in parsed["experience"]] == [
         f"Компания №{i}" for i in range(10)
     ]
     assert parsed["experienceYears"] == 24
+
+
+async def test_parse_resume_text_retries_empty_entry_once(monkeypatch):
+    """Ленивый пустой ответ модели на место работы повторяется один раз."""
+    text = _hh_resume(jobs=10, bullets_per_job=22)
+    exp_call_users: list[str] = []
+
+    async def fake_json_completion(self, **kwargs):
+        if kwargs["schema_name"] == "parsed_candidate_header":
+            return {"fullName": "Малышев Александр Евгеньевич"}
+        exp_call_users.append(kwargs["user"])
+        # Первый вызов по «Компании №3» — лениво пустой, повтор — с данными.
+        if "Компания №3\n" in kwargs["user"]:
+            if exp_call_users.count(kwargs["user"]) == 1:
+                return {}
+        i = next(j for j in range(10) if f"Компания №{j}\n" in kwargs["user"])
+        return {
+            "experience": [
+                {"company": f"Компания №{i}", "position": f"Должность №{i}"}
+            ]
+        }
+
+    monkeypatch.setattr(
+        "app.integrations.yandex_gpt.YandexGptClient.json_completion",
+        fake_json_completion,
+    )
+    monkeypatch.setattr(
+        "app.integrations.yandex_gpt.YandexGptClient.is_configured",
+        property(lambda self: True),
+    )
+
+    parsed = await ai.parse_resume_text(text, today="2026-07-02")
+    # 10 мест + 1 повтор.
+    assert len(exp_call_users) == 11
+    assert [e["company"] for e in parsed["experience"]] == [
+        f"Компания №{i}" for i in range(10)
+    ]
 
 
 async def test_parse_resume_text_small_resume_single_call(monkeypatch):

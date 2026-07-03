@@ -418,19 +418,25 @@ Hard Skills:) и перечислениями; если блок на друго
 # ПАРАЛЛЕЛЬНО:
 #   • «шапка + хвост» (всё, кроме тела секции «Опыт работы») → один вызов со
 #     схемой без `experience` — контакты, грейд, навыки, образование, языки;
-#   • тело «Опыта работы» режем по границам мест работы (строка вида
-#     «Декабрь 2023 —») и группируем в чанки ≤ _EXP_CHUNK_MAX_CHARS → по
-#     вызову на чанк со схемой из одного поля `experience`.
+#   • КАЖДОЕ место работы — отдельным вызовом со схемой из одного поля
+#     `experience`. Ровно одно на вызов: первая версия группировала по 3-4
+#     места работы в чанк ≤9к символов, и yandexgpt лениво возвращал 1-2 из
+#     них (на 12-страничном резюме доезжало 5 мест из 12). Пустой ответ на
+#     непустой фрагмент повторяем один раз.
+# Параллельность ограничена _MAX_CONCURRENT_AI_CALLS (квоты AI Studio).
 # Результаты склеиваем с сохранением порядка мест работы.
 #
 # Маленькие резюме (≤ _CHUNK_THRESHOLD_CHARS) идут по старому пути одним
 # вызовом — это быстрее и дешевле.
 
 _CHUNK_THRESHOLD_CHARS = 15_000
-_EXP_CHUNK_MAX_CHARS = 9_000
-# Выход чанка ~зеркалит вход (9к символов ≈ 3.5к токенов) + JSON-обвязка.
-_EXP_CHUNK_MAX_TOKENS = 10_000
+# Выход вызова ~зеркалит вход (одно место работы — до ~4к символов ≈ 2к
+# токенов JSON) + запас на перевод/обвязку.
+_EXP_ENTRY_MAX_TOKENS = 8_000
 _HEADER_MAX_TOKENS = 6_000
+# Одновременные вызовы Yandex AI Studio: у резюме бывает 12+ мест работы,
+# все разом — риск упереться в квоту concurrent generations.
+_MAX_CONCURRENT_AI_CALLS = 5
 # Таймаут одного вызова. Дефолтные 30с (yandex_ai_timeout_seconds) впритык
 # даже для чанка: на больших ответах модель генерирует 20-30с.
 _RESUME_CALL_TIMEOUT_SECONDS = 60.0
@@ -480,9 +486,11 @@ _HEADER_SCHEMA: dict[str, Any] = {
 }
 
 _EXPERIENCE_SYSTEM_PROMPT = """\
-Ты — помощник CRM рекрутингового агентства. Тебе дан ФРАГМЕНТ резюме — одно \
-или несколько мест работы (выгрузка из PDF с hh.ru). Разложи КАЖДОЕ место \
-работы в массив `experience`, сохраняя порядок из текста.
+Ты — помощник CRM рекрутингового агентства. Тебе дан ФРАГМЕНТ резюме \
+(выгрузка из PDF с hh.ru) — как правило, ровно ОДНО место работы, изредка \
+несколько. Верни в массиве `experience` по одному объекту на КАЖДОЕ место \
+работы фрагмента, в порядке текста. НЕ пропускай ни одного места работы и \
+НЕ объединяй несколько в один объект.
 
 ГЛАВНОЕ ПРАВИЛО: структурировать, а НЕ пересказывать. Текст пунктов переноси \
 ДОСЛОВНО. Ничего не выдумывай и ничего не выкидывай.
@@ -540,24 +548,6 @@ def _split_hh_resume(text: str) -> tuple[str, list[str], str] | None:
     return head, entries, tail
 
 
-def _pack_entries(entries: list[str], max_chars: int) -> list[str]:
-    """Сгруппировать места работы в чанки ≤ max_chars (жадно, порядок сохраняем)."""
-    chunks: list[str] = []
-    current: list[str] = []
-    current_len = 0
-    for entry in entries:
-        entry_len = len(entry) + 2
-        if current and current_len + entry_len > max_chars:
-            chunks.append("\n\n".join(current))
-            current = []
-            current_len = 0
-        current.append(entry)
-        current_len += entry_len
-    if current:
-        chunks.append("\n\n".join(current))
-    return chunks
-
-
 async def _parse_resume_chunked(
     client: YandexGptClient,
     head: str,
@@ -567,43 +557,72 @@ async def _parse_resume_chunked(
     today: str,
     max_chars: int,
 ) -> dict[str, Any]:
-    """Chunked-путь: шапка+хвост и чанки опыта — параллельными вызовами."""
+    """Chunked-путь: шапка+хвост одним вызовом, каждое место работы — отдельным.
+
+    Все вызовы идут параллельно через семафор. Одно место работы на вызов —
+    принципиально: на чанках с несколькими местами yandexgpt возвращал не все
+    (см. комментарий к _CHUNK_THRESHOLD_CHARS).
+    """
     header_input = f"{head}\n{tail}".strip()[:max_chars]
-    exp_chunks = _pack_entries(entries, _EXP_CHUNK_MAX_CHARS)
+    semaphore = asyncio.Semaphore(_MAX_CONCURRENT_AI_CALLS)
 
-    header_task = client.json_completion(
-        system=_SYSTEM_PROMPT.format(today=today),
-        user=header_input,
-        schema_name="parsed_candidate_header",
-        schema=_HEADER_SCHEMA,
-        max_tokens=_HEADER_MAX_TOKENS,
+    async def call_header() -> dict[str, Any]:
+        async with semaphore:
+            return await client.json_completion(
+                system=_SYSTEM_PROMPT.format(today=today),
+                user=header_input,
+                schema_name="parsed_candidate_header",
+                schema=_HEADER_SCHEMA,
+                max_tokens=_HEADER_MAX_TOKENS,
+            )
+
+    async def call_entry(index: int, entry: str) -> list[Any]:
+        async def one_call() -> list[Any] | None:
+            async with semaphore:
+                raw = await client.json_completion(
+                    system=_EXPERIENCE_SYSTEM_PROMPT.format(today=today),
+                    user=entry[:max_chars],
+                    schema_name="parsed_candidate_experience",
+                    schema=_EXPERIENCE_ONLY_SCHEMA,
+                    max_tokens=_EXP_ENTRY_MAX_TOKENS,
+                )
+            items = raw.get("experience")
+            return items if isinstance(items, list) and items else None
+
+        items = await one_call()
+        if items is None:
+            # Модель лениво вернула пустоту на непустой фрагмент — одна
+            # повторная попытка, дальше не упорствуем (место просто выпадет,
+            # это видно в логе).
+            logger.warning(
+                "candidates.ai empty experience for entry %d (%d chars), retrying",
+                index,
+                len(entry),
+            )
+            items = await one_call()
+        if items is None:
+            logger.error(
+                "candidates.ai entry %d lost after retry (%d chars): %r",
+                index,
+                len(entry),
+                entry[:120],
+            )
+            return []
+        return items
+
+    header_raw, *entry_lists = await asyncio.gather(
+        call_header(),
+        *(call_entry(i, entry) for i, entry in enumerate(entries)),
     )
-    exp_tasks = [
-        client.json_completion(
-            system=_EXPERIENCE_SYSTEM_PROMPT.format(today=today),
-            user=chunk[:max_chars],
-            schema_name="parsed_candidate_experience",
-            schema=_EXPERIENCE_ONLY_SCHEMA,
-            max_tokens=_EXP_CHUNK_MAX_TOKENS,
-        )
-        for chunk in exp_chunks
-    ]
-
-    header_raw, *exp_raws = await asyncio.gather(header_task, *exp_tasks)
 
     merged: dict[str, Any] = dict(header_raw)
     merged.pop("experience", None)  # схема не должна была его вернуть, но перестрахуемся
-    experience: list[Any] = []
-    for raw in exp_raws:
-        items = raw.get("experience")
-        if isinstance(items, list):
-            experience.extend(items)
+    experience: list[Any] = [item for items in entry_lists for item in items]
     if experience:
         merged["experience"] = experience
 
     logger.info(
-        "candidates.ai chunked parse: %d experience chunks, %d entries, %d merged jobs",
-        len(exp_chunks),
+        "candidates.ai chunked parse: %d entries -> %d merged jobs",
         len(entries),
         len(experience),
     )

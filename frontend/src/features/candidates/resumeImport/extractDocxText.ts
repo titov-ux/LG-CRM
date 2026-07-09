@@ -1,10 +1,11 @@
 /**
- * Извлечение текста из DOCX через mammoth (CDN + dynamic import).
+ * Извлечение текста из DOCX через mammoth.
  *
- * Загружаем библиотеку по требованию, чтобы не тащить её в основной бандл.
+ * Библиотека — bundled-зависимость, но подгружается лениво (dynamic
+ * import → отдельный чанк Vite), чтобы не тащить её в основной бандл.
+ * Раньше грузили с cdn.jsdelivr.net, но CDN недоступен у части
+ * пользователей — распознавание падало на любом файле.
  */
-const MAMMOTH_URL = 'https://cdn.jsdelivr.net/npm/mammoth@1.12.0/+esm';
-
 interface MammothModule {
   extractRawText(args: { arrayBuffer: ArrayBuffer }): Promise<{ value?: string }>;
 }
@@ -14,8 +15,11 @@ let mammothPromise: Promise<MammothModule> | null = null;
 async function loadMammoth(): Promise<MammothModule> {
   if (!mammothPromise) {
     mammothPromise = (async () => {
-      const mod = (await import(/* @vite-ignore */ MAMMOTH_URL)) as MammothModule;
-      return mod;
+      const mod = (await import('mammoth')) as unknown as
+        | MammothModule
+        | { default: MammothModule };
+      // CJS-interop: у Vite функции могут лежать как в namespace, так и в default.
+      return 'extractRawText' in mod ? mod : mod.default;
     })().catch((error) => {
       mammothPromise = null;
       throw error;

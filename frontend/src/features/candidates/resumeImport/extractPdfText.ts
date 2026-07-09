@@ -1,18 +1,12 @@
 /**
  * Извлечение текста из PDF на стороне клиента через pdfjs-dist.
  *
- * Сознательно грузим pdfjs ESM-сборку с jsDelivr через dynamic import
- * вместо bundled-зависимости: библиотека ~2 МБ + worker, ставить ради
- * редкой операции «распознать резюме» неэффективно. Кэшируется браузером
- * после первого открытия модалки.
- *
- * Если интернета нет — выбрасывает ошибку, форма ловит её и показывает
- * пользователю «не удалось загрузить распознаватель PDF».
+ * Библиотека — bundled-зависимость, но подгружается лениво (dynamic
+ * import → отдельный чанк Vite), поэтому основной бандл не растёт.
+ * Раньше грузили с cdn.jsdelivr.net, но CDN недоступен у части
+ * пользователей (блокировки/корпоративные сети) — «Не удалось обработать
+ * файл» на любой документ. Теперь чанк и worker отдаются с нашего домена.
  */
-
-const PDFJS_VERSION = '4.0.379';
-const PDFJS_URL = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}/build/pdf.min.mjs`;
-const PDFJS_WORKER_URL = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}/build/pdf.worker.min.mjs`;
 
 interface PdfTextItem {
   str: string;
@@ -40,9 +34,15 @@ let pdfjsPromise: Promise<PdfJsLib> | null = null;
 function loadPdfJs(): Promise<PdfJsLib> {
   if (!pdfjsPromise) {
     pdfjsPromise = (async () => {
-      // /* @vite-ignore */ — у Vite иначе не пройдёт резолв CDN-URL.
-      const mod = (await import(/* @vite-ignore */ PDFJS_URL)) as PdfJsLib;
-      mod.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
+      // Оба импорта ленивые: Vite выносит pdfjs в отдельный чанк, а worker
+      // (?url) — в ассет; оба отдаются с нашего домена, без внешних CDN.
+      // legacy-сборка: без top-level await (не проходит дефолтный target Vite)
+      // и совместима со старыми Safari.
+      const [mod, worker] = await Promise.all([
+        import('pdfjs-dist/legacy/build/pdf.mjs') as unknown as Promise<PdfJsLib>,
+        import('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'),
+      ]);
+      mod.GlobalWorkerOptions.workerSrc = worker.default;
       return mod;
     })().catch((err) => {
       pdfjsPromise = null; // позволяем повторить попытку при следующем клике

@@ -58,11 +58,11 @@ async function importResume(url) {
   if (resp.ok) {
     return { ok: true, candidate: body };
   }
-  return {
-    ok: false,
-    code: body?.code || `http_${resp.status}`,
-    message: body?.message || `HTTP ${resp.status}`,
-  };
+  // FastAPI отдаёт ошибки как {detail: {code, message}}, не на верхнем уровне.
+  const detail = body?.detail && typeof body.detail === 'object' ? body.detail : null;
+  const code = detail?.code || body?.code || `http_${resp.status}`;
+  const message = detail?.message || body?.message || `HTTP ${resp.status}`;
+  return { ok: false, code, message };
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {

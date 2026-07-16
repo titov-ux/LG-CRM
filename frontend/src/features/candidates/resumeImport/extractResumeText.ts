@@ -17,19 +17,36 @@ import { extractPdfText } from './extractPdfText';
 import { extractRtfText } from './extractRtfText';
 import { extractTxtText } from './extractTxtText';
 
+/** Схлопнуть горизонтальные пробелы построчно — чинит cairo/HH PDF и кривые DOCX. */
+function normalizeResumeWhitespace(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.replace(/[ \t\u00a0]+/g, ' ').trim())
+    .filter(Boolean)
+    .join('\n');
+}
+
 export async function extractResumeText(file: File, format: ResumeFormat): Promise<string> {
+  let raw: string;
   switch (format) {
     case 'pdf':
-      return extractPdfText(file);
+      raw = await extractPdfText(file);
+      break;
     case 'docx':
-      return extractDocxText(file);
+      raw = await extractDocxText(file);
+      break;
     case 'doc':
-      return extractDocText(file);
+      raw = await extractDocText(file);
+      break;
     case 'rtf':
-      return extractRtfText(file);
+      raw = await extractRtfText(file);
+      break;
     case 'txt':
-      return extractTxtText(file);
+      raw = await extractTxtText(file);
+      break;
     case 'html':
-      return extractHtmlText(file);
+      raw = await extractHtmlText(file);
+      break;
   }
+  return normalizeResumeWhitespace(raw);
 }

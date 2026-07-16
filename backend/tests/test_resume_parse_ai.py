@@ -91,6 +91,48 @@ def test_split_hh_resume_none_for_non_hh_text():
     assert ai._split_hh_resume("Просто произвольный текст без структуры") is None
 
 
+def test_normalize_resume_text_collapses_spaces():
+    raw = (
+        "Иргалин   Наир   Рафкатович\n"
+        "\n"
+        "Опыт   работы   — 3   года   7   месяцев\n"
+        "Февраль   2026   —\n"
+        "настоящее   время\n"
+        "Банк   ВТБ\n"
+        "Образование\n"
+        "Магистр\n"
+    )
+    cleaned = ai._normalize_resume_text(raw)
+    assert "Иргалин Наир Рафкатович" in cleaned
+    assert "Опыт работы — 3 года 7 месяцев" in cleaned
+    assert "  " not in cleaned
+    split = ai._split_hh_resume(cleaned)
+    assert split is not None
+    head, entries, tail = split
+    assert "Опыт работы — 3 года 7 месяцев" in head
+    assert len(entries) == 1
+    assert "Банк ВТБ" in entries[0]
+    assert tail.startswith("Образование")
+
+
+def test_split_hh_resume_tolerates_spaced_section_headers():
+    """Даже без полной нормализации сплиттер должен видеть «Опыт   работы»."""
+    text = (
+        "Иванов Иван\n"
+        "Опыт   работы   — 3 года\n"
+        "Январь 2023 —\nнастоящее время\nКомпания А\nИнженер\n"
+        "Дополнительная   информация\n"
+        "Обо мне текст\n"
+    )
+    split = ai._split_hh_resume(text)
+    assert split is not None
+    head, entries, tail = split
+    assert "Опыт   работы" in head
+    assert len(entries) == 1
+    assert "Компания А" in entries[0]
+    assert "Дополнительная" in tail
+
+
 # === Chunked-парсинг (по одному месту работы на вызов) ======================
 
 

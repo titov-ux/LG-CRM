@@ -10,6 +10,8 @@
 
 interface PdfTextItem {
   str: string;
+  /** Ширина глифа в PDF-единицах — нужна, чтобы понять, есть ли пробел между items. */
+  width?: number;
   /** Y-координата (transform[5]) — используется для разбивки на строки. */
   transform: [number, number, number, number, number, number];
   hasEOL?: boolean;
@@ -52,13 +54,22 @@ function loadPdfJs(): Promise<PdfJsLib> {
   return pdfjsPromise;
 }
 
+/** Схлопнуть горизонтальные пробелы (в т.ч. NBSP) в один обычный пробел. */
+function normalizeLine(raw: string): string {
+  return raw.replace(/[ \t\u00a0]+/g, ' ').trim();
+}
+
 /**
  * Считывает File → ArrayBuffer → текст по страницам, склеенный в одну строку
  * с разделителями `\n` между смысловыми строками PDF.
  *
- * Алгоритм: проходим items в порядке, который вернул pdfjs (близко к
- * top-to-bottom, left-to-right). Каждое изменение Y → перенос строки.
- * Это даёт пригодный для regex-парсинга вид документа.
+ * Алгоритм: items в порядке pdfjs (top-to-bottom, left-to-right). Смена Y →
+ * новая строка. Пробел между словами вставляем только если между глифами есть
+ * горизонтальный зазор И сам item не начинается с пробела/пунктуации.
+ *
+ * Важно: раньше после КАЖДОГО item безусловно дописывался `' '`. У HH-PDF
+ * (cairo) пробелы уже приходят отдельными items → получалось
+ * «Опыт   работы», YandexGPT/сплиттер плохо переваривали такой текст.
  */
 export async function extractPdfText(file: File): Promise<string> {
   const buffer = await file.arrayBuffer();
@@ -72,37 +83,69 @@ export async function extractPdfText(file: File): Promise<string> {
 
     let prevY: number | null = null;
     let prevX: number | null = null;
+    let prevWidth = 0;
     let current = '';
+
+    const flush = () => {
+      const line = normalizeLine(current);
+      if (line) lines.push(line);
+      current = '';
+      prevY = null;
+      prevX = null;
+      prevWidth = 0;
+    };
 
     for (const item of content.items) {
       const y = item.transform?.[5];
       const x = item.transform?.[4];
       if (y === undefined || x === undefined) continue;
 
+      const str = item.str ?? '';
+      const width = typeof item.width === 'number' ? item.width : 0;
+
       // PDF у разных генераторов хранит координаты в разной шкале: у части
       // документов межстрочный шаг меньше 1. Поэтому используем меньший порог.
       const yChanged = prevY !== null && Math.abs(y - prevY) > 0.5;
-      // Дополнительный эвристический перенос: если X резко "прыгает назад",
-      // обычно началась новая строка (или новый блок в колонке).
-      const xWrapped = prevX !== null && x + 2 < prevX;
+      // Крупный прыжок X назад на той же строке — новая колонка / перенос.
+      // Маленькие «откаты» у cairo (служебные пустые items) игнорируем.
+      const xWrapped =
+        prevX !== null && prevY !== null && Math.abs(y - prevY) <= 0.5 && x + 20 < prevX;
+
       if (yChanged || xWrapped) {
-        if (current.trim()) lines.push(current.trim());
-        current = '';
+        flush();
       }
 
-      current += `${item.str} `;
+      if (str) {
+        if (current) {
+          const gap = prevX !== null ? x - (prevX + prevWidth) : 0;
+          const needsSpace =
+            gap > 1.2 &&
+            !/\s$/.test(current) &&
+            !/^\s/.test(str) &&
+            !/^[,.:;!?)\]%}»]/.test(str);
+          if (needsSpace) current += ' ';
+        }
+        current += str;
+      }
+
       // hasEOL у pdfjs выставляется на границе блока — тоже трактуем как перенос строки.
       if (item.hasEOL) {
-        if (current.trim()) lines.push(current.trim());
-        current = '';
-        prevY = null;
-        prevX = null;
+        flush();
         continue;
       }
-      prevY = y;
-      prevX = x;
+
+      // Пустые items не сдвигают «курсор» — иначе ломается расчёт gap.
+      if (str || width > 0) {
+        prevY = y;
+        prevX = x;
+        prevWidth = width;
+      } else if (prevY === null) {
+        prevY = y;
+        prevX = x;
+        prevWidth = 0;
+      }
     }
-    if (current.trim()) lines.push(current.trim());
+    if (current) flush();
   }
 
   return lines.join('\n');

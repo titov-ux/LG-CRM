@@ -452,24 +452,42 @@ _MONTHS_EN = (
 # Начало места работы в HH-выгрузке: строка «<Месяц> <год> —…».
 # Только горизонтальные пробелы ([ \t ]) — `\s` пересекал бы перенос
 # строки и строка конца работы («Декабрь 2023») слипалась бы со следующей.
+# `{1,}` допускает «Февраль   2026   —» из кривого PDF-извлечения.
 _EXP_ENTRY_RE = re.compile(
     rf"^(?:{_MONTHS_RU}|{_MONTHS_EN})[ \t ]+\d{{4}}[ \t ]*[—–-]",
     re.MULTILINE,
 )
 # Заголовок секции опыта: «Опыт работы — 24 года 7 месяцев».
+# `\s+` между словами — защита от cairo/HH PDF, где клиент раньше склеивал
+# items с лишними пробелами («Опыт   работы»).
 _EXP_SECTION_RE = re.compile(
-    r"^(?:Опыт работы|Work experience)\b[^\n]*$", re.MULTILINE
+    r"^(?:Опыт\s+работы|Work\s+experience)\b[^\n]*$", re.MULTILINE
 )
 # Секции ПОСЛЕ опыта (границы хвоста). Матчим строку целиком, чтобы не
 # спутать с индустрией места работы («Повышение квалификации, переквалификация»).
 _TAIL_SECTION_RE = re.compile(
-    r"^(?:Образование|Education|Навыки|Skills|Ключевые навыки|Key skills|"
-    r"Повышение квалификации, курсы|Знание языков|Languages|"
-    r"Тесты, экзамены|Электронные сертификаты|"
-    r"Дополнительная информация|Additional information|Обо мне|About me|"
-    r"Комментарии к резюме|Resume comments)\s*$",
+    r"^(?:Образование|Education|Навыки|Skills|Ключевые\s+навыки|Key\s+skills|"
+    r"Повышение\s+квалификации,\s*курсы|Знание\s+языков|Languages|"
+    r"Тесты,\s*экзамены|Электронные\s+сертификаты|"
+    r"Дополнительная\s+информация|Additional\s+information|Обо\s+мне|About\s+me|"
+    r"Комментарии\s+к\s+резюме|Resume\s+comments)\s*$",
     re.MULTILINE,
 )
+
+
+def _normalize_resume_text(text: str) -> str:
+    """Схлопнуть горизонтальные пробелы и выкинуть пустые строки.
+
+    Клиентский pdfjs на HH-PDF (cairo) раньше дописывал пробел после каждого
+    text-item → «Опыт   работы», «Проживает :   Москва». Нормализация чинит
+    и старые клиенты, и любые будущие генераторы с лишними пробелами.
+    """
+    lines: list[str] = []
+    for raw in text.splitlines():
+        cleaned = re.sub(r"[ \t\u00a0]+", " ", raw).strip()
+        if cleaned:
+            lines.append(cleaned)
+    return "\n".join(lines)
 
 _EXPERIENCE_ONLY_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -1068,6 +1086,7 @@ async def parse_resume_text(text: str, *, today: str) -> dict[str, Any]:
     """
     settings = get_settings()
     max_chars = settings.yandex_ai_max_input_chars
+    text = _normalize_resume_text(text)
 
     client = YandexGptClient(timeout_seconds=_RESUME_CALL_TIMEOUT_SECONDS)
 

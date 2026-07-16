@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useRouter, useSearch } from '@tanstack/react-router';
+import { useNavigate, useSearch } from '@tanstack/react-router';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,7 +12,7 @@ import { BubbleBackdrop } from './BubbleBackdrop';
 export function LoginPage() {
   // Экран авторизации всегда в светлой теме, независимо от настройки темы.
   useForceLightTheme();
-  const router = useRouter();
+  const navigate = useNavigate();
   const { redirect } = useSearch({ from: '/login' });
   const login = useLogin();
   const [email, setEmail] = useState('');
@@ -23,8 +23,8 @@ export function LoginPage() {
     try {
       await login.mutateAsync({ email, password });
       // Возвращаемся на исходный deep-link, если он был; иначе на главную.
-      // history.push принимает произвольный href (path+search+hash).
-      router.history.push(redirect ?? '/dashboard');
+      // href принимает произвольный внутренний path+search+hash (см. AuthGuard).
+      await navigate({ href: redirect ?? '/dashboard' });
     } catch {
       // ошибка показана через login.error
     }

@@ -27,6 +27,9 @@ export function useLogin() {
   return useMutation({
     mutationFn: (payload: LoginRequest) => authApi.login(payload),
     onSuccess: async (data) => {
+      if (!data.accessToken) {
+        throw new Error('Login response is missing accessToken');
+      }
       setAccessToken(data.accessToken);
       await queryClient.invalidateQueries({ queryKey: authKeys.me });
     },

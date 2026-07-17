@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useForceLightTheme } from '@/lib/theme';
+import { apiErrorMessage } from '@/lib/utils';
 import { useLogin } from './useAuth';
 import { BubbleBackdrop } from './BubbleBackdrop';
 
@@ -17,16 +18,22 @@ export function LoginPage() {
   const login = useLogin();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  // Реальный текст ошибки от бэкенда (lockout / rate-limit / inactive / 500),
+  // а не общий «проверьте пароль» — иначе непонятно, почему верные данные не проходят.
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMsg(null);
     try {
       await login.mutateAsync({ email, password });
       // Возвращаемся на исходный deep-link, если он был; иначе на главную.
       // href принимает произвольный внутренний path+search+hash (см. AuthGuard).
       await navigate({ href: redirect ?? '/dashboard' });
-    } catch {
-      // ошибка показана через login.error
+    } catch (err) {
+      setErrorMsg(
+        await apiErrorMessage(err, 'Не удалось войти. Проверьте email и пароль.'),
+      );
     }
   };
 
@@ -70,9 +77,9 @@ export function LoginPage() {
                 className="bg-white/80"
               />
             </div>
-            {login.isError && (
+            {login.isError && errorMsg && (
               <Alert variant="destructive">
-                <AlertDescription>Не удалось войти. Проверьте email и пароль.</AlertDescription>
+                <AlertDescription>{errorMsg}</AlertDescription>
               </Alert>
             )}
             <Button type="submit" className="w-full" disabled={login.isPending}>

@@ -205,11 +205,13 @@ function BreakdownBlock({
     );
   }
   const max = Math.max(1, ...items.map((i) => i.count));
+  const total = items.reduce((sum, i) => sum + i.count, 0);
   return (
     <div>
       <div className="mb-1.5 flex items-center gap-1.5">
         <Icon className={cn('h-3.5 w-3.5', iconClass)} />
         <span className="text-[11.5px] font-semibold">{label}</span>
+        <span className="tnum ml-auto text-[16px] font-bold leading-none">{total}</span>
       </div>
       <div className="space-y-1">
         {items.map((row, i) => (
@@ -237,6 +239,16 @@ function BreakdownBlock({
             </span>
           </div>
         ))}
+        {/* итог по всем сотрудникам */}
+        <div className="flex items-center gap-2 border-t pt-1 text-[12px]">
+          <span className="w-36 shrink-0 font-medium text-muted-foreground">
+            Всего
+          </span>
+          <span className="min-w-0 flex-1" />
+          <span className="tnum w-6 shrink-0 text-right text-[12px] font-bold">
+            {total}
+          </span>
+        </div>
       </div>
     </div>
   );

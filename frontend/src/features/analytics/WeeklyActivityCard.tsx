@@ -2,10 +2,18 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { format } from 'date-fns';
 import { ru } from 'date-fns/locale';
-import { Briefcase, ChevronLeft, ChevronRight, UserPlus } from 'lucide-react';
+import {
+  Briefcase,
+  ChevronLeft,
+  ChevronRight,
+  UserCheck,
+  UserPlus,
+  Users,
+} from 'lucide-react';
 import type {
   MatchStatus,
   WeeklySubmissionItem,
+  WeeklyUserCount,
   WeeklyVacancyItem,
 } from '@/api/analytics';
 import { Button } from '@/components/ui/button';
@@ -109,12 +117,34 @@ export function WeeklyActivityCard() {
             <Skeleton className="h-40" />
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <VacanciesBlock items={data.newVacancies.items} total={data.newVacancies.total} />
-            <SubmissionsBlock
-              items={data.submittedCandidates.items}
-              total={data.submittedCandidates.total}
-            />
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <VacanciesBlock items={data.newVacancies.items} total={data.newVacancies.total} />
+              <SubmissionsBlock
+                items={data.submittedCandidates.items}
+                total={data.submittedCandidates.total}
+              />
+            </div>
+
+            {/* Разбивка по сотрудникам */}
+            {(data.byManagers.length > 0 || data.byRecruiters.length > 0) && (
+              <div className="grid grid-cols-1 gap-4 border-t pt-3 lg:grid-cols-2">
+                <BreakdownBlock
+                  icon={Users}
+                  iconClass="text-sky-500"
+                  barClass="bg-sky-500/70"
+                  label="Вакансии по аккаунтам"
+                  items={data.byManagers}
+                />
+                <BreakdownBlock
+                  icon={UserCheck}
+                  iconClass="text-emerald-500"
+                  barClass="bg-emerald-500/70"
+                  label="Подачи по рекрутерам"
+                  items={data.byRecruiters}
+                />
+              </div>
+            )}
           </div>
         )}
       </CardContent>
@@ -146,6 +176,68 @@ function EmptyRow({ text }: { text: string }) {
   return (
     <div className="rounded-md border border-dashed px-3 py-4 text-center text-[11.5px] text-muted-foreground">
       {text}
+    </div>
+  );
+}
+
+function BreakdownBlock({
+  icon: Icon,
+  iconClass,
+  barClass,
+  label,
+  items,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  iconClass: string;
+  barClass: string;
+  label: string;
+  items: WeeklyUserCount[];
+}) {
+  if (items.length === 0) {
+    return (
+      <div>
+        <div className="mb-1.5 flex items-center gap-1.5">
+          <Icon className={cn('h-3.5 w-3.5', iconClass)} />
+          <span className="text-[11.5px] font-semibold">{label}</span>
+        </div>
+        <EmptyRow text="За эту неделю пусто" />
+      </div>
+    );
+  }
+  const max = Math.max(1, ...items.map((i) => i.count));
+  return (
+    <div>
+      <div className="mb-1.5 flex items-center gap-1.5">
+        <Icon className={cn('h-3.5 w-3.5', iconClass)} />
+        <span className="text-[11.5px] font-semibold">{label}</span>
+      </div>
+      <div className="space-y-1">
+        {items.map((row, i) => (
+          <div
+            key={row.userId ?? `none-${i}`}
+            className="flex items-center gap-2 text-[12px]"
+          >
+            <span
+              className={cn(
+                'w-36 shrink-0 truncate',
+                row.fullName ? '' : 'text-muted-foreground italic',
+              )}
+              title={row.fullName ?? undefined}
+            >
+              {row.fullName ?? 'Не указан'}
+            </span>
+            <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-muted">
+              <span
+                className={cn('block h-full rounded-full', barClass)}
+                style={{ width: `${(row.count / max) * 100}%` }}
+              />
+            </span>
+            <span className="tnum w-6 shrink-0 text-right text-[12px] font-semibold">
+              {row.count}
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

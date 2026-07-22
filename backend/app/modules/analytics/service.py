@@ -1566,6 +1566,58 @@ async def weekly_activity(db: AsyncSession, *, period: Period) -> dict:
         ) in sub_rows
     ]
 
+    # 3) Разбивка: созданные вакансии по ответственным аккаунт-менеджерам.
+    #    outerjoin — у вакансии может не быть ответственного (FK SET NULL).
+    mgr_rows = (
+        await db.execute(
+            select(User.id, User.full_name, func.count())
+            .select_from(Vacancy)
+            .outerjoin(User, User.id == Vacancy.account_manager_id)
+            .where(
+                Vacancy.deleted_at.is_(None),
+                Vacancy.created_at >= period.from_dt,
+                Vacancy.created_at < period.to_dt,
+            )
+            .group_by(User.id, User.full_name)
+            .order_by(func.count().desc(), User.full_name)
+        )
+    ).all()
+    by_managers = [
+        {
+            "user_id": str(uid) if uid else None,
+            "full_name": name,
+            "count": int(cnt),
+        }
+        for uid, name, cnt in mgr_rows
+    ]
+
+    # 4) Разбивка: подачи по тем, кто прикрепил кандидата (added_by).
+    rec_rows = (
+        await db.execute(
+            select(User.id, User.full_name, func.count())
+            .select_from(VacancyCandidate)
+            .join(Candidate, Candidate.id == VacancyCandidate.candidate_id)
+            .join(Vacancy, Vacancy.id == VacancyCandidate.vacancy_id)
+            .outerjoin(User, User.id == VacancyCandidate.added_by_id)
+            .where(
+                Candidate.deleted_at.is_(None),
+                Vacancy.deleted_at.is_(None),
+                VacancyCandidate.added_at >= period.from_dt,
+                VacancyCandidate.added_at < period.to_dt,
+            )
+            .group_by(User.id, User.full_name)
+            .order_by(func.count().desc(), User.full_name)
+        )
+    ).all()
+    by_recruiters = [
+        {
+            "user_id": str(uid) if uid else None,
+            "full_name": name,
+            "count": int(cnt),
+        }
+        for uid, name, cnt in rec_rows
+    ]
+
     return {
         "period": {
             "from": period.from_dt.isoformat(),
@@ -1573,4 +1625,6 @@ async def weekly_activity(db: AsyncSession, *, period: Period) -> dict:
         },
         "new_vacancies": {"total": len(new_vacancies), "items": new_vacancies},
         "submitted_candidates": {"total": len(submitted), "items": submitted},
+        "by_managers": by_managers,
+        "by_recruiters": by_recruiters,
     }

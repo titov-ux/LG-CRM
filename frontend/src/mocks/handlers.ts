@@ -1794,10 +1794,35 @@ export const handlers = [
       }))
       .sort((a, b) => b.addedAt.localeCompare(a.addedAt));
 
+    // Разбивки: вакансии по аккаунт-менеджерам, подачи по рекрутёрам
+    const userName = (id: string | null) =>
+      usersDb.find((usr) => usr.id === id)?.fullName ?? null;
+    const byManagers = Array.from(
+      vacs.reduce((m, v) => {
+        const id = v.accountManagerId ?? null;
+        m.set(id, (m.get(id) ?? 0) + 1);
+        return m;
+      }, new Map<string | null, number>()),
+    )
+      .map(([userId, count]) => ({ userId, fullName: userName(userId), count }))
+      .sort((a, b) => b.count - a.count);
+    const byRecruiters = Array.from(
+      windowSubs.reduce((m, s) => {
+        const rid =
+          candidatesDb.find((c) => c.id === s.candidateId)?.recruiterId ?? null;
+        m.set(rid, (m.get(rid) ?? 0) + 1);
+        return m;
+      }, new Map<string | null, number>()),
+    )
+      .map(([userId, count]) => ({ userId, fullName: userName(userId), count }))
+      .sort((a, b) => b.count - a.count);
+
     return HttpResponse.json({
       period: { from: periodFrom.toISOString(), to: periodTo.toISOString() },
       newVacancies: { total: newVacancies.length, items: newVacancies },
       submittedCandidates: { total: submitted.length, items: submitted },
+      byManagers,
+      byRecruiters,
     });
   }),
 

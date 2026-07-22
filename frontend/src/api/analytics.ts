@@ -248,10 +248,21 @@ export interface WeeklySubmissionBlock {
   items: WeeklySubmissionItem[];
 }
 
+/** Строка разбивки по сотруднику; userId/fullName = null — «не указан». */
+export interface WeeklyUserCount {
+  userId?: string | null;
+  fullName?: string | null;
+  count: number;
+}
+
 export interface WeeklyActivityResponse {
   period: PeriodWindow;
   newVacancies: WeeklyVacancyBlock;
   submittedCandidates: WeeklySubmissionBlock;
+  /** Созданные вакансии по аккаунт-менеджерам. */
+  byManagers: WeeklyUserCount[];
+  /** Подачи по тем, кто прикрепил кандидата. */
+  byRecruiters: WeeklyUserCount[];
 }
 
 // ─── Worklog (учёт времени в системе) ─────────────────────────────────

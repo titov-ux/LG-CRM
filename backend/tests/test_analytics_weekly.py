@@ -114,6 +114,19 @@ def test_weekly_activity_lists_new_vacancies_and_submissions(
     assert sub["clientName"] == "Acme Weekly"
     assert sub["status"] == "submitted"
 
+    # разбивки: вакансия учтена за аккаунт-менеджером, подача — за тем, кто
+    # прикрепил кандидата (в тесте это админ)
+    mgr = next(
+        r
+        for r in body["byManagers"]
+        if r["userId"] == str(account_manager_user.id)
+    )
+    assert mgr["count"] >= 1 and mgr["fullName"]
+    rec = next(
+        r for r in body["byRecruiters"] if r["userId"] == str(admin_user.id)
+    )
+    assert rec["count"] >= 1 and rec["fullName"]
+
 
 def test_weekly_activity_window_excludes_outside(
     client: TestClient, admin_user, account_manager_user

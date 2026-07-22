@@ -255,10 +255,22 @@ class WeeklySubmissionBlock(CamelModel):
     items: list[WeeklySubmissionItem]
 
 
+class WeeklyUserCount(CamelModel):
+    """Строка разбивки по сотруднику. user_id/full_name = None — «не указан»
+    (у вакансии нет ответственного или added_by-пользователь удалён)."""
+
+    user_id: uuid.UUID | None = None
+    full_name: str | None = None
+    count: int
+
+
 class WeeklyActivityResponse(CamelModel):
     period: PeriodWindow
     new_vacancies: WeeklyVacancyBlock
     submitted_candidates: WeeklySubmissionBlock
+    # Разбивки: вакансии по аккаунт-менеджерам, подачи по added_by.
+    by_managers: list[WeeklyUserCount] = []
+    by_recruiters: list[WeeklyUserCount] = []
 
 
 # === Chat metrics (Этап 6) =================================================

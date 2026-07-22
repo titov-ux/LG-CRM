@@ -1628,6 +1628,23 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ClientPerformanceResponse' }
+  /analytics/weekly-activity:
+    get:
+      tags: [analytics]
+      summary: Итоги недели — новые вакансии и поданные кандидаты за окно
+      description: >-
+        Без параметров окно — текущая рабочая неделя (понедельник 00:00 UTC →
+        сейчас). Фронт передаёт границы недели, посчитанные в локальной
+        таймзоне пользователя.
+      parameters:
+        - { in: query, name: from, schema: { type: string, format: date-time } }
+        - { in: query, name: to,   schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: WeeklyActivityResponse
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WeeklyActivityResponse' }
   /analytics/chat:
     get:
       tags: [analytics]
@@ -3369,6 +3386,50 @@ components:
       properties:
         items:  { type: array, items: { $ref: '#/components/schemas/ClientMetric' } }
         period: { $ref: '#/components/schemas/PeriodWindow' }
+
+    # ─── Weekly activity («Итоги недели») ───
+    WeeklyVacancyItem:
+      type: object
+      required: [id, title, status, createdAt, clientId, clientName]
+      properties:
+        id:         { $ref: '#/components/schemas/UUID' }
+        title:      { type: string }
+        status:     { $ref: '#/components/schemas/VacancyStatus' }
+        createdAt:  { type: string, format: date-time }
+        clientId:   { $ref: '#/components/schemas/UUID' }
+        clientName: { type: string }
+    WeeklyVacancyBlock:
+      type: object
+      required: [total, items]
+      properties:
+        total: { type: integer }
+        items: { type: array, items: { $ref: '#/components/schemas/WeeklyVacancyItem' } }
+    WeeklySubmissionItem:
+      type: object
+      required: [matchId, status, addedAt, candidateId, candidateName, vacancyId, vacancyTitle, clientName]
+      properties:
+        matchId:       { $ref: '#/components/schemas/UUID' }
+        status:        { $ref: '#/components/schemas/MatchStatus' }
+        addedAt:       { type: string, format: date-time }
+        candidateId:   { $ref: '#/components/schemas/UUID' }
+        candidateName: { type: string }
+        vacancyId:     { $ref: '#/components/schemas/UUID' }
+        vacancyTitle:  { type: string }
+        clientName:    { type: string }
+        addedByName:   { type: string, nullable: true }
+    WeeklySubmissionBlock:
+      type: object
+      required: [total, items]
+      properties:
+        total: { type: integer }
+        items: { type: array, items: { $ref: '#/components/schemas/WeeklySubmissionItem' } }
+    WeeklyActivityResponse:
+      type: object
+      required: [period, newVacancies, submittedCandidates]
+      properties:
+        period:              { $ref: '#/components/schemas/PeriodWindow' }
+        newVacancies:        { $ref: '#/components/schemas/WeeklyVacancyBlock' }
+        submittedCandidates: { $ref: '#/components/schemas/WeeklySubmissionBlock' }
 
     # ─── Worklog (учёт времени) ───
     WorkSessionEndReason:

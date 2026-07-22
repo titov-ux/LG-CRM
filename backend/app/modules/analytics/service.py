@@ -22,6 +22,7 @@ from app.modules.audit.models import AuditEntry
 from app.modules.candidates.models import Candidate, CandidateStatus
 from app.modules.clients.models import Client, ClientKind, ClientStatus
 from app.modules.matching.models import MatchStatus, VacancyCandidate
+from app.modules.users.models import User
 from app.modules.vacancies.models import Vacancy, VacancyStatus
 
 
@@ -1452,4 +1453,124 @@ async def trends(
             "candidates_created": _series(cand_created),
             "hires": _series(hires),
         },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Weekly activity («Итоги недели»)
+# ---------------------------------------------------------------------------
+
+
+def week_period(now: datetime | None = None) -> Period:
+    """Текущая рабочая неделя: понедельник 00:00 UTC → сейчас.
+
+    Фронт обычно передаёт границы сам (посчитанные в локальной таймзоне
+    пользователя); этот дефолт — для вызова эндпоинта без параметров.
+    """
+    now = now or datetime.now(timezone.utc)
+    monday = (now - timedelta(days=now.weekday())).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    return Period(from_dt=monday, to_dt=now)
+
+
+async def weekly_activity(db: AsyncSession, *, period: Period) -> dict:
+    """«Итоги недели»: новые вакансии и поданные кандидаты за окно [from, to).
+
+    Оба списка возвращаются целиком (объём одной недели невелик), каждая
+    строка несёт id связанных сущностей — фронт делает их кликабельными
+    (переход в карточку вакансии/кандидата).
+    """
+    # 1) Вакансии, созданные в окне
+    vac_rows = (
+        await db.execute(
+            select(
+                Vacancy.id,
+                Vacancy.title,
+                Vacancy.status,
+                Vacancy.created_at,
+                Client.id.label("client_id"),
+                Client.name.label("client_name"),
+            )
+            .join(Client, Client.id == Vacancy.client_id)
+            .where(
+                Vacancy.deleted_at.is_(None),
+                Vacancy.created_at >= period.from_dt,
+                Vacancy.created_at < period.to_dt,
+            )
+            .order_by(Vacancy.created_at.desc())
+        )
+    ).all()
+    new_vacancies = [
+        {
+            "id": str(vid),
+            "title": title,
+            "status": status.value,
+            "created_at": created.isoformat(),
+            "client_id": str(cid),
+            "client_name": cname,
+        }
+        for vid, title, status, created, cid, cname in vac_rows
+    ]
+
+    # 2) Подачи: связки VacancyCandidate, созданные в окне.
+    #    added_by через outerjoin — после удаления пользователя FK = NULL.
+    sub_rows = (
+        await db.execute(
+            select(
+                VacancyCandidate.id,
+                VacancyCandidate.status,
+                VacancyCandidate.added_at,
+                Candidate.id.label("candidate_id"),
+                Candidate.full_name.label("candidate_name"),
+                Vacancy.id.label("vacancy_id"),
+                Vacancy.title.label("vacancy_title"),
+                Client.name.label("client_name"),
+                User.full_name.label("added_by_name"),
+            )
+            .join(Candidate, Candidate.id == VacancyCandidate.candidate_id)
+            .join(Vacancy, Vacancy.id == VacancyCandidate.vacancy_id)
+            .join(Client, Client.id == Vacancy.client_id)
+            .outerjoin(User, User.id == VacancyCandidate.added_by_id)
+            .where(
+                Candidate.deleted_at.is_(None),
+                Vacancy.deleted_at.is_(None),
+                VacancyCandidate.added_at >= period.from_dt,
+                VacancyCandidate.added_at < period.to_dt,
+            )
+            .order_by(VacancyCandidate.added_at.desc())
+        )
+    ).all()
+    submitted = [
+        {
+            "match_id": str(mid),
+            "status": status.value,
+            "added_at": added.isoformat(),
+            "candidate_id": str(cid),
+            "candidate_name": cand_name,
+            "vacancy_id": str(vid),
+            "vacancy_title": vac_title,
+            "client_name": client_name,
+            "added_by_name": added_by_name,
+        }
+        for (
+            mid,
+            status,
+            added,
+            cid,
+            cand_name,
+            vid,
+            vac_title,
+            client_name,
+            added_by_name,
+        ) in sub_rows
+    ]
+
+    return {
+        "period": {
+            "from": period.from_dt.isoformat(),
+            "to": period.to_dt.isoformat(),
+        },
+        "new_vacancies": {"total": len(new_vacancies), "items": new_vacancies},
+        "submitted_candidates": {"total": len(submitted), "items": submitted},
     }

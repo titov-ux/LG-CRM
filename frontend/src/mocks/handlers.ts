@@ -1699,6 +1699,108 @@ export const handlers = [
     });
   }),
 
+  http.get(url('/analytics/weekly-activity'), ({ request }) => {
+    const u = new URL(request.url);
+    const now = new Date();
+    const defFrom = new Date(now);
+    defFrom.setHours(0, 0, 0, 0);
+    defFrom.setDate(defFrom.getDate() - ((defFrom.getDay() + 6) % 7)); // понедельник
+    const fromParam = u.searchParams.get('from');
+    const toParam = u.searchParams.get('to');
+    const periodFrom = fromParam ? new Date(fromParam) : defFrom;
+    const periodTo = toParam ? new Date(toParam) : now;
+    const spanMs = Math.max(1, periodTo.getTime() - periodFrom.getTime());
+    // прошлые недели в моках «пустее» текущей — чтобы листалка была наглядной
+    const weeksAgo = Math.max(
+      0,
+      Math.round((now.getTime() - periodTo.getTime()) / (7 * 86400_000)),
+    );
+    const clientName = (id: string) =>
+      clientsDb.find((c) => c.id === id)?.name ?? '—';
+
+    // Новые вакансии: истории created_at в моках нет — берём открытые и
+    // детерминированно раскладываем даты создания по окну.
+    const vacs = vacanciesDb
+      .filter((v) => !['closed', 'closed_success', 'paused'].includes(v.status))
+      .slice(weeksAgo, weeksAgo + Math.max(0, 4 - weeksAgo));
+    const newVacancies = vacs
+      .map((v, i) => ({
+        id: v.id,
+        title: v.title,
+        status: v.status,
+        createdAt: new Date(
+          periodFrom.getTime() + (spanMs * (i + 1)) / (vacs.length + 1),
+        ).toISOString(),
+        clientId: v.clientId,
+        clientName: clientName(v.clientId),
+      }))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+    // Поданные кандидаты: текущие привязки кандидат↔вакансия как «подачи».
+    const matchStatusMap: Partial<Record<CandidateStatus, string>> = {
+      presented: 'submitted',
+      waiting_os: 'reviewed',
+      offer: 'offered',
+      hired: 'accepted',
+      rejected_client: 'rejected_client',
+      rejected_candidate: 'rejected_internal',
+    };
+    const toMatchStatus = (s: CandidateStatus): string =>
+      matchStatusMap[s] ?? 'submitted';
+    const subs: {
+      matchId: string;
+      status: string;
+      addedAt: string;
+      candidateId: string;
+      candidateName: string;
+      vacancyId: string;
+      vacancyTitle: string;
+      clientName: string;
+      addedByName: string | null;
+    }[] = [];
+    candidatesDb
+      .filter((c) => !c.archived)
+      .forEach((c) => {
+        c.vacancyIds.forEach((vid) => {
+          const v = vacanciesDb.find((x) => x.id === vid);
+          if (!v) return;
+          subs.push({
+            matchId: `m-${c.id}-${vid}`,
+            status: toMatchStatus(c.status),
+            addedAt: '',
+            candidateId: c.id,
+            candidateName: c.fullName,
+            vacancyId: v.id,
+            vacancyTitle: v.title,
+            clientName: clientName(v.clientId),
+            addedByName:
+              usersDb.find((usr) => usr.id === c.recruiterId)?.fullName ?? null,
+          });
+        });
+      });
+    // Текущая неделя отдаёт ВСЕ связки — так подача, сделанная из UI
+    // (прикрепление кандидата к вакансии), сразу видна в карточке.
+    // Прошлые недели — детерминированно «пустее».
+    const windowSubs =
+      weeksAgo === 0
+        ? subs
+        : subs.slice(weeksAgo * 2, weeksAgo * 2 + Math.max(0, 7 - weeksAgo * 2));
+    const submitted = windowSubs
+      .map((s, i, arr) => ({
+        ...s,
+        addedAt: new Date(
+          periodFrom.getTime() + (spanMs * (i + 1)) / (arr.length + 1),
+        ).toISOString(),
+      }))
+      .sort((a, b) => b.addedAt.localeCompare(a.addedAt));
+
+    return HttpResponse.json({
+      period: { from: periodFrom.toISOString(), to: periodTo.toISOString() },
+      newVacancies: { total: newVacancies.length, items: newVacancies },
+      submittedCandidates: { total: submitted.length, items: submitted },
+    });
+  }),
+
   // === Permissions matrix ===
   http.get(url('/permissions-matrix'), () => {
     return HttpResponse.json({ items: permissionsMatrixDb });

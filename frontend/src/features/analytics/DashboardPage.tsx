@@ -16,6 +16,7 @@ import { TrendsChart } from './TrendsChart';
 import { FunnelChart } from './FunnelChart';
 import { TimeToHireCard } from './TimeToHireCard';
 import { AttentionList } from './AttentionList';
+import { WeeklyActivityCard } from './WeeklyActivityCard';
 import { RecruitersTable } from './RecruitersTable';
 import { ClientsTable } from './ClientsTable';
 import {
@@ -93,6 +94,9 @@ export function DashboardPage() {
           </>
         )}
       </div>
+
+      {/* Итоги недели: новые вакансии + поданные кандидаты */}
+      <WeeklyActivityCard />
 
       {/* Тренды */}
       <Card>

@@ -221,6 +221,46 @@ class ClientPerformanceResponse(CamelModel):
     period: PeriodWindow
 
 
+# ─── Weekly activity («Итоги недели») ───────────────────────────────────
+
+
+class WeeklyVacancyItem(CamelModel):
+    id: uuid.UUID
+    title: str
+    status: VacancyStatus
+    created_at: datetime
+    client_id: uuid.UUID
+    client_name: str
+
+
+class WeeklyVacancyBlock(CamelModel):
+    total: int
+    items: list[WeeklyVacancyItem]
+
+
+class WeeklySubmissionItem(CamelModel):
+    match_id: uuid.UUID
+    status: MatchStatus
+    added_at: datetime
+    candidate_id: uuid.UUID
+    candidate_name: str
+    vacancy_id: uuid.UUID
+    vacancy_title: str
+    client_name: str
+    added_by_name: str | None = None
+
+
+class WeeklySubmissionBlock(CamelModel):
+    total: int
+    items: list[WeeklySubmissionItem]
+
+
+class WeeklyActivityResponse(CamelModel):
+    period: PeriodWindow
+    new_vacancies: WeeklyVacancyBlock
+    submitted_candidates: WeeklySubmissionBlock
+
+
 # === Chat metrics (Этап 6) =================================================
 
 

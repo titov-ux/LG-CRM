@@ -19,6 +19,8 @@ export const analyticsKeys = {
     ['analytics', 'recruiter-performance', p] as const,
   clientPerformance: (p: PeriodParams = {}) =>
     ['analytics', 'client-performance', p] as const,
+  weeklyActivity: (p: PeriodParams = {}) =>
+    ['analytics', 'weekly-activity', p] as const,
   worklogSummary: (p: WorklogParams = {}) =>
     ['analytics', 'worklog-summary', p] as const,
   worklogSessions: (p: WorklogParams = {}) =>
@@ -85,6 +87,13 @@ export function useClientPerformance(params: PeriodParams = {}) {
   return useQuery({
     queryKey: analyticsKeys.clientPerformance(params),
     queryFn: () => analyticsApi.clientPerformance(params),
+  });
+}
+
+export function useWeeklyActivity(params: PeriodParams = {}) {
+  return useQuery({
+    queryKey: analyticsKeys.weeklyActivity(params),
+    queryFn: () => analyticsApi.weeklyActivity(params),
   });
 }
 

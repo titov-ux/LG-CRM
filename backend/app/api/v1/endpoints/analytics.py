@@ -26,6 +26,7 @@ from app.modules.analytics.schemas import (
     RecruiterPerformanceResponse,
     TimeToHireResponse,
     TrendsResponse,
+    WeeklyActivityResponse,
 )
 from app.modules.analytics.worklog_schemas import (
     WorklogSession,
@@ -184,6 +185,29 @@ async def client_performance(
     period = service.resolve_period(from_dt, to_dt)
     data = await service.client_performance(db, period=period)
     return ClientPerformanceResponse.model_validate(data)
+
+
+@router.get(
+    "/weekly-activity",
+    response_model=WeeklyActivityResponse,
+    summary="Итоги недели: новые вакансии и поданные кандидаты за окно",
+)
+async def weekly_activity(
+    from_dt: datetime | None = Query(
+        None,
+        alias="from",
+        description="Начало окна (ISO-8601). По умолчанию — понедельник текущей недели, 00:00 UTC.",
+    ),
+    to_dt: datetime | None = Query(None, alias="to"),
+    _: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> WeeklyActivityResponse:
+    if from_dt is None and to_dt is None:
+        period = service.week_period()
+    else:
+        period = service.resolve_period(from_dt, to_dt)
+    data = await service.weekly_activity(db, period=period)
+    return WeeklyActivityResponse.model_validate(data)
 
 
 @router.get(

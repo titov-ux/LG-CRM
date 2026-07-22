@@ -215,6 +215,45 @@ export interface ClientPerformanceResponse {
   period: PeriodWindow;
 }
 
+// ─── Weekly activity («Итоги недели») ─────────────────────────────────
+
+export interface WeeklyVacancyItem {
+  id: string;
+  title: string;
+  status: VacancyStatus;
+  createdAt: string;
+  clientId: string;
+  clientName: string;
+}
+
+export interface WeeklyVacancyBlock {
+  total: number;
+  items: WeeklyVacancyItem[];
+}
+
+export interface WeeklySubmissionItem {
+  matchId: string;
+  status: MatchStatus;
+  addedAt: string;
+  candidateId: string;
+  candidateName: string;
+  vacancyId: string;
+  vacancyTitle: string;
+  clientName: string;
+  addedByName?: string | null;
+}
+
+export interface WeeklySubmissionBlock {
+  total: number;
+  items: WeeklySubmissionItem[];
+}
+
+export interface WeeklyActivityResponse {
+  period: PeriodWindow;
+  newVacancies: WeeklyVacancyBlock;
+  submittedCandidates: WeeklySubmissionBlock;
+}
+
 // ─── Worklog (учёт времени в системе) ─────────────────────────────────
 
 export type WorkSessionEndReason =
@@ -308,6 +347,12 @@ export const analyticsApi = {
         searchParams: toSearchParams(params as Record<string, unknown>),
       })
       .json<ClientPerformanceResponse>(),
+  weeklyActivity: (params: PeriodParams = {}) =>
+    api
+      .get('analytics/weekly-activity', {
+        searchParams: toSearchParams(params as Record<string, unknown>),
+      })
+      .json<WeeklyActivityResponse>(),
   worklogSummary: (params: WorklogParams = {}) =>
     api
       .get('analytics/worklog/summary', {

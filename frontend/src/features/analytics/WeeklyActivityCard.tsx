@@ -4,19 +4,26 @@ import { format } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import {
   Briefcase,
+  Calendar as CalendarIcon,
   ChevronLeft,
   ChevronRight,
   UserCheck,
   UserPlus,
   Users,
 } from 'lucide-react';
+import { DayPicker, type DateRange } from 'react-day-picker';
 import type {
   MatchStatus,
   WeeklySubmissionItem,
   WeeklyUserCount,
   WeeklyVacancyItem,
 } from '@/api/analytics';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
@@ -40,16 +47,16 @@ const MATCH_STATUS_META: Record<MatchStatus, { label: string; className: string 
   rejected_internal: { label: 'Отказ (внутр.)', className: 'text-rose-600 dark:text-rose-400' },
 };
 
-interface WeekWindow {
-  /** ISO, понедельник 00:00 локального времени. Inclusive. */
+interface PeriodWindowState {
+  /** ISO, начало окна. Inclusive. */
   from: string;
-  /** ISO, следующий понедельник 00:00. Exclusive. */
+  /** ISO, конец окна. Exclusive. */
   to: string;
   /** «21 — 27 июл» */
   label: string;
 }
 
-function resolveWeek(offset: number, now: Date = new Date()): WeekWindow {
+function resolveWeek(offset: number, now: Date = new Date()): PeriodWindowState {
   const day = new Date(now);
   day.setHours(0, 0, 0, 0);
   const dow = (day.getDay() + 6) % 7; // 0 = понедельник
@@ -61,10 +68,50 @@ function resolveWeek(offset: number, now: Date = new Date()): WeekWindow {
   return { from: monday.toISOString(), to: nextMonday.toISOString(), label };
 }
 
+/** Подпись произвольного диапазона; `to` exclusive → показываем «до − 1 день». */
+function formatCustomLabel(fromIso: string, toIso: string): string {
+  const from = new Date(fromIso);
+  const toInclusive = new Date(new Date(toIso).getTime() - 1);
+  const sameYear = from.getFullYear() === toInclusive.getFullYear();
+  return `${format(from, sameYear ? 'd MMM' : 'd MMM yyyy', { locale: ru })} — ${format(toInclusive, 'd MMM', { locale: ru })}`;
+}
+
 export function WeeklyActivityCard() {
   const [offset, setOffset] = useState(0);
-  const week = useMemo(() => resolveWeek(offset), [offset]);
-  const { data, isLoading } = useWeeklyActivity({ from: week.from, to: week.to });
+  /** null — режим недель; иначе произвольный диапазон дат. */
+  const [custom, setCustom] = useState<{ from: string; to: string } | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [draft, setDraft] = useState<DateRange | undefined>(undefined);
+
+  const period = useMemo<PeriodWindowState>(() => {
+    if (custom) {
+      return { ...custom, label: formatCustomLabel(custom.from, custom.to) };
+    }
+    return resolveWeek(offset);
+  }, [custom, offset]);
+
+  const { data, isLoading } = useWeeklyActivity({
+    from: period.from,
+    to: period.to,
+  });
+
+  const applyCustom = () => {
+    if (draft?.from && draft?.to) {
+      // верхняя граница exclusive — начало следующего дня (как в PeriodPicker)
+      const to = new Date(draft.to);
+      to.setHours(0, 0, 0, 0);
+      to.setDate(to.getDate() + 1);
+      const from = new Date(draft.from);
+      from.setHours(0, 0, 0, 0);
+      setCustom({ from: from.toISOString(), to: to.toISOString() });
+      setPickerOpen(false);
+    }
+  };
+
+  const resetToCurrentWeek = () => {
+    setCustom(null);
+    setOffset(0);
+  };
 
   return (
     <Card>
@@ -72,42 +119,128 @@ export function WeeklyActivityCard() {
         <div>
           <CardTitle>Итоги недели</CardTitle>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
-            Новые вакансии и поданные кандидаты за рабочую неделю.
+            {custom
+              ? 'Новые вакансии и поданные кандидаты за выбранные даты.'
+              : 'Новые вакансии и поданные кандидаты за рабочую неделю.'}
           </p>
         </div>
         <div className="flex items-center gap-1">
-          {offset < 0 && (
+          {(custom !== null || offset < 0) && (
             <Button
               variant="ghost"
               size="sm"
               className="h-7 px-2 text-[11.5px] text-muted-foreground"
-              onClick={() => setOffset(0)}
+              onClick={resetToCurrentWeek}
             >
-              Текущая
+              Текущая неделя
             </Button>
           )}
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 w-7 p-0"
-            aria-label="Предыдущая неделя"
-            onClick={() => setOffset((o) => o - 1)}
-          >
-            <ChevronLeft className="h-3.5 w-3.5" />
-          </Button>
-          <span className="tnum min-w-[96px] text-center text-[12px] font-medium">
-            {week.label}
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 w-7 p-0"
-            aria-label="Следующая неделя"
-            disabled={offset >= 0}
-            onClick={() => setOffset((o) => Math.min(0, o + 1))}
-          >
-            <ChevronRight className="h-3.5 w-3.5" />
-          </Button>
+          {!custom && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 w-7 p-0"
+              aria-label="Предыдущая неделя"
+              onClick={() => setOffset((o) => o - 1)}
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </Button>
+          )}
+
+          {/* Подпись периода = кнопка выбора произвольных дат */}
+          <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="tnum h-7 gap-1.5 px-2.5 text-[12px] font-medium"
+                title="Выбрать произвольные даты"
+              >
+                <CalendarIcon className="h-3.5 w-3.5 text-muted-foreground" />
+                {period.label}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-auto p-0">
+              <DayPicker
+                mode="range"
+                locale={ru}
+                weekStartsOn={1}
+                numberOfMonths={2}
+                selected={draft}
+                onSelect={setDraft}
+                showOutsideDays
+                className="p-3"
+                classNames={{
+                  months: 'flex flex-col sm:flex-row gap-2',
+                  month: 'flex flex-col gap-3',
+                  caption: 'flex justify-center pt-1 relative items-center w-full',
+                  caption_label: 'text-sm font-medium capitalize',
+                  nav: 'flex items-center gap-1',
+                  nav_button: cn(
+                    buttonVariants({ variant: 'outline' }),
+                    'size-7 bg-transparent p-0 opacity-70 hover:opacity-100',
+                  ),
+                  nav_button_previous: 'absolute left-1',
+                  nav_button_next: 'absolute right-1',
+                  table: 'w-full border-collapse space-x-1',
+                  head_row: 'flex',
+                  head_cell:
+                    'text-muted-foreground rounded-md w-8 font-normal text-[0.8rem]',
+                  row: 'flex w-full mt-2',
+                  cell: cn(
+                    'relative p-0 text-center text-sm',
+                    '[&:has([aria-selected])]:bg-accent/40',
+                  ),
+                  day: cn(
+                    buttonVariants({ variant: 'ghost' }),
+                    'size-8 p-0 font-normal aria-selected:opacity-100',
+                  ),
+                  day_range_start:
+                    'bg-primary text-primary-foreground rounded-l-md',
+                  day_range_end:
+                    'bg-primary text-primary-foreground rounded-r-md',
+                  day_range_middle: 'bg-accent text-foreground',
+                  day_today: 'underline',
+                  day_outside: 'text-muted-foreground/60',
+                  day_disabled: 'text-muted-foreground opacity-50',
+                  day_hidden: 'invisible',
+                  vhidden: 'sr-only',
+                }}
+              />
+              <div className="flex items-center justify-end gap-2 border-t p-2">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    setDraft(undefined);
+                    setPickerOpen(false);
+                  }}
+                >
+                  Отмена
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={applyCustom}
+                  disabled={!draft?.from || !draft?.to}
+                >
+                  Применить
+                </Button>
+              </div>
+            </PopoverContent>
+          </Popover>
+
+          {!custom && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 w-7 p-0"
+              aria-label="Следующая неделя"
+              disabled={offset >= 0}
+              onClick={() => setOffset((o) => Math.min(0, o + 1))}
+            >
+              <ChevronRight className="h-3.5 w-3.5" />
+            </Button>
+          )}
         </div>
       </CardHeader>
       <CardContent>

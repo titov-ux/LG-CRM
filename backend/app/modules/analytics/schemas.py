@@ -287,8 +287,10 @@ class WeeklyActivityResponse(CamelModel):
     period: PeriodWindow
     new_vacancies: WeeklyVacancyBlock
     submitted_candidates: WeeklySubmissionBlock
-    # Собеседования, назначенные на окно (canceled не считаются).
+    # Собеседования окна по starts_at: «назначены» (scheduled/no_show)
+    # и «проведены» (held). canceled не считаются вовсе.
     interviews: WeeklyInterviewBlock
+    interviews_held: WeeklyInterviewBlock
     # Разбивки: вакансии по аккаунт-менеджерам, подачи по added_by.
     by_managers: list[WeeklyUserCount] = []
     by_recruiters: list[WeeklyUserCount] = []

@@ -1794,10 +1794,11 @@ export const handlers = [
       }))
       .sort((a, b) => b.addedAt.localeCompare(a.addedAt));
 
-    // Собеседования, назначенные на окно (startsAt внутри), кроме отменённых
+    // Собеседования окна (startsAt внутри), кроме отменённых;
+    // делятся на «назначены» (scheduled/no_show) и «проведены» (held)
     const fromIso = periodFrom.toISOString();
     const toIso = periodTo.toISOString();
-    const interviews = calendarDb
+    const allInterviews = calendarDb
       .filter(
         (e) =>
           e.type === 'interview' &&
@@ -1816,6 +1817,8 @@ export const handlers = [
         vacancyId: e.vacancyId,
         vacancyTitle: e.vacancyTitle,
       }));
+    const interviews = allInterviews.filter((e) => e.status !== 'held');
+    const interviewsHeld = allInterviews.filter((e) => e.status === 'held');
 
     // Разбивки: вакансии по аккаунт-менеджерам, подачи по рекрутёрам
     const userName = (id: string | null) =>
@@ -1845,6 +1848,7 @@ export const handlers = [
       newVacancies: { total: newVacancies.length, items: newVacancies },
       submittedCandidates: { total: submitted.length, items: submitted },
       interviews: { total: interviews.length, items: interviews },
+      interviewsHeld: { total: interviewsHeld.length, items: interviewsHeld },
       byManagers,
       byRecruiters,
     });

@@ -281,8 +281,10 @@ export interface WeeklyActivityResponse {
   period: PeriodWindow;
   newVacancies: WeeklyVacancyBlock;
   submittedCandidates: WeeklySubmissionBlock;
-  /** Собеседования, назначенные на окно (canceled не считаются). */
+  /** Собеседования окна (по startsAt), ещё не проведённые: scheduled/no_show. */
   interviews: WeeklyInterviewBlock;
+  /** Проведённые собеседования окна (status = held). */
+  interviewsHeld: WeeklyInterviewBlock;
   /** Созданные вакансии по аккаунт-менеджерам. */
   byManagers: WeeklyUserCount[];
   /** Подачи по тем, кто прикрепил кандидата. */

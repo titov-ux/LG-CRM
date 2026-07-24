@@ -5,6 +5,7 @@ import { ru } from 'date-fns/locale';
 import {
   Briefcase,
   Calendar as CalendarIcon,
+  CalendarCheck,
   CalendarClock,
   ChevronLeft,
   ChevronRight,
@@ -267,12 +268,22 @@ export function WeeklyActivityCard() {
                 items={data.submittedCandidates.items}
                 total={data.submittedCandidates.total}
               />
-              <div className="lg:col-span-2">
-                <InterviewsBlock
-                  items={data.interviews.items}
-                  total={data.interviews.total}
-                />
-              </div>
+              <InterviewsBlock
+                label="Собеседования назначены"
+                icon={CalendarClock}
+                iconClass="text-violet-500"
+                emptyText="На этот период собеседований не назначено"
+                items={data.interviews.items}
+                total={data.interviews.total}
+              />
+              <InterviewsBlock
+                label="Собеседования проведены"
+                icon={CalendarCheck}
+                iconClass="text-emerald-500"
+                emptyText="За этот период собеседований не проведено"
+                items={data.interviewsHeld.items}
+                total={data.interviewsHeld.total}
+              />
             </div>
 
             {/* Разбивка по сотрудникам */}
@@ -330,23 +341,26 @@ function EmptyRow({ text }: { text: string }) {
 }
 
 function InterviewsBlock({
+  label,
+  icon,
+  iconClass,
+  emptyText,
   items,
   total,
 }: {
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  iconClass: string;
+  emptyText: string;
   items: WeeklyInterviewItem[];
   total: number;
 }) {
   const navigate = useNavigate();
   return (
     <div>
-      <BlockHeader
-        icon={CalendarClock}
-        label="Собеседования назначены"
-        total={total}
-        iconClass="text-violet-500"
-      />
+      <BlockHeader icon={icon} label={label} total={total} iconClass={iconClass} />
       {items.length === 0 ? (
-        <EmptyRow text="На этот период собеседований не назначено" />
+        <EmptyRow text={emptyText} />
       ) : (
         <div className="divide-y rounded-md border bg-muted/20">
           {items.map((ev) => {

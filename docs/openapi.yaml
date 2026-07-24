@@ -3450,13 +3450,14 @@ components:
         count:    { type: integer }
     WeeklyActivityResponse:
       type: object
-      required: [period, newVacancies, submittedCandidates, interviews, byManagers, byRecruiters]
+      required: [period, newVacancies, submittedCandidates, interviews, interviewsHeld, byManagers, byRecruiters]
       properties:
         period:              { $ref: '#/components/schemas/PeriodWindow' }
         newVacancies:        { $ref: '#/components/schemas/WeeklyVacancyBlock' }
         submittedCandidates: { $ref: '#/components/schemas/WeeklySubmissionBlock' }
-        # Собеседования, назначенные на окно (canceled не считаются)
+        # Собеседования окна по startsAt: назначены (scheduled/no_show) и проведены (held)
         interviews:          { $ref: '#/components/schemas/WeeklyInterviewBlock' }
+        interviewsHeld:      { $ref: '#/components/schemas/WeeklyInterviewBlock' }
         # Разбивки: вакансии по аккаунт-менеджерам, подачи по added_by
         byManagers:          { type: array, items: { $ref: '#/components/schemas/WeeklyUserCount' } }
         byRecruiters:        { type: array, items: { $ref: '#/components/schemas/WeeklyUserCount' } }

@@ -1567,8 +1567,10 @@ async def weekly_activity(db: AsyncSession, *, period: Period) -> dict:
         ) in sub_rows
     ]
 
-    # 3) Собеседования, назначенные на окно (starts_at в [from, to)).
-    #    canceled не считаем «назначенными»; held/no_show остаются — видно итог.
+    # 3) Собеседования окна (starts_at в [from, to)), кроме отменённых.
+    #    Дальше делим на «назначены» (scheduled/no_show) и «проведены» (held).
+    #    Ключ — starts_at (когда собес проходит), а не created_at: собес,
+    #    назначенный месяц назад, но проходящий на этой неделе, попадает сюда.
     iv_rows = (
         await db.execute(
             select(
@@ -1593,7 +1595,7 @@ async def weekly_activity(db: AsyncSession, *, period: Period) -> dict:
             .order_by(CalendarEvent.starts_at)
         )
     ).all()
-    interviews = [
+    all_interviews = [
         {
             "event_id": str(eid),
             "title": title,
@@ -1615,6 +1617,9 @@ async def weekly_activity(db: AsyncSession, *, period: Period) -> dict:
             vac_title,
         ) in iv_rows
     ]
+    # «Проведены» — только held; «назначены» — остальное (scheduled/no_show).
+    interviews_held = [i for i in all_interviews if i["status"] == EventStatus.held.value]
+    interviews = [i for i in all_interviews if i["status"] != EventStatus.held.value]
 
     # 4) Разбивка: созданные вакансии по ответственным аккаунт-менеджерам.
     #    outerjoin — у вакансии может не быть ответственного (FK SET NULL).
@@ -1676,6 +1681,10 @@ async def weekly_activity(db: AsyncSession, *, period: Period) -> dict:
         "new_vacancies": {"total": len(new_vacancies), "items": new_vacancies},
         "submitted_candidates": {"total": len(submitted), "items": submitted},
         "interviews": {"total": len(interviews), "items": interviews},
+        "interviews_held": {
+            "total": len(interviews_held),
+            "items": interviews_held,
+        },
         "by_managers": by_managers,
         "by_recruiters": by_recruiters,
     }

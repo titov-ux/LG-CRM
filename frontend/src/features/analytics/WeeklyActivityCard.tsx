@@ -5,6 +5,7 @@ import { ru } from 'date-fns/locale';
 import {
   Briefcase,
   Calendar as CalendarIcon,
+  CalendarClock,
   ChevronLeft,
   ChevronRight,
   UserCheck,
@@ -12,8 +13,10 @@ import {
   Users,
 } from 'lucide-react';
 import { DayPicker, type DateRange } from 'react-day-picker';
+import type { EventStatus } from '@/api/types';
 import type {
   MatchStatus,
+  WeeklyInterviewItem,
   WeeklySubmissionItem,
   WeeklyUserCount,
   WeeklyVacancyItem,
@@ -45,6 +48,13 @@ const MATCH_STATUS_META: Record<MatchStatus, { label: string; className: string 
   accepted: { label: 'Принят', className: 'text-emerald-600 dark:text-emerald-400' },
   rejected_client: { label: 'Отказ клиента', className: 'text-rose-600 dark:text-rose-400' },
   rejected_internal: { label: 'Отказ (внутр.)', className: 'text-rose-600 dark:text-rose-400' },
+};
+
+const EVENT_STATUS_META: Record<EventStatus, { label: string; className: string }> = {
+  scheduled: { label: 'Запланировано', className: 'text-sky-600 dark:text-sky-400' },
+  held: { label: 'Проведено', className: 'text-emerald-600 dark:text-emerald-400' },
+  no_show: { label: 'Не состоялось', className: 'text-amber-600 dark:text-amber-400' },
+  canceled: { label: 'Отменено', className: 'text-muted-foreground' },
 };
 
 interface PeriodWindowState {
@@ -257,6 +267,12 @@ export function WeeklyActivityCard() {
                 items={data.submittedCandidates.items}
                 total={data.submittedCandidates.total}
               />
+              <div className="lg:col-span-2">
+                <InterviewsBlock
+                  items={data.interviews.items}
+                  total={data.interviews.total}
+                />
+              </div>
             </div>
 
             {/* Разбивка по сотрудникам */}
@@ -309,6 +325,85 @@ function EmptyRow({ text }: { text: string }) {
   return (
     <div className="rounded-md border border-dashed px-3 py-4 text-center text-[11.5px] text-muted-foreground">
       {text}
+    </div>
+  );
+}
+
+function InterviewsBlock({
+  items,
+  total,
+}: {
+  items: WeeklyInterviewItem[];
+  total: number;
+}) {
+  const navigate = useNavigate();
+  return (
+    <div>
+      <BlockHeader
+        icon={CalendarClock}
+        label="Собеседования назначены"
+        total={total}
+        iconClass="text-violet-500"
+      />
+      {items.length === 0 ? (
+        <EmptyRow text="На этот период собеседований не назначено" />
+      ) : (
+        <div className="divide-y rounded-md border bg-muted/20">
+          {items.map((ev) => {
+            const meta = EVENT_STATUS_META[ev.status];
+            return (
+              <div
+                key={ev.eventId}
+                className="flex items-center justify-between gap-2 px-3 py-1.5 text-[12px] transition hover:bg-accent/50"
+              >
+                <span className="min-w-0">
+                  {ev.candidateId ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        navigate({
+                          to: '/candidates/$id',
+                          params: { id: ev.candidateId! },
+                        })
+                      }
+                      className="block max-w-full truncate text-left font-medium hover:underline"
+                    >
+                      {ev.candidateName ?? ev.title}
+                    </button>
+                  ) : (
+                    <span className="block max-w-full truncate font-medium">
+                      {ev.title}
+                    </span>
+                  )}
+                  {ev.vacancyId && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        navigate({
+                          to: '/vacancies/$id',
+                          params: { id: ev.vacancyId! },
+                        })
+                      }
+                      className="block max-w-full truncate text-left text-[11px] text-muted-foreground hover:text-foreground hover:underline"
+                      title={ev.vacancyTitle ?? undefined}
+                    >
+                      → {ev.vacancyTitle}
+                    </button>
+                  )}
+                </span>
+                <span className="shrink-0 text-right">
+                  <span className={cn('block text-[11px] font-medium', meta?.className)}>
+                    {meta?.label ?? ev.status}
+                  </span>
+                  <span className="tnum block text-[10.5px] text-muted-foreground">
+                    {format(new Date(ev.startsAt), 'd MMM, HH:mm', { locale: ru })}
+                  </span>
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

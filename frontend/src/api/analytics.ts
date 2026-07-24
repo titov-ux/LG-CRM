@@ -1,5 +1,10 @@
 import { api } from './client';
-import type { ClientKind, ClientStatus, VacancyStatus } from './types';
+import type {
+  ClientKind,
+  ClientStatus,
+  EventStatus,
+  VacancyStatus,
+} from './types';
 
 export type CompareMode = 'prev' | 'yoy' | 'none';
 export type Granularity = 'auto' | 'day' | 'week' | 'month';
@@ -248,6 +253,23 @@ export interface WeeklySubmissionBlock {
   items: WeeklySubmissionItem[];
 }
 
+/** Собеседование, назначенное на окно (startsAt внутри периода). */
+export interface WeeklyInterviewItem {
+  eventId: string;
+  title: string;
+  startsAt: string;
+  status: EventStatus;
+  candidateId?: string | null;
+  candidateName?: string | null;
+  vacancyId?: string | null;
+  vacancyTitle?: string | null;
+}
+
+export interface WeeklyInterviewBlock {
+  total: number;
+  items: WeeklyInterviewItem[];
+}
+
 /** Строка разбивки по сотруднику; userId/fullName = null — «не указан». */
 export interface WeeklyUserCount {
   userId?: string | null;
@@ -259,6 +281,8 @@ export interface WeeklyActivityResponse {
   period: PeriodWindow;
   newVacancies: WeeklyVacancyBlock;
   submittedCandidates: WeeklySubmissionBlock;
+  /** Собеседования, назначенные на окно (canceled не считаются). */
+  interviews: WeeklyInterviewBlock;
   /** Созданные вакансии по аккаунт-менеджерам. */
   byManagers: WeeklyUserCount[];
   /** Подачи по тем, кто прикрепил кандидата. */

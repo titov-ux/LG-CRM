@@ -8,6 +8,7 @@ from typing import Literal
 from pydantic import Field
 
 from app.core.schemas import CamelModel
+from app.modules.calendar.models import EventStatus
 from app.modules.clients.models import ClientKind, ClientStatus
 from app.modules.matching.models import MatchStatus
 from app.modules.vacancies.models import VacancyStatus
@@ -255,6 +256,24 @@ class WeeklySubmissionBlock(CamelModel):
     items: list[WeeklySubmissionItem]
 
 
+class WeeklyInterviewItem(CamelModel):
+    """Собеседование, назначенное на окно (starts_at внутри периода)."""
+
+    event_id: uuid.UUID
+    title: str
+    starts_at: datetime
+    status: EventStatus
+    candidate_id: uuid.UUID | None = None
+    candidate_name: str | None = None
+    vacancy_id: uuid.UUID | None = None
+    vacancy_title: str | None = None
+
+
+class WeeklyInterviewBlock(CamelModel):
+    total: int
+    items: list[WeeklyInterviewItem]
+
+
 class WeeklyUserCount(CamelModel):
     """Строка разбивки по сотруднику. user_id/full_name = None — «не указан»
     (у вакансии нет ответственного или added_by-пользователь удалён)."""
@@ -268,6 +287,8 @@ class WeeklyActivityResponse(CamelModel):
     period: PeriodWindow
     new_vacancies: WeeklyVacancyBlock
     submitted_candidates: WeeklySubmissionBlock
+    # Собеседования, назначенные на окно (canceled не считаются).
+    interviews: WeeklyInterviewBlock
     # Разбивки: вакансии по аккаунт-менеджерам, подачи по added_by.
     by_managers: list[WeeklyUserCount] = []
     by_recruiters: list[WeeklyUserCount] = []

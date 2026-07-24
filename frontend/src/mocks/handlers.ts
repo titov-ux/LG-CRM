@@ -1794,6 +1794,29 @@ export const handlers = [
       }))
       .sort((a, b) => b.addedAt.localeCompare(a.addedAt));
 
+    // Собеседования, назначенные на окно (startsAt внутри), кроме отменённых
+    const fromIso = periodFrom.toISOString();
+    const toIso = periodTo.toISOString();
+    const interviews = calendarDb
+      .filter(
+        (e) =>
+          e.type === 'interview' &&
+          e.status !== 'canceled' &&
+          e.startsAt >= fromIso &&
+          e.startsAt < toIso,
+      )
+      .sort((a, b) => a.startsAt.localeCompare(b.startsAt))
+      .map((e) => ({
+        eventId: e.id,
+        title: e.title,
+        startsAt: e.startsAt,
+        status: e.status,
+        candidateId: e.candidateId,
+        candidateName: e.candidateName,
+        vacancyId: e.vacancyId,
+        vacancyTitle: e.vacancyTitle,
+      }));
+
     // Разбивки: вакансии по аккаунт-менеджерам, подачи по рекрутёрам
     const userName = (id: string | null) =>
       usersDb.find((usr) => usr.id === id)?.fullName ?? null;
@@ -1821,6 +1844,7 @@ export const handlers = [
       period: { from: periodFrom.toISOString(), to: periodTo.toISOString() },
       newVacancies: { total: newVacancies.length, items: newVacancies },
       submittedCandidates: { total: submitted.length, items: submitted },
+      interviews: { total: interviews.length, items: interviews },
       byManagers,
       byRecruiters,
     });

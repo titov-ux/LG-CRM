@@ -93,6 +93,7 @@ def test_weekly_activity_lists_new_vacancies_and_submissions(
     assert "from" in body["period"] and "to" in body["period"]
     assert body["newVacancies"]["total"] >= 1
     assert body["submittedCandidates"]["total"] >= 1
+    assert "interviews" in body and body["interviews"]["total"] >= 0
 
     # свежесозданная вакансия в списке — с клиентом и id для перехода
     vac_item = next(

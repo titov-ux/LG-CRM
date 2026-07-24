@@ -19,6 +19,7 @@ from sqlalchemy import and_, func, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.audit.models import AuditEntry
+from app.modules.calendar.models import CalendarEvent, EventStatus, EventType
 from app.modules.candidates.models import Candidate, CandidateStatus
 from app.modules.clients.models import Client, ClientKind, ClientStatus
 from app.modules.matching.models import MatchStatus, VacancyCandidate
@@ -1566,7 +1567,56 @@ async def weekly_activity(db: AsyncSession, *, period: Period) -> dict:
         ) in sub_rows
     ]
 
-    # 3) Разбивка: созданные вакансии по ответственным аккаунт-менеджерам.
+    # 3) Собеседования, назначенные на окно (starts_at в [from, to)).
+    #    canceled не считаем «назначенными»; held/no_show остаются — видно итог.
+    iv_rows = (
+        await db.execute(
+            select(
+                CalendarEvent.id,
+                CalendarEvent.title,
+                CalendarEvent.starts_at,
+                CalendarEvent.status,
+                Candidate.id.label("candidate_id"),
+                Candidate.full_name.label("candidate_name"),
+                Vacancy.id.label("vacancy_id"),
+                Vacancy.title.label("vacancy_title"),
+            )
+            .select_from(CalendarEvent)
+            .outerjoin(Candidate, Candidate.id == CalendarEvent.candidate_id)
+            .outerjoin(Vacancy, Vacancy.id == CalendarEvent.vacancy_id)
+            .where(
+                CalendarEvent.type == EventType.interview,
+                CalendarEvent.status != EventStatus.canceled,
+                CalendarEvent.starts_at >= period.from_dt,
+                CalendarEvent.starts_at < period.to_dt,
+            )
+            .order_by(CalendarEvent.starts_at)
+        )
+    ).all()
+    interviews = [
+        {
+            "event_id": str(eid),
+            "title": title,
+            "starts_at": starts.isoformat(),
+            "status": st.value,
+            "candidate_id": str(cid) if cid else None,
+            "candidate_name": cand_name,
+            "vacancy_id": str(vid) if vid else None,
+            "vacancy_title": vac_title,
+        }
+        for (
+            eid,
+            title,
+            starts,
+            st,
+            cid,
+            cand_name,
+            vid,
+            vac_title,
+        ) in iv_rows
+    ]
+
+    # 4) Разбивка: созданные вакансии по ответственным аккаунт-менеджерам.
     #    outerjoin — у вакансии может не быть ответственного (FK SET NULL).
     mgr_rows = (
         await db.execute(
@@ -1591,7 +1641,7 @@ async def weekly_activity(db: AsyncSession, *, period: Period) -> dict:
         for uid, name, cnt in mgr_rows
     ]
 
-    # 4) Разбивка: подачи по тем, кто прикрепил кандидата (added_by).
+    # 5) Разбивка: подачи по тем, кто прикрепил кандидата (added_by).
     rec_rows = (
         await db.execute(
             select(User.id, User.full_name, func.count())
@@ -1625,6 +1675,7 @@ async def weekly_activity(db: AsyncSession, *, period: Period) -> dict:
         },
         "new_vacancies": {"total": len(new_vacancies), "items": new_vacancies},
         "submitted_candidates": {"total": len(submitted), "items": submitted},
+        "interviews": {"total": len(interviews), "items": interviews},
         "by_managers": by_managers,
         "by_recruiters": by_recruiters,
     }

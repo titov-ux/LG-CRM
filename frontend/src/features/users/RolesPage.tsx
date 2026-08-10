@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Check, Mail, Minus, Plus, RotateCcw, Search, ShieldCheck, Trash2, UserPlus } from 'lucide-react';
+import { Check, Mail, Minus, Pencil, Plus, RotateCcw, Search, ShieldCheck, Trash2, UserPlus } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -36,6 +36,7 @@ import { UserAvatar } from '@/components/common/UserAvatar';
 import type { Role, User } from '@/api/types';
 import { useDeleteUser, useResendInvite, useUpdateUser, useUsers } from './hooks';
 import { AddUserDialog } from './AddUserDialog';
+import { EditUserDialog } from './EditUserDialog';
 import { ROLE_DESCRIPTION, ROLE_LABEL } from './UserForm';
 import { useAuthStore } from '@/stores/auth';
 import type { MatrixPermission } from '@/lib/permissions';
@@ -63,6 +64,7 @@ export function RolesPage() {
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState<Role | 'all'>('all');
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [userToEdit, setUserToEdit] = useState<User | null>(null);
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
 
   const currentUser = useAuthStore((s) => s.user);
@@ -311,6 +313,17 @@ export function RolesPage() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-0.5">
+                        {canManageRoles && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                            onClick={() => setUserToEdit(u)}
+                            title="Редактировать данные пользователя"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                        )}
                         {!u.isActive && canManageRoles && (
                           <Button
                             variant="ghost"
@@ -488,6 +501,8 @@ export function RolesPage() {
       </Tabs>
 
       <AddUserDialog open={dialogOpen} onOpenChange={setDialogOpen} />
+
+      <EditUserDialog user={userToEdit} onOpenChange={(o) => !o && setUserToEdit(null)} />
 
       <Dialog
         open={!!userToDelete}

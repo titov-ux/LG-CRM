@@ -21,7 +21,12 @@ export function AuthGuard({ children }: { children: ReactNode }) {
   }
 
   if (isError && !token) {
-    return <Navigate to="/login" search={{ redirect: href }} />;
+    // Пока <Navigate> уводит на /login, AuthGuard ещё смонтирован и ре-рендерится
+    // уже с href = "/login?redirect=…". Если снова подставить его в redirect,
+    // каждый рендер вкладывает URL сам в себя (login?redirect=%2Flogin%3Fredirect%3D…)
+    // и роутер зацикливается. Поэтому /login никогда не сохраняем как deep-link.
+    const target = href.startsWith('/login') ? undefined : href;
+    return <Navigate to="/login" search={{ redirect: target }} replace />;
   }
 
   return <>{children}</>;

@@ -7,7 +7,13 @@ export const Route = createFileRoute('/login')({
   // чтобы не было open-redirect на внешние домены.
   validateSearch: (search: Record<string, unknown>): { redirect?: string } => {
     const r = search.redirect;
-    const safe = typeof r === 'string' && r.startsWith('/') && !r.startsWith('//');
+    const safe =
+      typeof r === 'string' &&
+      r.startsWith('/') &&
+      !r.startsWith('//') &&
+      // redirect на сам /login (в т.ч. вложенный login?redirect=login?…) — мусор
+      // от бага с зацикливанием; отбрасываем, после входа уйдём на /dashboard.
+      !r.startsWith('/login');
     return { redirect: safe ? (r as string) : undefined };
   },
   component: LoginPage,

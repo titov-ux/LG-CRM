@@ -29,7 +29,14 @@ export function useCreateUser() {
 export function useUpdateUser() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, patch }: { id: UUID; patch: Partial<User> }) => usersApi.update(id, patch),
+    mutationFn: ({
+      id,
+      patch,
+    }: {
+      id: UUID;
+      patch: Omit<Partial<User>, 'telegram'> & { telegram?: string | null };
+    }) =>
+      usersApi.update(id, patch),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: userKeys.all });
     },

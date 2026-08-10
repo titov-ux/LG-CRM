@@ -11,7 +11,8 @@ export const usersApi = {
   list: () => api.get('users').json<User[]>(),
   create: (payload: CreateUserRequest) =>
     api.post('users', { json: payload }).json<CreateUserResponse>(),
-  update: (id: UUID, payload: Partial<User>) =>
+  // telegram: null — явная очистка поля на бэке (PATCH с exclude_unset).
+  update: (id: UUID, payload: Omit<Partial<User>, 'telegram'> & { telegram?: string | null }) =>
     api.patch(`users/${id}`, { json: payload }).json<User>(),
   remove: (id: UUID) => api.delete(`users/${id}`).json<{ ok: boolean }>(),
   resendInvite: (id: UUID) =>

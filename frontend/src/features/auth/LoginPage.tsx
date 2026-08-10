@@ -31,7 +31,8 @@ export function LoginPage() {
       // history.push принимает произвольный внутренний path+search+hash (redirect
       // валидируется в routes/login.tsx). Через navigate({ href }) переход молча
       // не срабатывал — логин проходил, но страница не открывалась.
-      router.history.push(redirect ?? '/dashboard');
+      // Страховка от возврата на сам /login (вложенные redirect из старых URL).
+      router.history.push(redirect && !redirect.startsWith('/login') ? redirect : '/dashboard');
     } catch (err) {
       setErrorMsg(
         await apiErrorMessage(err, 'Не удалось войти. Проверьте email и пароль.'),

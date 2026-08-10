@@ -63,9 +63,23 @@ interface Props {
   onSubmit: (values: CreateUserRequest) => void;
   isPending?: boolean;
   submitLabel?: string;
+  /** 'edit' — редактирование существующего пользователя: поле пароля скрыто. */
+  mode?: 'create' | 'edit';
+  /** Заблокировать смену роли (например, нельзя менять роль самому себе). */
+  disableRole?: boolean;
+  /** Заблокировать переключатель «Активен» (нельзя деактивировать себя). */
+  disableActive?: boolean;
 }
 
-export function UserForm({ defaultValues, onSubmit, isPending, submitLabel = 'Создать' }: Props) {
+export function UserForm({
+  defaultValues,
+  onSubmit,
+  isPending,
+  submitLabel = 'Создать',
+  mode = 'create',
+  disableRole = false,
+  disableActive = false,
+}: Props) {
   const form = useForm<UserFormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
@@ -146,7 +160,7 @@ export function UserForm({ defaultValues, onSubmit, isPending, submitLabel = 'С
           render={({ field }) => (
             <FormItem>
               <FormLabel>Роль</FormLabel>
-              <Select value={field.value} onValueChange={field.onChange}>
+              <Select value={field.value} onValueChange={field.onChange} disabled={disableRole}>
                 <FormControl>
                   <SelectTrigger>
                     <SelectValue />
@@ -160,12 +174,15 @@ export function UserForm({ defaultValues, onSubmit, isPending, submitLabel = 'С
                   ))}
                 </SelectContent>
               </Select>
-              <FormDescription>{ROLE_DESCRIPTION[field.value as Role]}</FormDescription>
+              <FormDescription>
+                {disableRole ? 'Нельзя изменить свою роль.' : ROLE_DESCRIPTION[field.value as Role]}
+              </FormDescription>
               <FormMessage />
             </FormItem>
           )}
         />
 
+        {mode === 'create' && (
         <FormField
           control={form.control}
           name="password"
@@ -188,6 +205,7 @@ export function UserForm({ defaultValues, onSubmit, isPending, submitLabel = 'С
             </FormItem>
           )}
         />
+        )}
 
         <FormField
           control={form.control}
@@ -197,11 +215,17 @@ export function UserForm({ defaultValues, onSubmit, isPending, submitLabel = 'С
               <div>
                 <FormLabel className="text-sm">Активен</FormLabel>
                 <FormDescription className="mt-0.5">
-                  Деактивированные пользователи не могут войти в систему.
+                  {disableActive
+                    ? 'Нельзя деактивировать свой аккаунт.'
+                    : 'Деактивированные пользователи не могут войти в систему.'}
                 </FormDescription>
               </div>
               <FormControl>
-                <Switch checked={field.value} onCheckedChange={field.onChange} />
+                <Switch
+                  checked={field.value}
+                  onCheckedChange={field.onChange}
+                  disabled={disableActive}
+                />
               </FormControl>
             </FormItem>
           )}

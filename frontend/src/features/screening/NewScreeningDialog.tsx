@@ -1,8 +1,16 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
-import { Sparkles } from 'lucide-react';
+import { Check, ChevronsUpDown, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
 import {
   Dialog,
   DialogContent,
@@ -12,17 +20,99 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { cn } from '@/lib/utils';
+import { useAuthStore } from '@/stores/auth';
 import { useCandidatesList, useVacanciesList } from '@/features/calendar/pickers';
 import { useCreateScreening } from './hooks';
 
 const NONE = '__none__';
+
+type PickOption = {
+  value: string;
+  label: string;
+  keywords?: string;
+  /** Подпись справа, напр. «мой» / «кандидат». */
+  hint?: string;
+};
+
+function SearchablePick({
+  value,
+  onChange,
+  options,
+  placeholder,
+  searchPlaceholder,
+  emptyText = 'Ничего не найдено',
+  disabled,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  options: PickOption[];
+  placeholder: string;
+  searchPlaceholder: string;
+  emptyText?: string;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = options.find((o) => o.value === value);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen} modal>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          disabled={disabled}
+          className="h-9 w-full justify-between font-normal"
+        >
+          <span className={cn('truncate', !selected && 'text-muted-foreground')}>
+            {selected?.label ?? placeholder}
+          </span>
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        className="w-[--radix-popover-trigger-width] p-0"
+        onOpenAutoFocus={(e) => e.preventDefault()}
+      >
+        <Command>
+          <CommandInput placeholder={searchPlaceholder} />
+          <CommandList>
+            <CommandEmpty>{emptyText}</CommandEmpty>
+            <CommandGroup>
+              {options.map((o) => (
+                <CommandItem
+                  key={o.value}
+                  value={`${o.label} ${o.keywords ?? ''} ${o.hint ?? ''} ${o.value}`}
+                  onSelect={() => {
+                    onChange(o.value);
+                    setOpen(false);
+                  }}
+                >
+                  <Check
+                    className={cn(
+                      'mr-2 h-4 w-4 shrink-0',
+                      value === o.value ? 'opacity-100' : 'opacity-0',
+                    )}
+                  />
+                  <span className="min-w-0 flex-1 truncate">{o.label}</span>
+                  {o.hint && (
+                    <span className="ml-2 shrink-0 text-[10px] text-muted-foreground">
+                      {o.hint}
+                    </span>
+                  )}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 /**
  * Создание сессии AI-скрининга. План вопросов генерирует AI по резюме
@@ -40,6 +130,7 @@ export function NewScreeningDialog({
   defaultVacancyId?: string;
 }) {
   const navigate = useNavigate();
+  const meId = useAuthStore((s) => s.user?.id);
   const create = useCreateScreening();
   const { data: candidates } = useCandidatesList(open);
   const { data: vacancies } = useVacanciesList(open);
@@ -55,6 +146,76 @@ export function NewScreeningDialog({
     setVacancyId(defaultVacancyId ?? NONE);
     setTelemostUrl('');
   }, [open, defaultCandidateId, defaultVacancyId]);
+
+  // С карточки кандидата: если вакансию не передали — берём первую прикреплённую.
+  useEffect(() => {
+    if (!open || !defaultCandidateId || defaultVacancyId) return;
+    if (vacancyId !== NONE) return;
+    const cand = (candidates ?? []).find((c) => c.id === defaultCandidateId);
+    const linked = cand?.vacancyIds ?? [];
+    if (linked.length > 0) setVacancyId(linked[0]);
+  }, [open, defaultCandidateId, defaultVacancyId, candidates, vacancyId]);
+
+  const selectedCandidate = useMemo(
+    () => (candidates ?? []).find((c) => c.id === candidateId),
+    [candidates, candidateId],
+  );
+  const linkedVacancyIds = selectedCandidate?.vacancyIds ?? [];
+
+  const candidateOptions = useMemo<PickOption[]>(() => {
+    const list = [...(candidates ?? [])];
+    list.sort((a, b) => {
+      const aMine = meId && a.recruiterId === meId ? 0 : 1;
+      const bMine = meId && b.recruiterId === meId ? 0 : 1;
+      if (aMine !== bMine) return aMine - bMine;
+      return a.fullName.localeCompare(b.fullName, 'ru');
+    });
+    return list.map((c) => ({
+      value: c.id,
+      label: c.role ? `${c.fullName} · ${c.role}` : c.fullName,
+      keywords: [c.fullName, c.role, c.email, c.phone].filter(Boolean).join(' '),
+      hint: meId && c.recruiterId === meId ? 'мой' : undefined,
+    }));
+  }, [candidates, meId]);
+
+  const vacancyOptions = useMemo<PickOption[]>(() => {
+    const linked = new Set(linkedVacancyIds);
+    const list = [...(vacancies ?? [])];
+    list.sort((a, b) => {
+      const aLinked = linked.has(a.id) ? 0 : 1;
+      const bLinked = linked.has(b.id) ? 0 : 1;
+      if (aLinked !== bLinked) return aLinked - bLinked;
+      if (aLinked === 0 && bLinked === 0) {
+        return linkedVacancyIds.indexOf(a.id) - linkedVacancyIds.indexOf(b.id);
+      }
+      const aMine = meId && a.recruiterIds?.includes(meId) ? 0 : 1;
+      const bMine = meId && b.recruiterIds?.includes(meId) ? 0 : 1;
+      if (aMine !== bMine) return aMine - bMine;
+      return a.title.localeCompare(b.title, 'ru');
+    });
+    return [
+      { value: NONE, label: 'Без вакансии' },
+      ...list.map((v) => ({
+        value: v.id,
+        label: v.title,
+        keywords: [v.project, ...(v.stack ?? [])].filter(Boolean).join(' '),
+        hint: linked.has(v.id)
+          ? 'кандидат'
+          : meId && v.recruiterIds?.includes(meId)
+            ? 'моя'
+            : undefined,
+      })),
+    ];
+  }, [vacancies, linkedVacancyIds, meId]);
+
+  const pickCandidate = (id: string) => {
+    setCandidateId(id);
+    const cand = (candidates ?? []).find((c) => c.id === id);
+    const linked = cand?.vacancyIds ?? [];
+    if (linked.length === 0) return;
+    if (vacancyId !== NONE && linked.includes(vacancyId)) return;
+    setVacancyId(linked[0]);
+  };
 
   const submit = async () => {
     if (!candidateId) return;
@@ -86,34 +247,24 @@ export function NewScreeningDialog({
         <div className="space-y-3.5">
           <div className="space-y-1.5">
             <Label>Кандидат *</Label>
-            <Select value={candidateId || undefined} onValueChange={setCandidateId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Выберите кандидата" />
-              </SelectTrigger>
-              <SelectContent>
-                {(candidates ?? []).map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.fullName}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchablePick
+              value={candidateId}
+              onChange={pickCandidate}
+              options={candidateOptions}
+              placeholder="Выберите кандидата"
+              searchPlaceholder="Поиск кандидата…"
+              disabled={!!defaultCandidateId}
+            />
           </div>
           <div className="space-y-1.5">
             <Label>Вакансия</Label>
-            <Select value={vacancyId} onValueChange={setVacancyId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Без вакансии" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={NONE}>Без вакансии</SelectItem>
-                {(vacancies ?? []).map((v) => (
-                  <SelectItem key={v.id} value={v.id}>
-                    {v.title}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchablePick
+              value={vacancyId}
+              onChange={setVacancyId}
+              options={vacancyOptions}
+              placeholder="Без вакансии"
+              searchPlaceholder="Поиск вакансии…"
+            />
           </div>
           <div className="space-y-1.5">
             <Label>Ссылка на встречу в Телемосте</Label>

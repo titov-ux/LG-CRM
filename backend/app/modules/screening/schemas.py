@@ -101,6 +101,11 @@ class AttachAudioRequest(CamelModel):
     file_id: uuid.UUID
 
 
+class TranscriptResponse(CamelModel):
+    items: list[ScreeningSegmentDTO]
+    last_seq: int
+
+
 class AddQuestionRequest(CamelModel):
     text: str
     goal: str | None = None

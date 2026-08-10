@@ -1,10 +1,11 @@
 # Локальное окружение для разработки backend.
-# Поднимает Postgres 16 + Redis 7.
+# Поднимает Postgres 16 + Redis 7 + stt-service (Этап 2, STT_FAKE=1).
 # Бэк в этом compose НЕ запускается — он крутится локально через `make dev`
 # (для скорости горячей перезагрузки и удобного debug).
 #
 # Запуск:
 #   docker compose -f infra/docker-compose.dev.yml up -d
+# Backend .env: STT_URL=ws://localhost:8765
 # Остановка:
 #   docker compose -f infra/docker-compose.dev.yml down
 # Полный сброс данных:
@@ -44,6 +45,23 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  # AI-скрининг Этап 2: realtime STT (по умолчанию fake — без torch).
+  # Реальная модель: docker compose ... build --build-arg STT_FULL=1 stt
+  # и STT_FAKE=0 в environment.
+  stt:
+    build:
+      context: ../services/stt
+      dockerfile: Dockerfile
+      args:
+        STT_FULL: "0"
+    container_name: crm-lg-stt
+    restart: unless-stopped
+    environment:
+      STT_FAKE: "1"
+      STT_PORT: "8765"
+    ports:
+      - "8765:8765"
 
 volumes:
   postgres_data:

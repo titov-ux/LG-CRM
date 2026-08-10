@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from '@tanstack/react-router';
 import {
   ArrowLeft,
@@ -11,6 +11,8 @@ import {
   Square,
   Trash2,
   Video,
+  Wifi,
+  WifiOff,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
@@ -21,23 +23,25 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { filesApi, uploadFile } from '@/api/files';
-import type { ScreeningQuestion, ScreeningQuestionStatus } from '@/api/screenings';
+import type { ScreeningQuestion, ScreeningQuestionStatus, ScreeningSegment } from '@/api/screenings';
+import { useAuthStore } from '@/stores/auth';
 import { ScreeningCapture } from './audioCapture';
+import { ScreeningSocket, type TranscriptEvent } from './screeningWs';
 import {
   useAddQuestion,
   useAttachScreeningAudio,
   useFinishScreening,
   useRemoveQuestion,
   useScreening,
+  useScreeningTranscript,
   useStartScreening,
   useUpdateQuestion,
   useUpdateScreening,
 } from './hooks';
 
 /**
- * Комната скрининга (Этап 1): согласие → захват (микрофон + вкладка
- * Телемоста) → запись → выгрузка записи в S3. Чек-лист вопросов рекрутер
- * ведёт вручную; на Этапах 2–4 добавятся живой транскрипт и AI-агент.
+ * Комната скрининга (Этапы 1–2): согласие → захват → запись + live-транскрипт
+ * по WS → выгрузка в S3. Чек-лист пока вручную; AI-агент — Этапы 3–4.
  */
 
 function LevelBar({ level, label, active }: { level: number; label: string; active: boolean }) {
@@ -119,6 +123,102 @@ function QuestionRow({
   );
 }
 
+function formatMs(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+function TranscriptPanel({
+  finals,
+  partials,
+  connected,
+  sttReady,
+  sttError,
+  live,
+}: {
+  finals: ScreeningSegment[];
+  partials: Partial<Record<'recruiter' | 'candidate', string>>;
+  connected: boolean;
+  sttReady: boolean;
+  sttError: string | null;
+  live: boolean;
+}) {
+  const bottomRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [finals.length, partials.recruiter, partials.candidate]);
+
+  return (
+    <Card className="flex min-h-[320px] flex-col">
+      <CardContent className="flex flex-1 flex-col space-y-2 p-4">
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-[13px] font-medium">Транскрипт</div>
+          {live && (
+            <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              {connected ? (
+                <Wifi className="h-3.5 w-3.5 text-emerald-500" />
+              ) : (
+                <WifiOff className="h-3.5 w-3.5 text-amber-500" />
+              )}
+              {!sttReady || sttError
+                ? sttError === 'stt_unavailable'
+                  ? 'STT недоступен'
+                  : connected
+                    ? 'ожидание STT…'
+                    : 'переподключение…'
+                : connected
+                  ? 'live'
+                  : 'переподключение…'}
+            </div>
+          )}
+        </div>
+
+        <div className="flex-1 space-y-2 overflow-y-auto rounded-md bg-muted/30 p-2.5 text-[12.5px] leading-snug">
+          {finals.length === 0 && !partials.recruiter && !partials.candidate && (
+            <p className="py-6 text-center text-muted-foreground">
+              {live ? 'Реплики появятся здесь по мере разговора' : 'Транскрипт пуст'}
+            </p>
+          )}
+          {finals.map((s) => (
+            <div
+              key={s.id || `seq-${s.seq}`}
+              className={cn(
+                'rounded-md px-2.5 py-1.5',
+                s.speaker === 'recruiter' ? 'bg-sky-50/80' : 'bg-background',
+              )}
+            >
+              <div className="mb-0.5 flex items-center gap-2 text-[10.5px] text-muted-foreground">
+                <span className="font-medium">
+                  {s.speaker === 'recruiter' ? 'Рекрутер' : 'Кандидат'}
+                </span>
+                <span>{formatMs(s.startedMs)}</span>
+              </div>
+              <div>{s.text}</div>
+            </div>
+          ))}
+          {(['recruiter', 'candidate'] as const).map((sp) =>
+            partials[sp] ? (
+              <div
+                key={`partial-${sp}`}
+                className={cn(
+                  'rounded-md px-2.5 py-1.5 italic opacity-70',
+                  sp === 'recruiter' ? 'bg-sky-50/50' : 'bg-background',
+                )}
+              >
+                <div className="mb-0.5 text-[10.5px] text-muted-foreground">
+                  {sp === 'recruiter' ? 'Рекрутер' : 'Кандидат'} · …
+                </div>
+                <div>{partials[sp]}</div>
+              </div>
+            ) : null,
+          )}
+          <div ref={bottomRef} />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function ScreeningRoomPage() {
   const { id } = useParams({ from: '/_authed/video-interviews_/$id' });
   const { data: session, isLoading } = useScreening(id);
@@ -132,6 +232,7 @@ export function ScreeningRoomPage() {
   const removeQuestion = useRemoveQuestion();
 
   const captureRef = useRef<ScreeningCapture | null>(null);
+  const socketRef = useRef<ScreeningSocket | null>(null);
   const [micReady, setMicReady] = useState(false);
   const [tabReady, setTabReady] = useState(false);
   const [levels, setLevels] = useState({ mic: 0, tab: 0 });
@@ -142,15 +243,97 @@ export function ScreeningRoomPage() {
   const [newQuestion, setNewQuestion] = useState('');
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
 
-  // Таймер встречи.
+  const [finals, setFinals] = useState<ScreeningSegment[]>([]);
+  const [partials, setPartials] = useState<Partial<Record<'recruiter' | 'candidate', string>>>({});
+  const [wsConnected, setWsConnected] = useState(false);
+  const [sttReady, setSttReady] = useState(true);
+  const [sttError, setSttError] = useState<string | null>(null);
+
+  const isLive = session?.status === 'live';
+  const isDone = session?.status === 'done' || session?.status === 'processing';
+  const { data: savedTranscript } = useScreeningTranscript(id, !!session && (isLive || !!isDone));
+
+  const startSocket = useCallback(
+    (sessionId: string) => {
+      socketRef.current?.stop();
+      const sock = new ScreeningSocket(sessionId, {
+        getToken: () => useAuthStore.getState().accessToken,
+        onConnection: setWsConnected,
+        onHello: ({ sttReady: ready }) => {
+          setSttReady(ready);
+          if (!ready) setSttError('stt_unavailable');
+          else setSttError(null);
+        },
+        onPartial: (ev: TranscriptEvent) => {
+          setPartials((p) => ({ ...p, [ev.speaker]: ev.text }));
+        },
+        onFinal: (ev: TranscriptEvent) => {
+          setPartials((p) => {
+            const next = { ...p };
+            delete next[ev.speaker];
+            return next;
+          });
+          if (ev.seq == null) return;
+          const seq = ev.seq;
+          setFinals((prev) => {
+            if (prev.some((s) => s.seq === seq)) return prev;
+            const seg: ScreeningSegment = {
+              id: `live-${seq}`,
+              seq,
+              speaker: ev.speaker,
+              text: ev.text,
+              startedMs: ev.startedMs ?? 0,
+              endedMs: ev.endedMs ?? 0,
+            };
+            return [...prev, seg].sort((a, b) => a.seq - b.seq);
+          });
+        },
+        onState: (state) => {
+          if (state.sttReady === false) {
+            setSttReady(false);
+            setSttError(state.error ?? 'stt_unavailable');
+          } else if (state.sttReady === true) {
+            setSttReady(true);
+            setSttError(null);
+          }
+        },
+      });
+      socketRef.current = sock;
+      sock.start();
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!savedTranscript) return;
+    setFinals((prev) => {
+      const bySeq = new Map<number, ScreeningSegment>();
+      for (const s of savedTranscript.items) bySeq.set(s.seq, s);
+      for (const s of prev) if (!bySeq.has(s.seq)) bySeq.set(s.seq, s);
+      return [...bySeq.values()].sort((a, b) => a.seq - b.seq);
+    });
+  }, [savedTranscript]);
+
   useEffect(() => {
     if (!recording) return;
     const t = window.setInterval(() => setElapsed((e) => e + 1), 1000);
     return () => window.clearInterval(t);
   }, [recording]);
 
-  // Останавливаем дорожки при уходе со страницы.
-  useEffect(() => () => void captureRef.current?.stop(), []);
+  useEffect(
+    () => () => {
+      void captureRef.current?.stop();
+      socketRef.current?.stop();
+    },
+    [],
+  );
+
+  // Сессия уже live (reload) — поднимаем WS; захват нужно разрешить заново.
+  useEffect(() => {
+    if (!session || session.status !== 'live' || recording) return;
+    if (socketRef.current) return;
+    startSocket(session.id);
+  }, [session, recording, startSocket]);
 
   if (isLoading || !session) {
     return (
@@ -162,8 +345,6 @@ export function ScreeningRoomPage() {
   }
 
   const isDraft = session.status === 'draft';
-  const isLive = session.status === 'live';
-  const isDone = session.status === 'done' || session.status === 'processing';
   const editable = isDraft || isLive;
 
   const getCapture = () => {
@@ -175,12 +356,19 @@ export function ScreeningRoomPage() {
           setTabReady(false);
           toast.warning('Доступ к звуку вкладки остановлен — выберите вкладку заново');
         },
+        onPcmFrame: (channel, pcm) => {
+          socketRef.current?.sendPcm(channel, pcm);
+        },
       });
     }
     return captureRef.current;
   };
 
   const requestMic = async () => {
+    if (!ScreeningCapture.isSupported()) {
+      toast.error('Нужен Chrome / Яндекс Браузер / Edge');
+      return;
+    }
     try {
       await getCapture().requestMic();
       setMicReady(true);
@@ -215,7 +403,8 @@ export function ScreeningRoomPage() {
       }
       return;
     }
-    getCapture().start();
+    startSocket(session.id);
+    await getCapture().start();
     setRecording(true);
     setElapsed(0);
   };
@@ -224,6 +413,8 @@ export function ScreeningRoomPage() {
     setRecording(false);
     setUploading(true);
     try {
+      socketRef.current?.stop();
+      socketRef.current = null;
       const blob = await getCapture().stop();
       await finishSession.mutateAsync({ id: session.id, durationSec: elapsed });
       if (blob && blob.size > 0) {
@@ -271,7 +462,6 @@ export function ScreeningRoomPage() {
 
   return (
     <div className="flex-1 space-y-4 overflow-auto px-6 pb-8 pt-5">
-      {/* Шапка */}
       <div className="flex items-start gap-3">
         <Link
           to="/video-interviews"
@@ -298,8 +488,7 @@ export function ScreeningRoomPage() {
         )}
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[340px_1fr]">
-        {/* Левая колонка: управление встречей */}
+      <div className="grid gap-4 lg:grid-cols-[300px_1fr_1fr]">
         <div className="space-y-4">
           <Card>
             <CardContent className="space-y-3 p-4">
@@ -371,6 +560,44 @@ export function ScreeningRoomPage() {
                       вкладки»
                     </div>
                   )}
+                  {!recording && (
+                    <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-[11.5px] text-amber-800">
+                      Страница перезагружена — заново разрешите микрофон и вкладку, чтобы
+                      продолжить запись и транскрипт.
+                      <div className="mt-2 space-y-1.5">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="w-full"
+                          onClick={requestMic}
+                          disabled={micReady}
+                        >
+                          Микрофон
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="w-full"
+                          onClick={requestTab}
+                          disabled={!micReady || tabReady}
+                        >
+                          Вкладка Телемоста
+                        </Button>
+                        <Button
+                          size="sm"
+                          className="w-full"
+                          disabled={!micReady || !tabReady}
+                          onClick={async () => {
+                            startSocket(session.id);
+                            await getCapture().start();
+                            setRecording(true);
+                          }}
+                        >
+                          Продолжить запись
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                   <Button
                     variant="destructive"
                     size="sm"
@@ -407,17 +634,8 @@ export function ScreeningRoomPage() {
               )}
             </CardContent>
           </Card>
-
-          <Card className="bg-muted/20">
-            <CardContent className="p-4 text-[11.5px] leading-snug text-muted-foreground">
-              <span className="font-medium text-foreground">Скоро:</span> живой транскрипт
-              разговора, AI-вопросы по резюме и вакансии, автоотчёт «подходит / не подходит»
-              после встречи.
-            </CardContent>
-          </Card>
         </div>
 
-        {/* Правая колонка: чек-лист вопросов */}
         <Card>
           <CardContent className="space-y-2.5 p-4">
             <div className="flex items-center justify-between">
@@ -462,6 +680,15 @@ export function ScreeningRoomPage() {
             )}
           </CardContent>
         </Card>
+
+        <TranscriptPanel
+          finals={finals}
+          partials={partials}
+          connected={wsConnected}
+          sttReady={sttReady}
+          sttError={sttError}
+          live={!!isLive}
+        />
       </div>
     </div>
   );

@@ -19,13 +19,22 @@ export const WS_URL: string | null = (() => {
   if (override) return override;
   if (typeof window === 'undefined') return null;
   const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  // API_BASE_URL может быть как абсолютным (https://api.example/api/v1), так и
-  // относительным (/api/v1). Поддерживаем оба случая.
   if (/^https?:\/\//i.test(API_BASE_URL)) {
     return API_BASE_URL.replace(/^http/, 'ws') + '/ws/events';
   }
   return `${scheme}//${window.location.host}${API_BASE_URL}/ws/events`;
 })();
+
+/** WS URL комнаты скрининга: /api/v1/ws/screening/{id} (без query). */
+export function screeningWsUrl(sessionId: string): string | null {
+  if (USE_MOCKS) return null;
+  if (typeof window === 'undefined') return null;
+  const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  if (/^https?:\/\//i.test(API_BASE_URL)) {
+    return API_BASE_URL.replace(/^http/, 'ws') + `/ws/screening/${sessionId}`;
+  }
+  return `${scheme}//${window.location.host}${API_BASE_URL}/ws/screening/${sessionId}`;
+}
 
 // Сборка / окружение — для информационного поповера в сайдбаре.
 export const APP_VERSION = import.meta.env.VITE_APP_VERSION ?? '0.1.0-dev';

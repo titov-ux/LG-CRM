@@ -137,6 +137,18 @@ class Settings(BaseSettings):
     # РФ как альтернатива прокси. По умолчанию — публичный Bot API.
     telegram_api_base: str = "https://api.telegram.org"
 
+    # ── AI-скрининг / STT (Этап 2) ──────────────────────────
+    # WebSocket URL stt-service. Пусто = realtime-транскрипция выключена
+    # (комната работает, запись локально → S3, но живого текста не будет).
+    #   dev:  ws://localhost:8765
+    #   prod: ws://stt:8765  (сервис в docker-compose)
+    stt_url: str = "ws://localhost:8765"
+    # Максимальная длительность встречи (мин) — на Этапе 6 для hard-stop.
+    screening_max_duration_min: int = 90
+    # Сколько секунд после обрыва WS сессия остаётся live (reconnect-окно).
+    # Сам статус не трогаем на disconnect; поле — для будущих метрик/алертов.
+    screening_ws_hold_sec: int = 60
+
     # ── Сеть ────────────────────────────────────────────────
     # У контейнера есть IPv6-адрес, но нет маршрута наружу (типично для YC-VM
     # без публичного IPv6). DNS отдаёт и A, и AAAA (напр. api.telegram.org),

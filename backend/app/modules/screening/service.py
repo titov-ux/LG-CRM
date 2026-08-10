@@ -16,6 +16,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
+from sqlalchemy.exc import IntegrityError
 from fastapi import status
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,7 +30,9 @@ from app.modules.screening.models import (
     ScreeningQuestion,
     ScreeningQuestionSource,
     ScreeningReport,
+    ScreeningSegment,
     ScreeningSession,
+    ScreeningSpeaker,
     ScreeningStatus,
 )
 from app.modules.screening.schemas import (
@@ -39,7 +42,9 @@ from app.modules.screening.schemas import (
     ScreeningListResponse,
     ScreeningQuestionDTO,
     ScreeningReportDTO,
+    ScreeningSegmentDTO,
     ScreeningSessionResponse,
+    TranscriptResponse,
     UpdateQuestionRequest,
     UpdateScreeningRequest,
 )
@@ -446,3 +451,89 @@ async def delete_question(
     await db.commit()
     session = await _load(db, session_id)
     return await to_dto(db, session)
+
+
+# --- transcript (Этап 2) ---------------------------------------------------
+
+
+def _segment_dto(seg: ScreeningSegment) -> ScreeningSegmentDTO:
+    return ScreeningSegmentDTO(
+        id=seg.id,
+        seq=seg.seq,
+        speaker=seg.speaker,
+        text=seg.text_,
+        started_ms=seg.started_ms,
+        ended_ms=seg.ended_ms,
+    )
+
+
+async def next_seq(db: AsyncSession, session_id: uuid.UUID) -> int:
+    """Следующий свободный seq (max+1). 1, если сегментов ещё нет."""
+    current = (
+        await db.execute(
+            select(func.coalesce(func.max(ScreeningSegment.seq), 0)).where(
+                ScreeningSegment.session_id == session_id
+            )
+        )
+    ).scalar_one()
+    return int(current) + 1
+
+
+async def append_segment(
+    db: AsyncSession,
+    session_id: uuid.UUID,
+    *,
+    speaker: ScreeningSpeaker,
+    text: str,
+    started_ms: int,
+    ended_ms: int,
+) -> ScreeningSegment:
+    """Записать финальный сегмент. UNIQUE(session_id, seq) защищает от дублей."""
+    last_error: Exception | None = None
+    for _ in range(5):
+        seq = await next_seq(db, session_id)
+        seg = ScreeningSegment(
+            session_id=session_id,
+            seq=seq,
+            speaker=speaker,
+            text_=text,
+            started_ms=started_ms,
+            ended_ms=ended_ms,
+        )
+        db.add(seg)
+        try:
+            await db.commit()
+            await db.refresh(seg)
+            return seg
+        except IntegrityError as exc:
+            await db.rollback()
+            last_error = exc
+            continue
+    raise ApiError(
+        status.HTTP_500_INTERNAL_SERVER_ERROR,
+        "segment_persist_failed",
+        "Не удалось сохранить сегмент транскрипта",
+    ) from last_error
+
+
+async def list_transcript(
+    db: AsyncSession, user: User, session_id: uuid.UUID
+) -> TranscriptResponse:
+    session = await _load(db, session_id)
+    await _ensure_can_see(db, user, session)
+    rows = list(
+        (
+            await db.execute(
+                select(ScreeningSegment)
+                .where(ScreeningSegment.session_id == session_id)
+                .order_by(ScreeningSegment.seq.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    last = rows[-1].seq if rows else 0
+    return TranscriptResponse(
+        items=[_segment_dto(s) for s in rows],
+        last_seq=last,
+    )

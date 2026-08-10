@@ -75,6 +75,25 @@ services:
     command: ["celery", "-A", "app.celery_app", "beat", "--loglevel=info"]
     profiles: ["celery"]
 
+  # AI-скрининг Этап 2. Для реальной модели: build --build-arg STT_FULL=1 и STT_FAKE=0.
+  stt:
+    build:
+      context: ../services/stt
+      dockerfile: Dockerfile
+      args:
+        STT_FULL: "${STT_FULL:-0}"
+    container_name: crm-lg-stt
+    restart: unless-stopped
+    environment:
+      STT_FAKE: "${STT_FAKE:-1}"
+      STT_MODEL: "${STT_MODEL:-small}"
+      STT_DEVICE: "${STT_DEVICE:-cpu}"
+      STT_COMPUTE_TYPE: "${STT_COMPUTE_TYPE:-int8}"
+      STT_CPU_THREADS: "${STT_CPU_THREADS:-4}"
+      STT_PORT: "8765"
+    expose:
+      - "8765"
+
   nginx:
     image: nginx:1.27-alpine
     container_name: crm-lg-nginx

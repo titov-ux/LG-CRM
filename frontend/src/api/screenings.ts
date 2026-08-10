@@ -53,6 +53,20 @@ export interface ScreeningSession {
   report?: ScreeningReport | null;
 }
 
+export interface ScreeningSegment {
+  id: UUID;
+  seq: number;
+  speaker: ScreeningSpeaker;
+  text: string;
+  startedMs: number;
+  endedMs: number;
+}
+
+export interface TranscriptResponse {
+  items: ScreeningSegment[];
+  lastSeq: number;
+}
+
 export interface ScreeningsListParams {
   candidateId?: UUID;
   vacancyId?: UUID;
@@ -109,4 +123,6 @@ export const screeningsApi = {
       .json<ScreeningSession>(),
   removeQuestion: (id: UUID, questionId: UUID) =>
     api.delete(`screenings/${id}/questions/${questionId}`).json<ScreeningSession>(),
+  transcript: (id: UUID) =>
+    api.get(`screenings/${id}/transcript`).json<TranscriptResponse>(),
 };

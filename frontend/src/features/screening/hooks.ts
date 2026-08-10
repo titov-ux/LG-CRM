@@ -12,6 +12,7 @@ export const screeningKeys = {
   all: ['screenings'] as const,
   list: (params: ScreeningsListParams) => [...screeningKeys.all, 'list', params] as const,
   byId: (id: UUID) => [...screeningKeys.all, 'byId', id] as const,
+  transcript: (id: UUID) => [...screeningKeys.all, 'transcript', id] as const,
 };
 
 export function useScreenings(params: ScreeningsListParams = {}) {
@@ -27,6 +28,15 @@ export function useScreening(id: UUID | undefined) {
     queryKey: screeningKeys.byId(id ?? ''),
     queryFn: () => screeningsApi.byId(id as UUID),
     enabled: !!id,
+    ...QUERY_DEFAULTS,
+  });
+}
+
+export function useScreeningTranscript(id: UUID | undefined, enabled = true) {
+  return useQuery({
+    queryKey: screeningKeys.transcript(id ?? ''),
+    queryFn: () => screeningsApi.transcript(id as UUID),
+    enabled: !!id && enabled,
     ...QUERY_DEFAULTS,
   });
 }

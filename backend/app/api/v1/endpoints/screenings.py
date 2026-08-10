@@ -18,6 +18,7 @@ from app.modules.screening.schemas import (
     FinishScreeningRequest,
     ScreeningListResponse,
     ScreeningSessionResponse,
+    TranscriptResponse,
     UpdateQuestionRequest,
     UpdateScreeningRequest,
 )
@@ -139,6 +140,19 @@ async def attach_audio(
     db: AsyncSession = Depends(get_db),
 ) -> ScreeningSessionResponse:
     return await service.attach_audio(db, user, session_id, payload.file_id)
+
+
+@router.get(
+    "/{session_id}/transcript",
+    response_model=TranscriptResponse,
+    summary="Транскрипт сессии (финальные сегменты)",
+)
+async def get_transcript(
+    session_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> TranscriptResponse:
+    return await service.list_transcript(db, user, session_id)
 
 
 @router.post(

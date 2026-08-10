@@ -1,6 +1,7 @@
 """Тесты AI-скрининга: CRUD сессий, согласие, чек-лист, видимость."""
 from __future__ import annotations
 
+import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -178,3 +179,59 @@ def test_list_filters(client: TestClient, recruiter_user, candidate) -> None:
 
     r = client.get("/api/v1/screenings", headers=h, params={"status": "live"})
     assert r.json()["total"] == 0
+
+
+def test_transcript_empty(client: TestClient, recruiter_user, candidate) -> None:
+    h = auth_headers(client, recruiter_user.email)
+    s = _make_screening(client, h, str(candidate.id))
+
+    r = client.get(f"/api/v1/screenings/{s['id']}/transcript", headers=h)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["items"] == []
+    assert body["lastSeq"] == 0
+
+
+@pytest.mark.asyncio
+async def test_append_segment_and_list_transcript(
+    db: AsyncSession, recruiter_user, candidate
+) -> None:
+    """Этап 2: финальные сегменты пишутся с seq и отдаются в порядке."""
+    from app.modules.screening import service as screening_service
+    from app.modules.screening.models import ScreeningSpeaker
+    from app.modules.screening.schemas import CreateScreeningRequest
+
+    session = await screening_service.create(
+        db,
+        recruiter_user,
+        CreateScreeningRequest(candidate_id=candidate.id, questions=["Q1"]),
+    )
+    empty = await screening_service.list_transcript(db, recruiter_user, session.id)
+    assert empty.items == []
+    assert empty.last_seq == 0
+
+    s1 = await screening_service.append_segment(
+        db,
+        session.id,
+        speaker=ScreeningSpeaker.candidate,
+        text="Меня зовут Иван",
+        started_ms=1000,
+        ended_ms=2500,
+    )
+    s2 = await screening_service.append_segment(
+        db,
+        session.id,
+        speaker=ScreeningSpeaker.recruiter,
+        text="Расскажите про опыт",
+        started_ms=3000,
+        ended_ms=4500,
+    )
+    assert s1.seq == 1
+    assert s2.seq == 2
+
+    tr = await screening_service.list_transcript(db, recruiter_user, session.id)
+    assert tr.last_seq == 2
+    assert [x.text for x in tr.items] == ["Меня зовут Иван", "Расскажите про опыт"]
+    assert [x.speaker.value for x in tr.items] == ["candidate", "recruiter"]
+
+

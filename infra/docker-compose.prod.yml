@@ -75,7 +75,9 @@ services:
     command: ["celery", "-A", "app.celery_app", "beat", "--loglevel=info"]
     profiles: ["celery"]
 
-  # AI-скрининг Этап 2. Для реальной модели: build --build-arg STT_FULL=1 и STT_FAKE=0.
+  # AI-скрининг STT (Этап 2/6). CPU/small на этой VM; GPU — tofu create_stt_vm.
+  # Реальная модель: build --build-arg STT_FULL=1 и STT_FAKE=0.
+  # Параллельные встречи: STT_MAX_SESSIONS (CPU≈2–3, T4≈5–8).
   stt:
     build:
       context: ../services/stt
@@ -90,6 +92,7 @@ services:
       STT_DEVICE: "${STT_DEVICE:-cpu}"
       STT_COMPUTE_TYPE: "${STT_COMPUTE_TYPE:-int8}"
       STT_CPU_THREADS: "${STT_CPU_THREADS:-4}"
+      STT_MAX_SESSIONS: "${STT_MAX_SESSIONS:-8}"
       STT_PORT: "8765"
     expose:
       - "8765"

@@ -43,7 +43,7 @@ function fmtDuration(sec?: number | null): string | null {
 
 export function VideoInterviewsPage() {
   const [createOpen, setCreateOpen] = useState(false);
-  const { data, isLoading } = useScreenings({ pageSize: 50 });
+  const { data, isLoading } = useScreenings({ pageSize: 50 }, { pollProcessing: true });
   const items = data?.items ?? [];
 
   return (

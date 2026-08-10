@@ -137,17 +137,41 @@ class Settings(BaseSettings):
     # РФ как альтернатива прокси. По умолчанию — публичный Bot API.
     telegram_api_base: str = "https://api.telegram.org"
 
-    # ── AI-скрининг / STT (Этап 2) ──────────────────────────
+    # ── AI-скрининг / STT (Этап 2+) ─────────────────────────
     # WebSocket URL stt-service. Пусто = realtime-транскрипция выключена
     # (комната работает, запись локально → S3, но живого текста не будет).
     #   dev:  ws://localhost:8765
     #   prod: ws://stt:8765  (сервис в docker-compose)
     stt_url: str = "ws://localhost:8765"
-    # Максимальная длительность встречи (мин) — на Этапе 6 для hard-stop.
+    # Hard-stop live-сессии по WS (мин): сервер шлёт session.state max_duration
+    # и закрывает поток; клиент обновляет UI.
     screening_max_duration_min: int = 90
     # Сколько секунд после обрыва WS сессия остаётся live (reconnect-окно).
-    # Сам статус не трогаем на disconnect; поле — для будущих метрик/алертов.
     screening_ws_hold_sec: int = 60
+    # Retention аудиозаписей скрининга в S3 (дни). Celery beat
+    # `screening.purge_expired_audio` чистит старше порога (152-ФЗ).
+    # 0 = не чистить автоматически.
+    screening_audio_retention_days: int = 90
+
+    # ── AI-скрининг / realtime-агент (Этап 4) ───────────────
+    # false — только транскрипт и ручной чек-лист, без вызовов LLM во время встречи.
+    screening_ai_enabled: bool = True
+    # Дебаунс после финального сегмента перед тиком агента (сек).
+    screening_ai_debounce_sec: float = 8.0
+    # Минимальный интервал между успешными вызовами LLM в одной сессии.
+    screening_ai_min_interval_sec: float = 8.0
+    # Жёсткий потолок вызовов LLM на одну встречу (стоимость / rate-limit).
+    screening_ai_max_calls_per_session: int = 40
+    # Сколько follow-up вопросов модель может добавить за один тик / за сессию.
+    screening_ai_max_followups_per_tick: int = 2
+    screening_ai_max_followups_per_session: int = 8
+    # Сколько последних сегментов отдаём в промпт как контекст (дельта + хвост).
+    screening_ai_transcript_tail: int = 24
+
+    # ── AI-скрининг / пост-анализ отчёта (Этап 5) ────────────
+    # true (dev/tests): анализ после finish в том же процессе (asyncio.create_task).
+    # false (prod): Celery worker `screening.analyze_session` (нужен Redis + worker).
+    screening_analysis_eager: bool = True
 
     # ── Сеть ────────────────────────────────────────────────
     # У контейнера есть IPv6-адрес, но нет маршрута наружу (типично для YC-VM

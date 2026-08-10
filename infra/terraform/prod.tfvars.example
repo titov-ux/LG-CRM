@@ -31,3 +31,12 @@ create_backups_bucket = false
 
 # Боевой домен — используется в CORS files-бакета и в info-outputs.
 domain = "crm.lachevsky.ru"
+
+# ── AI-скрининг STT (Этап 6) ──
+create_stt_vm = false
+# create_stt_vm   = true
+# stt_platform_id = "gpu-standard-v3"
+# stt_gpus        = 1
+# stt_cores       = 8
+# stt_memory_gb   = 32
+# stt_disk_gb     = 100

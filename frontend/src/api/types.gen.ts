@@ -5141,6 +5141,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/screenings/{id}/segments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        /** Транскрипт сессии (финальные сегменты, по seq) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Список сегментов */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ScreeningSegment"][];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/screenings/{id}/audio": {
         parameters: {
             query?: never;
@@ -6464,6 +6505,14 @@ export interface components {
             source: components["schemas"]["ScreeningQuestionSource"];
             status: components["schemas"]["ScreeningQuestionStatus"];
             answerSummary?: string | null;
+        };
+        ScreeningSegment: {
+            id: components["schemas"]["UUID"];
+            seq: number;
+            speaker: components["schemas"]["ScreeningSpeaker"];
+            text: string;
+            startedMs: number;
+            endedMs: number;
         };
         ScreeningReport: {
             id: components["schemas"]["UUID"];

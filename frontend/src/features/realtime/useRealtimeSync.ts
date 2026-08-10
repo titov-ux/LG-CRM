@@ -17,6 +17,7 @@ import { candidateKeys } from '@/features/candidates/hooks';
 import { vacancyKeys } from '@/features/vacancies/hooks';
 import { tenderKeys } from '@/features/tenders/hooks';
 import { matchKeys } from '@/features/matching/hooks';
+import { screeningKeys } from '@/features/screening/hooks';
 import {
   startRealtime,
   stopRealtime,
@@ -59,6 +60,21 @@ export function useRealtimeSync(): void {
         if (event.vacancyId && event.candidateId) {
           queryClient.invalidateQueries({
             queryKey: matchKeys.score(`m-${event.vacancyId}-${event.candidateId}`),
+          });
+        }
+        return;
+      }
+      if (event.type === 'screening.report') {
+        queryClient.invalidateQueries({ queryKey: screeningKeys.all });
+        if (event.sessionId) {
+          queryClient.invalidateQueries({ queryKey: screeningKeys.byId(event.sessionId) });
+        }
+        if (event.candidateId) {
+          queryClient.invalidateQueries({
+            queryKey: candidateKeys.byId(event.candidateId),
+          });
+          queryClient.invalidateQueries({
+            queryKey: candidateKeys.activity(event.candidateId),
           });
         }
         return;

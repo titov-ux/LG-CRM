@@ -80,12 +80,22 @@ export interface MatchScoredRealtimeEvent extends RealtimeEventBase {
   matchId: string | null;
 }
 
+export interface ScreeningReportRealtimeEvent extends RealtimeEventBase {
+  type: 'screening.report';
+  sessionId: string | null;
+  candidateId: string | null;
+  vacancyId: string | null;
+  status: string | null;
+  verdict: string | null;
+}
+
 export type RealtimeEvent =
   | DomainRealtimeEvent
   | ChatRealtimeEvent
   | PresenceRealtimeEvent
   | CalendarRealtimeEvent
-  | MatchScoredRealtimeEvent;
+  | MatchScoredRealtimeEvent
+  | ScreeningReportRealtimeEvent;
 
 type Listener = (e: RealtimeEvent) => void;
 type PresenceListener = (onlineUserIds: Set<string>) => void;
@@ -271,6 +281,19 @@ function openSocket(): void {
         vacancyId: typeof obj.vacancyId === 'string' ? obj.vacancyId : null,
         candidateId: typeof obj.candidateId === 'string' ? obj.candidateId : null,
         matchId: typeof obj.matchId === 'string' ? obj.matchId : null,
+      });
+      return;
+    }
+
+    if (type === 'screening.report') {
+      emit({
+        ...base,
+        type: 'screening.report',
+        sessionId: typeof obj.sessionId === 'string' ? obj.sessionId : null,
+        candidateId: typeof obj.candidateId === 'string' ? obj.candidateId : null,
+        vacancyId: typeof obj.vacancyId === 'string' ? obj.vacancyId : null,
+        status: typeof obj.status === 'string' ? obj.status : null,
+        verdict: typeof obj.verdict === 'string' ? obj.verdict : null,
       });
       return;
     }

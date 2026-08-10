@@ -87,7 +87,15 @@ class SttBridge:
                     continue
                 if not isinstance(msg, dict):
                     continue
-                # hello/stats от STT — служебные; partial/final — наверх.
+                # hello/stats от STT — служебные; error/busy — наверх как stt.error.
+                if msg.get("type") == "error":
+                    await self._on_event(
+                        {
+                            "type": "stt.error",
+                            "error": msg.get("error", "stt_error"),
+                        }
+                    )
+                    continue
                 await self._on_event(msg)
         except asyncio.CancelledError:
             raise

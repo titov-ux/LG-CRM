@@ -1,36 +1,63 @@
 /**
  * Захват звука скрининга: микрофон рекрутера + звук вкладки Телемоста.
  *
- * Этап 1 — локальная запись (MediaRecorder на смикшированном потоке) → S3.
- * Этап 2 — параллельно AudioWorklet ресемплирует каждую дорожку в PCM16
- * mono 16 кГц и отдаёт фреймы (~100 мс) через onPcmFrame для WS → STT.
+ * Этап 1 — только локальная запись (MediaRecorder на смикшированном потоке)
+ * с последующей выгрузкой в S3. На Этапе 2 сюда добавится AudioWorklet с
+ * PCM16-стримом по WebSocket (см. spikes/screening/capture_prototype.html).
  *
- * Ограничения:
- * - только Chromium (Chrome / Яндекс Браузер / Edge);
- * - Телемост во вкладке, не в desktop-приложении;
- * - в диалоге выбора — галка «Поделиться звуком вкладки».
+ * Ограничения (задокументированы в плане):
+ * - только Chromium-браузеры (Chrome / Яндекс Браузер / Edge);
+ * - Телемост должен быть открыт во ВКЛАДКЕ того же браузера, не в приложении;
+ * - в диалоге выбора нужно выбрать вкладку и включить «Поделиться звуком вкладки».
  */
 
-const TARGET_RATE = 16000;
-const CHUNK_SAMPLES = 1600; // 100 мс при 16 кГц
+export interface CaptureLevels {
+  /** 0..1 — мгновенный пик уровня. */
+  mic: number;
+  tab: number;
+}
 
-const WORKLET_CODE = `
+export interface CaptureCallbacks {
+  onLevels?: (levels: CaptureLevels) => void;
+  /** Вкладка молчит > 15 сек при активной записи — вероятно, забыли галку звука. */
+  onTabSilence?: (silent: boolean) => void;
+  onEnded?: () => void;
+  /**
+   * PCM16LE 16 кГц фрейм (~100 мс) для realtime-транскрипции (Этап 2).
+   * channel: 0 = рекрутер/микрофон, 1 = кандидат/вкладка. Если колбэк не
+   * задан — worklet-ы не создаются, работает только локальная запись.
+   */
+  onFrame?: (channel: 0 | 1, pcm: ArrayBuffer) => void;
+}
+
+/**
+ * AudioWorklet-даунсемплер: любые sampleRate → 16 кГц mono PCM16, чанки
+ * ~100 мс. Инлайн-код через blob-URL (важно: НЕ работает с file://, только
+ * http(s) — проверено на спайке Этапа 0).
+ */
+const PCM_WORKLET = `
 class PCMWorklet extends AudioWorkletProcessor {
   constructor() {
     super();
+    this.ratio = sampleRate / 16000;
     this.acc = [];
     this.accLen = 0;
-    this.chunk = ${CHUNK_SAMPLES};
-    this.target = ${TARGET_RATE};
+    this.chunk = 1600; // 100 мс @ 16кГц
+    this.pos = 0;
   }
   process(inputs) {
     const input = inputs[0];
-    if (!input || !input[0] || !input[0].length) return true;
+    if (!input || !input[0]) return true;
     const ch = input[0];
-    const ratio = sampleRate / this.target;
-    const outLen = Math.floor(ch.length / ratio);
-    const out = new Float32Array(outLen);
-    for (let i = 0; i < outLen; i++) out[i] = ch[Math.floor(i * ratio)];
+    const out = [];
+    while (this.pos < ch.length) {
+      const i = Math.floor(this.pos);
+      const frac = this.pos - i;
+      const a = ch[i], b = ch[Math.min(i + 1, ch.length - 1)];
+      out.push(a + (b - a) * frac);
+      this.pos += this.ratio;
+    }
+    this.pos -= ch.length;
     if (out.length) { this.acc.push(Float32Array.from(out)); this.accLen += out.length; }
     while (this.accLen >= this.chunk) {
       const flat = new Float32Array(this.accLen);
@@ -39,13 +66,11 @@ class PCMWorklet extends AudioWorkletProcessor {
       const piece = flat.subarray(0, this.chunk);
       const rest = flat.subarray(this.chunk);
       const pcm = new Int16Array(piece.length);
-      let level = 0;
       for (let i = 0; i < piece.length; i++) {
         const s = Math.max(-1, Math.min(1, piece[i]));
         pcm[i] = s * 0x7fff;
-        level = Math.max(level, Math.abs(s));
       }
-      this.port.postMessage({ pcm: pcm.buffer, level }, [pcm.buffer]);
+      this.port.postMessage(pcm.buffer, [pcm.buffer]);
       this.acc = [Float32Array.from(rest)];
       this.accLen = rest.length;
     }
@@ -54,23 +79,6 @@ class PCMWorklet extends AudioWorkletProcessor {
 }
 registerProcessor('pcm-worklet', PCMWorklet);
 `;
-
-export interface CaptureLevels {
-  /** 0..1 — мгновенный пик уровня. */
-  mic: number;
-  tab: number;
-}
-
-export type PcmChannel = 0 | 1;
-
-export interface CaptureCallbacks {
-  onLevels?: (levels: CaptureLevels) => void;
-  /** Вкладка молчит > 15 сек при активной записи — вероятно, забыли галку звука. */
-  onTabSilence?: (silent: boolean) => void;
-  onEnded?: () => void;
-  /** PCM16LE фрейм (~100 мс) с тегом канала для WS. */
-  onPcmFrame?: (channel: PcmChannel, pcm: ArrayBuffer) => void;
-}
 
 export class ScreeningCapture {
   private micStream: MediaStream | null = null;
@@ -82,9 +90,6 @@ export class ScreeningCapture {
   private tabSilentMs = 0;
   private tabSilenceFlag = false;
   private analysers: { mic?: AnalyserNode; tab?: AnalyserNode } = {};
-  private worklets: AudioWorkletNode[] = [];
-  private workletReady = false;
-  private levelsFromWorklet = { mic: 0, tab: 0 };
 
   constructor(private cb: CaptureCallbacks = {}) {}
 
@@ -92,8 +97,7 @@ export class ScreeningCapture {
     return (
       typeof navigator !== 'undefined' &&
       !!navigator.mediaDevices?.getDisplayMedia &&
-      typeof MediaRecorder !== 'undefined' &&
-      typeof AudioWorkletNode !== 'undefined'
+      typeof MediaRecorder !== 'undefined'
     );
   }
 
@@ -121,9 +125,12 @@ export class ScreeningCapture {
    * источник без аудио (не поставил галку «Поделиться звуком вкладки»).
    */
   async requestTab(): Promise<boolean> {
+    // video:true обязателен — иначе Chrome не покажет пикер вкладок.
     const stream = await navigator.mediaDevices.getDisplayMedia({
       video: true,
       audio: { echoCancellation: false, noiseSuppression: false },
+      // Подсказки Chromium: сразу вкладки, свою скрыть, системный звук не предлагать.
+      // (нестандартные поля — приводим через as)
       ...({ selfBrowserSurface: 'exclude', systemAudio: 'exclude' } as object),
     });
     const audio = stream.getAudioTracks();
@@ -131,8 +138,10 @@ export class ScreeningCapture {
       stream.getTracks().forEach((t) => t.stop());
       return false;
     }
+    // Видео на Этапе 1 не нужно — останавливаем, остаётся только звук.
     stream.getVideoTracks().forEach((t) => t.stop());
     this.tabStream = new MediaStream(audio);
+    // Пользователь может остановить шаринг из «плашки» Chrome.
     audio[0].addEventListener('ended', () => {
       this.tabStream = null;
       this.cb.onEnded?.();
@@ -140,52 +149,35 @@ export class ScreeningCapture {
     return true;
   }
 
-  private async ensureWorklet(ctx: AudioContext): Promise<void> {
-    if (this.workletReady) return;
-    const blob = new Blob([WORKLET_CODE], { type: 'application/javascript' });
-    const url = URL.createObjectURL(blob);
-    try {
-      await ctx.audioWorklet.addModule(url);
-      this.workletReady = true;
-    } finally {
-      URL.revokeObjectURL(url);
-    }
-  }
-
-  private attachWorklet(
-    ctx: AudioContext,
-    stream: MediaStream,
-    channel: PcmChannel,
-  ): AudioWorkletNode {
-    const src = ctx.createMediaStreamSource(stream);
-    const node = new AudioWorkletNode(ctx, 'pcm-worklet');
-    node.port.onmessage = (e: MessageEvent<{ pcm: ArrayBuffer; level: number }>) => {
-      const { pcm, level } = e.data;
-      if (channel === 0) this.levelsFromWorklet.mic = level;
-      else this.levelsFromWorklet.tab = level;
-      this.cb.onPcmFrame?.(channel, pcm);
-    };
-    src.connect(node);
-    // Не в destination — иначе эхо вкладки в колонки.
-    this.worklets.push(node);
-    return node;
-  }
-
-  /** 3. Запись: микс → MediaRecorder + PCM-стрим по каналам для STT. */
+  /** 3. Запись: микс двух дорожек → MediaRecorder (audio/webm;opus). */
   async start(): Promise<void> {
     if (!this.micStream || !this.tabStream) throw new Error('capture_not_ready');
     this.ctx = new AudioContext();
-    if (this.ctx.state === 'suspended') await this.ctx.resume();
-
-    await this.ensureWorklet(this.ctx);
-    this.attachWorklet(this.ctx, this.micStream, 0);
-    this.attachWorklet(this.ctx, this.tabStream, 1);
-
     const dest = this.ctx.createMediaStreamDestination();
+
     const micSrc = this.ctx.createMediaStreamSource(this.micStream);
     const tabSrc = this.ctx.createMediaStreamSource(this.tabStream);
     micSrc.connect(dest);
     tabSrc.connect(dest);
+    // ВАЖНО: к ctx.destination НЕ подключаем — иначе звук вкладки пойдёт в
+    // колонки вторым потоком (эхо).
+
+    // PCM-стрим для realtime-транскрипции: по worklet-у на канал.
+    if (this.cb.onFrame) {
+      const blobUrl = URL.createObjectURL(
+        new Blob([PCM_WORKLET], { type: 'application/javascript' }),
+      );
+      await this.ctx.audioWorklet.addModule(blobUrl);
+      const attach = (src: MediaStreamAudioSourceNode, channel: 0 | 1) => {
+        const node = new AudioWorkletNode(this.ctx as AudioContext, 'pcm-worklet');
+        node.port.onmessage = (e: MessageEvent<ArrayBuffer>) =>
+          this.cb.onFrame?.(channel, e.data);
+        src.connect(node);
+        // worklet не соединяем с destination — он только «слушает».
+      };
+      attach(micSrc, 0);
+      attach(tabSrc, 1);
+    }
 
     this.analysers.mic = this.ctx.createAnalyser();
     this.analysers.tab = this.ctx.createAnalyser();
@@ -205,7 +197,7 @@ export class ScreeningCapture {
     this.recorder.ondataavailable = (e) => {
       if (e.data.size > 0) this.chunks.push(e.data);
     };
-    this.recorder.start(5_000);
+    this.recorder.start(5_000); // чанк каждые 5с — запись переживает краш вкладки
 
     this.tabSilentMs = 0;
     this.tabSilenceFlag = false;
@@ -216,17 +208,14 @@ export class ScreeningCapture {
     const buf = new Float32Array(analyser.fftSize);
     analyser.getFloatTimeDomainData(buf);
     let max = 0;
-    for (let i = 0; i < buf.length; i++) max = Math.max(max, Math.abs(buf[i]!));
+    for (let i = 0; i < buf.length; i++) max = Math.max(max, Math.abs(buf[i]));
     return max;
   }
 
   private pollLevels(): void {
-    const mic = this.analysers.mic
-      ? this.peak(this.analysers.mic)
-      : this.levelsFromWorklet.mic;
-    const tab = this.analysers.tab
-      ? this.peak(this.analysers.tab)
-      : this.levelsFromWorklet.tab;
+    if (!this.analysers.mic || !this.analysers.tab) return;
+    const mic = this.peak(this.analysers.mic);
+    const tab = this.peak(this.analysers.tab);
     this.cb.onLevels?.({ mic, tab });
 
     this.tabSilentMs = tab > 0.005 ? 0 : this.tabSilentMs + 200;
@@ -243,16 +232,6 @@ export class ScreeningCapture {
       clearInterval(this.levelTimer);
       this.levelTimer = null;
     }
-    for (const n of this.worklets) {
-      try {
-        n.port.onmessage = null;
-        n.disconnect();
-      } catch {
-        /* ignore */
-      }
-    }
-    this.worklets = [];
-
     const recorder = this.recorder;
     let blob: Blob | null = null;
     if (recorder && recorder.state !== 'inactive') {
@@ -271,7 +250,6 @@ export class ScreeningCapture {
     this.tabStream = null;
     await this.ctx?.close().catch(() => undefined);
     this.ctx = null;
-    this.workletReady = false;
     return blob;
   }
 }

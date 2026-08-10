@@ -1,21 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from '@tanstack/react-router';
-import { HTTPError } from 'ky';
 import {
   ArrowLeft,
   Check,
   CircleDot,
   ExternalLink,
-  Loader2,
   Mic,
   MonitorUp,
   Plus,
-  Sparkles,
   Square,
   Trash2,
   Video,
-  Wifi,
-  WifiOff,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
@@ -26,47 +21,30 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { filesApi, uploadFile } from '@/api/files';
-import type { ScreeningQuestion, ScreeningQuestionStatus, ScreeningSegment } from '@/api/screenings';
-import { useAuthStore } from '@/stores/auth';
+import type {
+  ScreeningQuestion,
+  ScreeningQuestionStatus,
+  ScreeningSpeaker,
+} from '@/api/screenings';
 import { ScreeningCapture } from './audioCapture';
-import { ScreeningSocket, type TranscriptEvent } from './screeningWs';
 import {
   useAddQuestion,
   useAttachScreeningAudio,
   useFinishScreening,
-  useRegenerateQuestions,
   useRemoveQuestion,
   useScreening,
-  useScreeningTranscript,
+  useScreeningSegments,
   useStartScreening,
   useUpdateQuestion,
   useUpdateScreening,
 } from './hooks';
+import { useScreeningSocket, type LiveSegment, type SttStatus } from './useScreeningSocket';
 
 /**
- * Комната скрининга: подготовка вопросов (Этап 3) → захват → live-транскрипт
- * (Этап 2). Realtime-агент follow-up — Этап 4.
+ * Комната скрининга (Этап 1): согласие → захват (микрофон + вкладка
+ * Телемоста) → запись → выгрузка записи в S3. Чек-лист вопросов рекрутер
+ * ведёт вручную; на Этапах 2–4 добавятся живой транскрипт и AI-агент.
  */
-
-async function extractAiError(e: unknown): Promise<string> {
-  if (e instanceof HTTPError) {
-    try {
-      const body = (await e.response.clone().json()) as
-        | { detail?: { code?: string; message?: string } }
-        | undefined;
-      if (body?.detail?.message) return body.detail.message;
-    } catch {
-      /* ignore */
-    }
-    if (e.response.status === 503) {
-      return 'Сервис AI временно недоступен. Добавьте вопросы вручную.';
-    }
-    if (e.response.status === 502) {
-      return 'Не удалось сгенерировать вопросы. Попробуйте ещё раз.';
-    }
-  }
-  return 'Не удалось сгенерировать вопросы';
-}
 
 function LevelBar({ level, label, active }: { level: number; label: string; active: boolean }) {
   return (
@@ -77,6 +55,83 @@ function LevelBar({ level, label, active }: { level: number; label: string; acti
           className={cn('h-full transition-[width] duration-150', active ? 'bg-emerald-500' : 'bg-muted-foreground/40')}
           style={{ width: `${Math.min(100, level * 300)}%` }}
         />
+      </div>
+    </div>
+  );
+}
+
+function msToClock(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+/** Панель транскрипта: живые сегменты во время встречи, REST — после. */
+function TranscriptPane({
+  live,
+  segments,
+  partials,
+  sttStatus,
+}: {
+  live: boolean;
+  segments: LiveSegment[];
+  partials: Partial<Record<ScreeningSpeaker, string>>;
+  sttStatus: SttStatus;
+}) {
+  const endRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [segments.length, partials.recruiter, partials.candidate]);
+
+  return (
+    <div className="space-y-1.5">
+      {live && sttStatus === 'unavailable' && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-[11.5px] text-amber-700">
+          Сервис распознавания недоступен — запись идёт, транскрипт появится,
+          когда сервис поднимется.
+        </div>
+      )}
+      {segments.length === 0 && !partials.recruiter && !partials.candidate && (
+        <p className="py-3 text-center text-[12px] text-muted-foreground">
+          {live
+            ? sttStatus === 'ok'
+              ? 'Слушаем… реплики появятся здесь по мере разговора.'
+              : 'Ожидание распознавания…'
+            : 'Транскрипт пуст.'}
+        </p>
+      )}
+      <div className="max-h-[420px] space-y-1.5 overflow-y-auto pr-1">
+        {segments.map((s) => (
+          <div
+            key={s.seq}
+            className={cn(
+              'rounded-md px-3 py-1.5 text-[12.5px] leading-snug',
+              s.speaker === 'recruiter' ? 'bg-sky-50' : 'bg-emerald-50',
+            )}
+          >
+            <span className="mr-2 text-[10.5px] font-semibold uppercase text-muted-foreground">
+              {s.speaker === 'recruiter' ? '🎙 Рекрутер' : '👤 Кандидат'}
+              <span className="ml-1.5 font-normal normal-case tnum">
+                {msToClock(s.startedMs)}
+              </span>
+            </span>
+            {s.text}
+          </div>
+        ))}
+        {(['recruiter', 'candidate'] as ScreeningSpeaker[]).map(
+          (sp) =>
+            partials[sp] && (
+              <div
+                key={sp}
+                className="rounded-md bg-muted/40 px-3 py-1.5 text-[12.5px] italic leading-snug opacity-60"
+              >
+                <span className="mr-2 text-[10.5px] font-semibold uppercase not-italic text-muted-foreground">
+                  {sp === 'recruiter' ? '🎙 Рекрутер' : '👤 Кандидат'}
+                </span>
+                {partials[sp]}…
+              </div>
+            ),
+        )}
+        <div ref={endRef} />
       </div>
     </div>
   );
@@ -93,41 +148,14 @@ const Q_STATUS_LABEL: Record<ScreeningQuestionStatus, string> = {
 function QuestionRow({
   q,
   disabled,
-  editable,
   onCycle,
   onRemove,
-  onSave,
 }: {
   q: ScreeningQuestion;
   disabled: boolean;
-  editable: boolean;
   onCycle: () => void;
   onRemove: () => void;
-  onSave: (patch: { text?: string; goal?: string }) => void;
 }) {
-  const [text, setText] = useState(q.text);
-  const [goal, setGoal] = useState(q.goal ?? '');
-
-  useEffect(() => {
-    setText(q.text);
-    setGoal(q.goal ?? '');
-  }, [q.id, q.text, q.goal]);
-
-  const commitText = () => {
-    const next = text.trim();
-    if (!next || next === q.text) {
-      setText(q.text);
-      return;
-    }
-    onSave({ text: next });
-  };
-
-  const commitGoal = () => {
-    const next = goal.trim();
-    if (next === (q.goal ?? '').trim()) return;
-    onSave({ goal: next });
-  };
-
   return (
     <div
       className={cn(
@@ -138,7 +166,7 @@ function QuestionRow({
     >
       <button
         type="button"
-        disabled={disabled || editable}
+        disabled={disabled}
         onClick={onCycle}
         title={`Статус: ${Q_STATUS_LABEL[q.status]} (клик — следующий)`}
         className={cn(
@@ -146,43 +174,18 @@ function QuestionRow({
           q.status === 'answered'
             ? 'border-emerald-500 bg-emerald-500 text-white'
             : 'border-muted-foreground/40 text-muted-foreground hover:border-foreground',
-          editable && 'cursor-default opacity-40',
         )}
       >
         {q.status === 'answered' && <Check className="h-3 w-3" />}
         {q.status === 'asked' && <CircleDot className="h-3 w-3" />}
       </button>
-      <div className="min-w-0 flex-1 space-y-1">
-        {editable ? (
-          <>
-            <Input
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              onBlur={commitText}
-              onKeyDown={(e) => e.key === 'Enter' && (e.currentTarget.blur(), commitText())}
-              className="h-8 text-[13px]"
-              disabled={disabled}
-            />
-            <Input
-              value={goal}
-              onChange={(e) => setGoal(e.target.value)}
-              onBlur={commitGoal}
-              onKeyDown={(e) => e.key === 'Enter' && (e.currentTarget.blur(), commitGoal())}
-              placeholder="Цель вопроса (для вас)"
-              className="h-7 text-[11px] text-muted-foreground"
-              disabled={disabled}
-            />
-          </>
-        ) : (
-          <>
-            <div className={cn('text-[13px] leading-snug', q.status === 'skipped' && 'line-through')}>
-              {q.text}
-            </div>
-            {q.goal && <div className="text-[11px] text-muted-foreground">{q.goal}</div>}
-          </>
-        )}
+      <div className="min-w-0 flex-1">
+        <div className={cn('text-[13px] leading-snug', q.status === 'skipped' && 'line-through')}>
+          {q.text}
+        </div>
+        {q.goal && <div className="text-[11px] text-muted-foreground">{q.goal}</div>}
         {q.source !== 'manual' && (
-          <Badge variant="secondary" className="text-[10px]">
+          <Badge variant="secondary" className="mt-1 text-[10px]">
             {q.source === 'pregenerated' ? 'AI · до встречи' : 'AI · follow-up'}
           </Badge>
         )}
@@ -199,102 +202,6 @@ function QuestionRow({
   );
 }
 
-function formatMs(ms: number): string {
-  const s = Math.floor(ms / 1000);
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-}
-
-function TranscriptPanel({
-  finals,
-  partials,
-  connected,
-  sttReady,
-  sttError,
-  live,
-}: {
-  finals: ScreeningSegment[];
-  partials: Partial<Record<'recruiter' | 'candidate', string>>;
-  connected: boolean;
-  sttReady: boolean;
-  sttError: string | null;
-  live: boolean;
-}) {
-  const bottomRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [finals.length, partials.recruiter, partials.candidate]);
-
-  return (
-    <Card className="flex min-h-[320px] flex-col">
-      <CardContent className="flex flex-1 flex-col space-y-2 p-4">
-        <div className="flex items-center justify-between gap-2">
-          <div className="text-[13px] font-medium">Транскрипт</div>
-          {live && (
-            <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-              {connected ? (
-                <Wifi className="h-3.5 w-3.5 text-emerald-500" />
-              ) : (
-                <WifiOff className="h-3.5 w-3.5 text-amber-500" />
-              )}
-              {!sttReady || sttError
-                ? sttError === 'stt_unavailable'
-                  ? 'STT недоступен'
-                  : connected
-                    ? 'ожидание STT…'
-                    : 'переподключение…'
-                : connected
-                  ? 'live'
-                  : 'переподключение…'}
-            </div>
-          )}
-        </div>
-
-        <div className="flex-1 space-y-2 overflow-y-auto rounded-md bg-muted/30 p-2.5 text-[12.5px] leading-snug">
-          {finals.length === 0 && !partials.recruiter && !partials.candidate && (
-            <p className="py-6 text-center text-muted-foreground">
-              {live ? 'Реплики появятся здесь по мере разговора' : 'Транскрипт пуст'}
-            </p>
-          )}
-          {finals.map((s) => (
-            <div
-              key={s.id || `seq-${s.seq}`}
-              className={cn(
-                'rounded-md px-2.5 py-1.5',
-                s.speaker === 'recruiter' ? 'bg-sky-50/80' : 'bg-background',
-              )}
-            >
-              <div className="mb-0.5 flex items-center gap-2 text-[10.5px] text-muted-foreground">
-                <span className="font-medium">
-                  {s.speaker === 'recruiter' ? 'Рекрутер' : 'Кандидат'}
-                </span>
-                <span>{formatMs(s.startedMs)}</span>
-              </div>
-              <div>{s.text}</div>
-            </div>
-          ))}
-          {(['recruiter', 'candidate'] as const).map((sp) =>
-            partials[sp] ? (
-              <div
-                key={`partial-${sp}`}
-                className={cn(
-                  'rounded-md px-2.5 py-1.5 italic opacity-70',
-                  sp === 'recruiter' ? 'bg-sky-50/50' : 'bg-background',
-                )}
-              >
-                <div className="mb-0.5 text-[10.5px] text-muted-foreground">
-                  {sp === 'recruiter' ? 'Рекрутер' : 'Кандидат'} · …
-                </div>
-                <div>{partials[sp]}</div>
-              </div>
-            ) : null,
-          )}
-          <div ref={bottomRef} />
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
 export function ScreeningRoomPage() {
   const { id } = useParams({ from: '/_authed/video-interviews_/$id' });
   const { data: session, isLoading } = useScreening(id);
@@ -306,10 +213,8 @@ export function ScreeningRoomPage() {
   const addQuestion = useAddQuestion();
   const updateQuestion = useUpdateQuestion();
   const removeQuestion = useRemoveQuestion();
-  const regenerateQuestions = useRegenerateQuestions();
 
   const captureRef = useRef<ScreeningCapture | null>(null);
-  const socketRef = useRef<ScreeningSocket | null>(null);
   const [micReady, setMicReady] = useState(false);
   const [tabReady, setTabReady] = useState(false);
   const [levels, setLevels] = useState({ mic: 0, tab: 0 });
@@ -320,97 +225,35 @@ export function ScreeningRoomPage() {
   const [newQuestion, setNewQuestion] = useState('');
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
 
-  const [finals, setFinals] = useState<ScreeningSegment[]>([]);
-  const [partials, setPartials] = useState<Partial<Record<'recruiter' | 'candidate', string>>>({});
-  const [wsConnected, setWsConnected] = useState(false);
-  const [sttReady, setSttReady] = useState(true);
-  const [sttError, setSttError] = useState<string | null>(null);
-
-  const isLive = session?.status === 'live';
-  const isDone = session?.status === 'done' || session?.status === 'processing';
-  const { data: savedTranscript } = useScreeningTranscript(id, !!session && (isLive || !!isDone));
-
-  const startSocket = useCallback(
-    (sessionId: string) => {
-      socketRef.current?.stop();
-      const sock = new ScreeningSocket(sessionId, {
-        getToken: () => useAuthStore.getState().accessToken,
-        onConnection: setWsConnected,
-        onHello: ({ sttReady: ready }) => {
-          setSttReady(ready);
-          if (!ready) setSttError('stt_unavailable');
-          else setSttError(null);
-        },
-        onPartial: (ev: TranscriptEvent) => {
-          setPartials((p) => ({ ...p, [ev.speaker]: ev.text }));
-        },
-        onFinal: (ev: TranscriptEvent) => {
-          setPartials((p) => {
-            const next = { ...p };
-            delete next[ev.speaker];
-            return next;
-          });
-          if (ev.seq == null) return;
-          const seq = ev.seq;
-          setFinals((prev) => {
-            if (prev.some((s) => s.seq === seq)) return prev;
-            const seg: ScreeningSegment = {
-              id: `live-${seq}`,
-              seq,
-              speaker: ev.speaker,
-              text: ev.text,
-              startedMs: ev.startedMs ?? 0,
-              endedMs: ev.endedMs ?? 0,
-            };
-            return [...prev, seg].sort((a, b) => a.seq - b.seq);
-          });
-        },
-        onState: (state) => {
-          if (state.sttReady === false) {
-            setSttReady(false);
-            setSttError(state.error ?? 'stt_unavailable');
-          } else if (state.sttReady === true) {
-            setSttReady(true);
-            setSttError(null);
-          }
-        },
-      });
-      socketRef.current = sock;
-      sock.start();
-    },
-    [],
-  );
-
-  useEffect(() => {
-    if (!savedTranscript) return;
-    setFinals((prev) => {
-      const bySeq = new Map<number, ScreeningSegment>();
-      for (const s of savedTranscript.items) bySeq.set(s.seq, s);
-      for (const s of prev) if (!bySeq.has(s.seq)) bySeq.set(s.seq, s);
-      return [...bySeq.values()].sort((a, b) => a.seq - b.seq);
-    });
-  }, [savedTranscript]);
-
+  // Таймер встречи.
   useEffect(() => {
     if (!recording) return;
     const t = window.setInterval(() => setElapsed((e) => e + 1), 1000);
     return () => window.clearInterval(t);
   }, [recording]);
 
-  useEffect(
-    () => () => {
-      void captureRef.current?.stop();
-      socketRef.current?.stop();
-    },
-    [],
-  );
+  // Останавливаем дорожки при уходе со страницы.
+  useEffect(() => () => void captureRef.current?.stop(), []);
 
-  // Сессия уже live (reload) — поднимаем WS; захват нужно разрешить заново.
+  const isDraft = session?.status === 'draft';
+  const isLive = session?.status === 'live';
+  const isDone = session?.status === 'done' || session?.status === 'processing';
+  const editable = isDraft || isLive;
+
+  // Realtime-транскрипция: сокет живёт, пока сессия live (Этап 2).
+  const socket = useScreeningSocket(id, !!isLive);
+  const sendFrameRef = useRef(socket.sendFrame);
+  sendFrameRef.current = socket.sendFrame;
+  const { data: storedSegments } = useScreeningSegments(id, !!isDone);
+
+  // Этап 6: hard-stop по max duration — сервер уже перевёл в processing;
+  // останавливаем захват и обновляем UI.
   useEffect(() => {
-    if (!session || session.status !== 'live' || recording) return;
-    if (socketRef.current) return;
-    startSocket(session.id);
-  }, [session, recording, startSocket]);
+    if (!socket.maxDurationHit) return;
+    void captureRef.current?.stop();
+    setRecording(false);
+    toast.warning('Достигнут лимит длительности встречи — сессия завершена');
+  }, [socket.maxDurationHit]);
 
   if (isLoading || !session) {
     return (
@@ -421,9 +264,6 @@ export function ScreeningRoomPage() {
     );
   }
 
-  const isDraft = session.status === 'draft';
-  const editable = isDraft || isLive;
-
   const getCapture = () => {
     if (!captureRef.current) {
       captureRef.current = new ScreeningCapture({
@@ -433,19 +273,13 @@ export function ScreeningRoomPage() {
           setTabReady(false);
           toast.warning('Доступ к звуку вкладки остановлен — выберите вкладку заново');
         },
-        onPcmFrame: (channel, pcm) => {
-          socketRef.current?.sendPcm(channel, pcm);
-        },
+        onFrame: (channel, pcm) => sendFrameRef.current(channel, pcm),
       });
     }
     return captureRef.current;
   };
 
   const requestMic = async () => {
-    if (!ScreeningCapture.isSupported()) {
-      toast.error('Нужен Chrome / Яндекс Браузер / Edge');
-      return;
-    }
     try {
       await getCapture().requestMic();
       setMicReady(true);
@@ -480,7 +314,6 @@ export function ScreeningRoomPage() {
       }
       return;
     }
-    startSocket(session.id);
     await getCapture().start();
     setRecording(true);
     setElapsed(0);
@@ -490,8 +323,6 @@ export function ScreeningRoomPage() {
     setRecording(false);
     setUploading(true);
     try {
-      socketRef.current?.stop();
-      socketRef.current = null;
       const blob = await getCapture().stop();
       await finishSession.mutateAsync({ id: session.id, durationSec: elapsed });
       if (blob && blob.size > 0) {
@@ -535,19 +366,11 @@ export function ScreeningRoomPage() {
     setNewQuestion('');
   };
 
-  const onRegenerate = async () => {
-    try {
-      await regenerateQuestions.mutateAsync({ id: session.id });
-      toast.success('План вопросов обновлён');
-    } catch (e) {
-      toast.error(await extractAiError(e));
-    }
-  };
-
   const mmss = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`;
 
   return (
     <div className="flex-1 space-y-4 overflow-auto px-6 pb-8 pt-5">
+      {/* Шапка */}
       <div className="flex items-start gap-3">
         <Link
           to="/video-interviews"
@@ -574,7 +397,8 @@ export function ScreeningRoomPage() {
         )}
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[300px_1fr_1fr]">
+      <div className="grid gap-4 lg:grid-cols-[340px_1fr]">
+        {/* Левая колонка: управление встречей */}
         <div className="space-y-4">
           <Card>
             <CardContent className="space-y-3 p-4">
@@ -646,44 +470,6 @@ export function ScreeningRoomPage() {
                       вкладки»
                     </div>
                   )}
-                  {!recording && (
-                    <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-[11.5px] text-amber-800">
-                      Страница перезагружена — заново разрешите микрофон и вкладку, чтобы
-                      продолжить запись и транскрипт.
-                      <div className="mt-2 space-y-1.5">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="w-full"
-                          onClick={requestMic}
-                          disabled={micReady}
-                        >
-                          Микрофон
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="w-full"
-                          onClick={requestTab}
-                          disabled={!micReady || tabReady}
-                        >
-                          Вкладка Телемоста
-                        </Button>
-                        <Button
-                          size="sm"
-                          className="w-full"
-                          disabled={!micReady || !tabReady}
-                          onClick={async () => {
-                            startSocket(session.id);
-                            await getCapture().start();
-                            setRecording(true);
-                          }}
-                        >
-                          Продолжить запись
-                        </Button>
-                      </div>
-                    </div>
-                  )}
                   <Button
                     variant="destructive"
                     size="sm"
@@ -720,11 +506,21 @@ export function ScreeningRoomPage() {
               )}
             </CardContent>
           </Card>
+
+          <Card className="bg-muted/20">
+            <CardContent className="p-4 text-[11.5px] leading-snug text-muted-foreground">
+              <span className="font-medium text-foreground">Скоро:</span> AI-вопросы по
+              резюме и вакансии, живая адаптация чек-листа и автоотчёт
+              «подходит / не подходит» после встречи.
+            </CardContent>
+          </Card>
         </div>
 
+        {/* Правая колонка: чек-лист вопросов + транскрипт */}
+        <div className="space-y-4">
         <Card>
           <CardContent className="space-y-2.5 p-4">
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center justify-between">
               <div className="text-[13px] font-medium">
                 Вопросы
                 <span className="ml-2 text-[11px] font-normal text-muted-foreground">
@@ -732,35 +528,11 @@ export function ScreeningRoomPage() {
                   {session.questions.length} отвечено
                 </span>
               </div>
-              {isDraft && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={onRegenerate}
-                  disabled={regenerateQuestions.isPending}
-                >
-                  {regenerateQuestions.isPending ? (
-                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Sparkles className="mr-1.5 h-3.5 w-3.5" />
-                  )}
-                  {session.questions.length ? 'Перегенерировать' : 'Сгенерировать'}
-                </Button>
-              )}
             </div>
 
-            {regenerateQuestions.isPending && session.questions.length === 0 && (
-              <p className="flex items-center justify-center gap-2 py-6 text-[12px] text-muted-foreground">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                AI готовит план вопросов…
-              </p>
-            )}
-
-            {!regenerateQuestions.isPending && session.questions.length === 0 && (
+            {session.questions.length === 0 && (
               <p className="py-4 text-center text-[12px] text-muted-foreground">
-                {isDraft
-                  ? 'Сгенерируйте план AI или добавьте вопросы вручную.'
-                  : 'Добавьте вопросы — во время встречи отмечайте их кликом по кружку.'}
+                Добавьте вопросы — во время встречи отмечайте их кликом по кружку.
               </p>
             )}
             <div className="space-y-1.5">
@@ -768,13 +540,9 @@ export function ScreeningRoomPage() {
                 <QuestionRow
                   key={q.id}
                   q={q}
-                  disabled={!editable || regenerateQuestions.isPending}
-                  editable={isDraft}
+                  disabled={!editable}
                   onCycle={() => cycleStatus(q)}
                   onRemove={() => removeQuestion.mutate({ id: session.id, questionId: q.id })}
-                  onSave={(payload) =>
-                    updateQuestion.mutate({ id: session.id, questionId: q.id, payload })
-                  }
                 />
               ))}
             </div>
@@ -795,14 +563,49 @@ export function ScreeningRoomPage() {
           </CardContent>
         </Card>
 
-        <TranscriptPanel
-          finals={finals}
-          partials={partials}
-          connected={wsConnected}
-          sttReady={sttReady}
-          sttError={sttError}
-          live={!!isLive}
-        />
+        {/* Транскрипт: живой (WS) во время встречи, из БД — после */}
+        {(isLive || isDone) && (
+          <Card>
+            <CardContent className="space-y-2.5 p-4">
+              <div className="flex items-center justify-between">
+                <div className="text-[13px] font-medium">Транскрипт</div>
+                {isLive && (
+                  <span
+                    className={cn(
+                      'text-[11px]',
+                      socket.sttStatus === 'ok'
+                        ? 'text-emerald-600'
+                        : 'text-muted-foreground',
+                    )}
+                  >
+                    {socket.sttStatus === 'ok'
+                      ? '● распознавание идёт'
+                      : socket.connected
+                        ? 'подключение к распознаванию…'
+                        : 'переподключение…'}
+                  </span>
+                )}
+              </div>
+              <TranscriptPane
+                live={!!isLive}
+                sttStatus={socket.sttStatus}
+                partials={isLive ? socket.partials : {}}
+                segments={
+                  isLive
+                    ? socket.segments
+                    : (storedSegments ?? []).map((s) => ({
+                        seq: s.seq,
+                        speaker: s.speaker,
+                        text: s.text,
+                        startedMs: s.startedMs,
+                        endedMs: s.endedMs,
+                      }))
+                }
+              />
+            </CardContent>
+          </Card>
+        )}
+        </div>
       </div>
     </div>
   );

@@ -188,6 +188,45 @@ sudo cp scripts/cron-backup.example /etc/cron.d/crm-lg-backup
 
 ---
 
+## 8. AI-скрининг: STT / отчёт / retention
+
+**Симптомы.** Нет живого транскрипта; `sttReady: false` в комнате; отчёт
+висит в `processing`; Sentry: `screening.stt_error` / `ai_agent_unavailable`.
+
+**Быстрая проверка:**
+
+```bash
+# stt в compose на основной VM
+docker compose -f infra/docker-compose.prod.yml ps stt
+curl -fsS http://127.0.0.1:8765/healthz   # с хоста, если порт проброшен;
+                                          # иначе: docker compose ... exec stt \
+                                          #   python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8765/healthz').read())"
+docker compose -f infra/docker-compose.prod.yml logs stt --tail=100
+docker compose -f infra/docker-compose.prod.yml logs backend --tail=100 | grep screening
+
+# Celery (пост-анализ + retention) — нужен profile celery
+docker compose -f infra/docker-compose.prod.yml --profile celery ps
+```
+
+**Действие:**
+
+1. `stt_unavailable` / контейнер down → `up -d stt`, проверить `STT_URL=ws://stt:8765`.
+2. `busy` (1013) → очередь полна: поднять `STT_MAX_SESSIONS` или вынести STT
+   на GPU-VM (`create_stt_vm` в tofu, см. `infra/terraform/README.md`).
+3. p95 STT > 5 с в логах `screening.stt_final` → снизить модель / включить GPU /
+   уменьшить параллелизм.
+4. Отчёт не появляется → worker жив? `SCREENING_ANALYSIS_EAGER=false` на prod
+   требует celery-worker; смотреть задачу `screening.analyze_session`.
+5. Аудио «пропало» через N дней — норма: `SCREENING_AUDIO_RETENTION_DAYS`
+   (beat `screening.purge_expired_audio` в 03:15 UTC). Транскрипт/отчёт остаются.
+
+**Права.** Матрица: `screening:run` (вести встречу), `screening:view_report`
+(транскрипт/отчёт/аудио). Без права API отдаёт 403.
+
+**Эскалация:** owner screening / infra, если простой >30 минут в рабочее время.
+
+---
+
 ## Полезные ссылки
 
 - Архитектура: `Архитектура_CRM_ЛГ_Интеграция.docx`

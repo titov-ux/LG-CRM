@@ -1,15 +1,18 @@
-"""WebSocket /ws/screening/{session_id} — realtime-аудио → STT → транскрипт.
+"""WebSocket /ws/screening/{session_id} — realtime-аудио → STT → транскрипт + агент.
 
 Авторизация как у /ws/events: `?token=<access jwt>`.
+Право `screening:run` — через permissions-matrix (Этап 6).
 
 Клиент → сервер:
   - JSON control: {type:"start"|"stop"}
   - binary: 1 байт канала (0=recruiter, 1=candidate) + PCM16LE 16 кГц
 
 Сервер → клиент:
-  - hello {sessionId, lastSeq, sttReady}
+  - hello {sessionId, lastSeq, sttReady, maxDurationSec}
   - transcript.partial / transcript.final {speaker, text, startedMs, endedMs, seq?}
-  - session.state {status, sttReady?, error?}
+  - questions.updated {questions[]} — чек-лист после тика realtime-агента (Этап 4)
+  - hint {text} — короткая подсказка рекрутеру
+  - session.state {status, sttReady?, error?} — в т.ч. error=max_duration (Этап 6)
   - ping каждые 30 с
 """
 from __future__ import annotations
@@ -18,6 +21,7 @@ import asyncio
 import json
 import logging
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import jwt
@@ -28,7 +32,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.security import decode_token
 from app.db.session import SessionLocal
+from app.modules.permissions import service as permissions_service
+from app.modules.screening import metrics as screening_metrics
 from app.modules.screening import service as screening_service
+from app.modules.screening.agent import ScreeningRealtimeAgent
 from app.modules.screening.models import ScreeningSession, ScreeningSpeaker, ScreeningStatus
 from app.modules.screening.stt_bridge import SttBridge
 from app.modules.users.models import Role, User
@@ -38,6 +45,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ws", tags=["screening-realtime"])
 
 _PING_INTERVAL_SECONDS = 30.0
+_ACTION_RUN = "screening:run"
 
 
 async def _authenticate(token: str) -> User | None:
@@ -77,6 +85,7 @@ async def screening_ws(
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
+    started_at: datetime | None = None
     async with SessionLocal() as db:
         session = await db.get(ScreeningSession, session_id)
         if (
@@ -86,6 +95,10 @@ async def screening_ws(
         ):
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
+        if not await permissions_service.user_has_action(db, user, _ACTION_RUN):
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+        started_at = session.started_at
         last_seq = await screening_service.next_seq(db, session_id) - 1
 
     await websocket.accept()
@@ -93,6 +106,7 @@ async def screening_ws(
     settings = get_settings()
     stt_url = (settings.stt_url or "").strip()
     stt_ready = bool(stt_url)
+    max_duration_sec = max(0, int(settings.screening_max_duration_min) * 60)
 
     await websocket.send_json(
         {
@@ -100,12 +114,19 @@ async def screening_ws(
             "sessionId": str(session_id),
             "lastSeq": last_seq,
             "sttReady": stt_ready,
+            "maxDurationSec": max_duration_sec,
         }
     )
 
     bridge: SttBridge | None = None
     outgoing: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
     stop_requested = False
+    timed_out = False
+
+    async def _emit(msg: dict[str, Any]) -> None:
+        await outgoing.put(msg)
+
+    agent = ScreeningRealtimeAgent(session_id, _emit)
 
     async def _on_stt_event(msg: dict[str, Any]) -> None:
         kind = msg.get("type")
@@ -117,6 +138,8 @@ async def screening_ws(
             try:
                 started_ms = int(msg.get("startedMs") or 0)
                 ended_ms = int(msg.get("endedMs") or started_ms)
+                latency_raw = msg.get("latencyMs")
+                latency_ms = float(latency_raw) if latency_raw is not None else None
                 async with SessionLocal() as db:
                     seg = await screening_service.append_segment(
                         db,
@@ -126,6 +149,7 @@ async def screening_ws(
                         started_ms=started_ms,
                         ended_ms=ended_ms,
                     )
+                screening_metrics.record_stt_final(latency_ms)
                 await outgoing.put(
                     {
                         "type": "transcript.final",
@@ -134,9 +158,10 @@ async def screening_ws(
                         "text": text,
                         "startedMs": started_ms,
                         "endedMs": ended_ms,
-                        "latencyMs": msg.get("latencyMs"),
+                        "latencyMs": latency_raw,
                     }
                 )
+                agent.notify_final(seg.seq)
             except Exception:
                 logger.exception("screening_ws: failed to persist segment")
         elif kind == "transcript.partial":
@@ -148,12 +173,14 @@ async def screening_ws(
                 }
             )
         elif kind == "stt.error":
+            reason = str(msg.get("error") or "stt_error")
+            screening_metrics.record_stt_error(reason)
             await outgoing.put(
                 {
                     "type": "session.state",
                     "status": "live",
                     "sttReady": False,
-                    "error": msg.get("error", "stt_error"),
+                    "error": reason,
                 }
             )
 
@@ -163,6 +190,7 @@ async def screening_ws(
             await bridge.connect()
         except Exception:
             logger.exception("screening_ws: cannot connect to STT at %s", stt_url)
+            screening_metrics.record_stt_error("stt_unavailable")
             bridge = None
             stt_ready = False
             await websocket.send_json(
@@ -185,6 +213,40 @@ async def screening_ws(
         while True:
             await asyncio.sleep(_PING_INTERVAL_SECONDS)
             await websocket.send_json({"type": "ping"})
+
+    async def _duration_watch() -> None:
+        """Hard-stop по SCREENING_MAX_DURATION_MIN (Этап 6)."""
+        nonlocal timed_out
+        max_min = int(settings.screening_max_duration_min)
+        if max_min <= 0:
+            await asyncio.Event().wait()
+            return
+        anchor = started_at or datetime.now(UTC)
+        if anchor.tzinfo is None:
+            anchor = anchor.replace(tzinfo=UTC)
+        deadline = anchor + timedelta(minutes=max_min)
+        while True:
+            remaining = (deadline - datetime.now(UTC)).total_seconds()
+            if remaining <= 0:
+                break
+            await asyncio.sleep(min(remaining, 15.0))
+        timed_out = True
+        try:
+            await screening_service.finish_by_timeout(session_id)
+        except Exception:
+            logger.exception(
+                "screening_ws: finish_by_timeout failed for %s", session_id
+            )
+        await outgoing.put(
+            {
+                "type": "session.state",
+                "status": "processing",
+                "error": "max_duration",
+            }
+        )
+        # Даём клиенту получить событие, затем рвём входной цикл.
+        await asyncio.sleep(0.3)
+        raise WebSocketDisconnect(code=1000)
 
     async def _drain_in() -> None:
         nonlocal bridge, stop_requested
@@ -217,6 +279,7 @@ async def screening_ws(
         asyncio.create_task(_pump_out(), name="screening_out"),
         asyncio.create_task(_heartbeat(), name="screening_hb"),
         asyncio.create_task(_drain_in(), name="screening_in"),
+        asyncio.create_task(_duration_watch(), name="screening_duration"),
     ]
 
     try:
@@ -235,14 +298,16 @@ async def screening_ws(
             if exc and not isinstance(exc, WebSocketDisconnect):
                 logger.exception("screening_ws task failed", exc_info=exc)
     finally:
+        await agent.close()
         try:
             await outgoing.put(None)
         except Exception:
             pass
         if bridge is not None:
             # При обрыве сети — просто закрываем STT; сессия остаётся live
-            # (клиент переподключится с backoff). stop_requested уже вызвал stop().
-            if not stop_requested:
+            # (клиент переподключится с backoff). stop_requested / timeout
+            # уже вызвали stop или finish_by_timeout.
+            if not stop_requested and not timed_out:
                 await bridge.close()
             else:
                 await bridge.close()

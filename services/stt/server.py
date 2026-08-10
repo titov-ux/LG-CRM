@@ -1,8 +1,9 @@
-"""stt-service — realtime STT для AI-скрининга (Этап 2).
+"""stt-service — realtime STT для AI-скрининга (Этап 2+).
 
 WebSocket-сервер: PCM16LE 16 кГц + байт канала → VAD → Whisper (или fake).
 
-ENV: STT_MODEL, STT_DEVICE, STT_COMPUTE_TYPE, STT_CPU_THREADS, STT_PORT, STT_FAKE
+ENV: STT_MODEL, STT_DEVICE, STT_COMPUTE_TYPE, STT_CPU_THREADS, STT_PORT,
+     STT_FAKE, STT_MAX_SESSIONS (Этап 6 — пул параллельных встреч).
 """
 from __future__ import annotations
 
@@ -28,6 +29,17 @@ ENERGY_THRESHOLD = 0.015
 ENERGY_FRAME_MS = 30
 
 logger = logging.getLogger("stt")
+
+# Этап 6: лимит параллельных WS-сессий (одна встреча = одно соединение).
+_active_sessions = 0
+_active_lock: asyncio.Lock | None = None
+
+
+def _get_active_lock() -> asyncio.Lock:
+    global _active_lock
+    if _active_lock is None:
+        _active_lock = asyncio.Lock()
+    return _active_lock
 
 
 class FakeModel:
@@ -222,7 +234,8 @@ class ChannelTranscriber:
         }
 
 
-async def handle(ws, model, executor, *, use_silero: bool) -> None:
+async def handle(ws, model, executor, *, use_silero: bool, max_sessions: int) -> None:
+    global _active_sessions
     loop = asyncio.get_running_loop()
 
     async def emit(payload: dict) -> None:
@@ -231,7 +244,38 @@ async def handle(ws, model, executor, *, use_silero: bool) -> None:
         except Exception:
             pass
 
-    await emit({"type": "hello", "sampleRate": SAMPLE_RATE})
+    lock = _get_active_lock()
+    async with lock:
+        if _active_sessions >= max_sessions:
+            logger.warning(
+                "stt busy: active=%d max=%d — rejecting",
+                _active_sessions,
+                max_sessions,
+            )
+            await emit(
+                {
+                    "type": "error",
+                    "error": "busy",
+                    "activeSessions": _active_sessions,
+                    "maxSessions": max_sessions,
+                }
+            )
+            try:
+                await ws.close(code=1013, reason="stt_busy")
+            except Exception:
+                pass
+            return
+        _active_sessions += 1
+        active_now = _active_sessions
+
+    await emit(
+        {
+            "type": "hello",
+            "sampleRate": SAMPLE_RATE,
+            "activeSessions": active_now,
+            "maxSessions": max_sessions,
+        }
+    )
 
     channels = {
         ch: ChannelTranscriber(sp, model, executor, emit, loop, use_silero=use_silero)
@@ -249,7 +293,7 @@ async def handle(ws, model, executor, *, use_silero: bool) -> None:
 
     task = asyncio.create_task(ticker())
     peer = getattr(ws, "remote_address", None)
-    logger.info("client connected %s", peer)
+    logger.info("client connected %s (active=%d/%d)", peer, active_now, max_sessions)
     try:
         async for msg in ws:
             if isinstance(msg, bytes):
@@ -274,7 +318,12 @@ async def handle(ws, model, executor, *, use_silero: bool) -> None:
             await task
         except (asyncio.CancelledError, Exception):
             pass
-        logger.info("client disconnected %s", peer)
+        async with lock:
+            _active_sessions = max(0, _active_sessions - 1)
+            left = _active_sessions
+        logger.info(
+            "client disconnected %s (active=%d/%d)", peer, left, max_sessions
+        )
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -296,6 +345,12 @@ async def main() -> None:
     ap.add_argument("--cpu-threads", type=int, default=int(os.getenv("STT_CPU_THREADS", "4")))
     ap.add_argument("--port", type=int, default=int(os.getenv("STT_PORT", "8765")))
     ap.add_argument(
+        "--max-sessions",
+        type=int,
+        default=int(os.getenv("STT_MAX_SESSIONS", "8")),
+        help="Макс. параллельных встреч (Этап 6)",
+    )
+    ap.add_argument(
         "--fake",
         action=argparse.BooleanOptionalAction,
         default=_env_bool("STT_FAKE", False),
@@ -306,16 +361,37 @@ async def main() -> None:
 
     model = load_model(args)
     use_silero = not args.fake
-    executor = ThreadPoolExecutor(max_workers=2)
+    workers = 4 if args.device == "cuda" else 2
+    executor = ThreadPoolExecutor(max_workers=workers)
+    max_sessions = max(1, args.max_sessions)
 
     async def _handler(ws):
-        await handle(ws, model, executor, use_silero=use_silero)
+        await handle(
+            ws, model, executor, use_silero=use_silero, max_sessions=max_sessions
+        )
 
-    async with websockets.serve(_handler, "0.0.0.0", args.port, max_size=2**22):
+    async def _health(connection, request):
+        """GET /healthz → 200 (docker healthcheck / nginx)."""
+        if request.path == "/healthz":
+            body = (
+                f'{{"ok":true,"activeSessions":{_active_sessions},'
+                f'"maxSessions":{max_sessions}}}\n'
+            )
+            return connection.respond(200, body)
+        return None
+
+    async with websockets.serve(
+        _handler,
+        "0.0.0.0",
+        args.port,
+        max_size=2**22,
+        process_request=_health,
+    ):
         logger.info(
-            "stt-service listening ws://0.0.0.0:%s (model=%s)",
+            "stt-service listening ws://0.0.0.0:%s (model=%s max_sessions=%d)",
             args.port,
             "FAKE" if args.fake else args.model,
+            max_sessions,
         )
         await asyncio.Future()
 

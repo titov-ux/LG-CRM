@@ -242,6 +242,33 @@ def publish_match_scored(
         logger.exception("publish_match_scored failed (suppressed)")
 
 
+def publish_screening_report_ready(
+    *,
+    session_id: uuid.UUID,
+    candidate_id: uuid.UUID,
+    vacancy_id: uuid.UUID | None,
+    status: str,
+    verdict: str | None = None,
+    actor_id: uuid.UUID | None = None,
+) -> None:
+    """Отчёт AI-скрининга готов (или статус error). Фронт инвалидирует сессию."""
+    try:
+        event = {
+            "type": "screening.report",
+            "sessionId": _safe_uuid(session_id),
+            "candidateId": _safe_uuid(candidate_id),
+            "vacancyId": _safe_uuid(vacancy_id) if vacancy_id else None,
+            "status": status,
+            "verdict": verdict,
+            "actorId": _safe_uuid(actor_id),
+            "clientId": current_client_id_var.get(""),
+            "ts": _now_iso(),
+        }
+        get_bus().publish(event)
+    except Exception:
+        logger.exception("publish_screening_report_ready failed (suppressed)")
+
+
 def publish_user_presence_event(*, user_id: uuid.UUID | str, online: bool) -> None:
     """Опубликовать событие presence (online/offline) для пользователя.
 

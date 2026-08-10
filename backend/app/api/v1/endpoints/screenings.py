@@ -16,10 +16,9 @@ from app.modules.screening.schemas import (
     AttachAudioRequest,
     CreateScreeningRequest,
     FinishScreeningRequest,
-    RegenerateQuestionsRequest,
     ScreeningListResponse,
+    ScreeningSegmentDTO,
     ScreeningSessionResponse,
-    TranscriptResponse,
     UpdateQuestionRequest,
     UpdateScreeningRequest,
 )
@@ -62,11 +61,6 @@ async def create_screening(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ScreeningSessionResponse:
-    """Создаёт draft-сессию. Если `questions` пуст и `generateQuestions=true`
-    (дефолт) — пытается сгенерировать план через YandexGPT. Сбой AI не
-    блокирует создание: сессия вернётся пустой, перегенерация — отдельным
-    эндпоинтом.
-    """
     return await service.create(db, user, payload)
 
 
@@ -134,6 +128,19 @@ async def finish_screening(
     return await service.finish(db, user, session_id, payload)
 
 
+@router.get(
+    "/{session_id}/segments",
+    response_model=list[ScreeningSegmentDTO],
+    summary="Транскрипт сессии (финальные сегменты)",
+)
+async def list_segments(
+    session_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[ScreeningSegmentDTO]:
+    return await service.list_segments(db, user, session_id)
+
+
 @router.post(
     "/{session_id}/audio",
     response_model=ScreeningSessionResponse,
@@ -146,34 +153,6 @@ async def attach_audio(
     db: AsyncSession = Depends(get_db),
 ) -> ScreeningSessionResponse:
     return await service.attach_audio(db, user, session_id, payload.file_id)
-
-
-@router.get(
-    "/{session_id}/transcript",
-    response_model=TranscriptResponse,
-    summary="Транскрипт сессии (финальные сегменты)",
-)
-async def get_transcript(
-    session_id: uuid.UUID,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> TranscriptResponse:
-    return await service.list_transcript(db, user, session_id)
-
-
-@router.post(
-    "/{session_id}/regenerate-questions",
-    response_model=ScreeningSessionResponse,
-    summary="Сгенерировать / перегенерировать план вопросов (AI)",
-)
-async def regenerate_questions(
-    session_id: uuid.UUID,
-    payload: RegenerateQuestionsRequest = RegenerateQuestionsRequest(),
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> ScreeningSessionResponse:
-    """Только для draft. 503 `ai_unavailable` / 502 `ai_bad_request`."""
-    return await service.regenerate_questions(db, user, session_id, payload)
 
 
 @router.post(

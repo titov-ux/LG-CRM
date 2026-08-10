@@ -1,12 +1,12 @@
 /**
  * WebSocket-клиент комнаты скрининга (/api/v1/ws/screening/{id}).
  *
- * Шлёт PCM-фреймы, принимает transcript.partial/final, умеет reconnect
- * с экспоненциальным backoff (как lib/realtime.ts).
+ * Шлёт PCM-фреймы, принимает transcript.partial/final, questions.updated,
+ * hint; умеет reconnect с экспоненциальным backoff (как lib/realtime.ts).
  */
 
 import { screeningWsUrl } from '@/lib/constants';
-import type { ScreeningSpeaker } from '@/api/screenings';
+import type { ScreeningQuestion, ScreeningSpeaker } from '@/api/screenings';
 import type { PcmChannel } from './audioCapture';
 
 export interface TranscriptEvent {
@@ -23,6 +23,8 @@ export interface ScreeningSocketHandlers {
   getToken: () => string | null | undefined;
   onPartial?: (ev: TranscriptEvent) => void;
   onFinal?: (ev: TranscriptEvent) => void;
+  onQuestionsUpdated?: (questions: ScreeningQuestion[]) => void;
+  onHint?: (text: string) => void;
   onHello?: (info: { lastSeq: number; sttReady: boolean }) => void;
   onState?: (state: {
     status: string;
@@ -36,6 +38,26 @@ function backoffMs(attempt: number): number {
   const base = Math.min(30_000, 1000 * 2 ** attempt);
   const jitter = base * (0.75 + Math.random() * 0.5);
   return jitter;
+}
+
+function parseQuestions(raw: unknown): ScreeningQuestion[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ScreeningQuestion[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const q = item as Record<string, unknown>;
+    if (typeof q.id !== 'string' || typeof q.text !== 'string') continue;
+    out.push({
+      id: q.id,
+      position: Number(q.position ?? 0),
+      text: q.text,
+      goal: (q.goal as string | null | undefined) ?? null,
+      source: (q.source as ScreeningQuestion['source']) ?? 'followup',
+      status: (q.status as ScreeningQuestion['status']) ?? 'pending',
+      answerSummary: (q.answerSummary as string | null | undefined) ?? null,
+    });
+  }
+  return out.sort((a, b) => a.position - b.position);
 }
 
 export class ScreeningSocket {
@@ -143,6 +165,15 @@ export class ScreeningSocket {
         };
         if (type === 'transcript.partial') this.handlers.onPartial?.(ev);
         else this.handlers.onFinal?.(ev);
+        return;
+      }
+      if (type === 'questions.updated') {
+        this.handlers.onQuestionsUpdated?.(parseQuestions(msg.questions));
+        return;
+      }
+      if (type === 'hint') {
+        const text = String(msg.text ?? '').trim();
+        if (text) this.handlers.onHint?.(text);
         return;
       }
       if (type === 'session.state') {

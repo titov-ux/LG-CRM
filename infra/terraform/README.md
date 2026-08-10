@@ -119,6 +119,37 @@ tofu destroy -var-file=staging.tfvars
 
 Перед `destroy` обязательно очистить бакеты — `aws s3 rm s3://crm-lg-staging-files --recursive --endpoint-url=https://storage.yandexcloud.net`, иначе Object Storage не даст их удалить.
 
+## STT-VM (AI-скрининг, Этап 6)
+
+По умолчанию `stt-service` крутится в `docker-compose.prod.yml` на основной VM
+(CPU, модель `small`). Если по итогам spike (Этап 0) нужен GPU (T4) или
+отдельный CPU-инстанс под 5–8 параллельных встреч — в `*.tfvars`:
+
+```hcl
+create_stt_vm   = true
+stt_platform_id = "gpu-standard-v3"  # или standard-v3 для CPU
+stt_gpus        = 1                  # 0 на CPU
+stt_cores       = 8
+stt_memory_gb   = 32
+```
+
+После `tofu apply`:
+
+```bash
+tofu output stt_private_ip
+tofu output stt_ssh_command
+```
+
+На STT-VM: Docker + (для GPU) NVIDIA Container Toolkit, затем собрать
+`services/stt` с `STT_FULL=1`, `STT_DEVICE=cuda`, `STT_COMPUTE_TYPE=int8_float16`,
+`STT_MODEL=large-v3-turbo`. В `.env.prod` основной CRM-VM:
+
+```
+STT_URL=ws://<stt_private_ip>:8765
+```
+
+Порт 8765 открыт только из подсети CRM (security group `stt`).
+
 ## Где state
 
 По умолчанию — локально в `terraform.tfstate.d/<workspace>/`. Это нормально для одиночного админа, но рискованно: если потеряешь Mac/перенесёшь репо — потеряешь state. На следующем витке (когда понадобится команда) — переедем на remote backend в S3 (Yandex Object Storage поддерживает s3-протокол для backend'а Terraform).

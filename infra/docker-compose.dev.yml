@@ -1,11 +1,10 @@
 # Локальное окружение для разработки backend.
-# Поднимает Postgres 16 + Redis 7 + stt-service (Этап 2, STT_FAKE=1).
+# Поднимает Postgres 16 + Redis 7.
 # Бэк в этом compose НЕ запускается — он крутится локально через `make dev`
 # (для скорости горячей перезагрузки и удобного debug).
 #
 # Запуск:
 #   docker compose -f infra/docker-compose.dev.yml up -d
-# Backend .env: STT_URL=ws://localhost:8765
 # Остановка:
 #   docker compose -f infra/docker-compose.dev.yml down
 # Полный сброс данных:
@@ -46,20 +45,21 @@ services:
       timeout: 3s
       retries: 10
 
-  # AI-скрининг Этап 2: realtime STT (по умолчанию fake — без torch).
-  # Реальная модель: docker compose ... build --build-arg STT_FULL=1 stt
-  # и STT_FAKE=0 в environment.
+  # stt-service — распознавание речи для AI-скрининга (Этап 2).
+  # Опционален: без него WS /ws/screening работает, но транскрипт не идёт.
+  # Первый билд прогревает модель small (~500МБ с HuggingFace) в образ.
+  # Быстрый старт без модели: STT_FAKE=1 (заглушка, для отладки пайплайна).
+  #   docker compose -f infra/docker-compose.dev.yml --profile stt up -d
   stt:
     build:
-      context: ../services/stt
-      dockerfile: Dockerfile
-      args:
-        STT_FULL: "0"
+      context: ../stt-service
     container_name: crm-lg-stt
     restart: unless-stopped
+    profiles: ["stt"]
     environment:
-      STT_FAKE: "1"
-      STT_PORT: "8765"
+      STT_MODEL: ${STT_MODEL:-small}
+      STT_CPU_THREADS: ${STT_CPU_THREADS:-4}
+      STT_FAKE: ${STT_FAKE:-0}
     ports:
       - "8765:8765"
 

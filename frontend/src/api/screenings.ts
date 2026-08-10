@@ -20,6 +20,15 @@ export interface ScreeningQuestion {
   answerSummary?: string | null;
 }
 
+export interface ScreeningSegment {
+  id: UUID;
+  seq: number;
+  speaker: ScreeningSpeaker;
+  text: string;
+  startedMs: number;
+  endedMs: number;
+}
+
 export interface ScreeningReport {
   id: UUID;
   summary: string;
@@ -53,20 +62,6 @@ export interface ScreeningSession {
   report?: ScreeningReport | null;
 }
 
-export interface ScreeningSegment {
-  id: UUID;
-  seq: number;
-  speaker: ScreeningSpeaker;
-  text: string;
-  startedMs: number;
-  endedMs: number;
-}
-
-export interface TranscriptResponse {
-  items: ScreeningSegment[];
-  lastSeq: number;
-}
-
 export interface ScreeningsListParams {
   candidateId?: UUID;
   vacancyId?: UUID;
@@ -89,13 +84,6 @@ export interface CreateScreeningPayload {
   matchId?: UUID;
   telemostUrl?: string;
   questions?: string[];
-  /** Дефолт true на бэке: сгенерировать план через YandexGPT, если questions пуст. */
-  generateQuestions?: boolean;
-}
-
-export interface RegenerateQuestionsPayload {
-  count?: number;
-  replaceManual?: boolean;
 }
 
 export const screeningsApi = {
@@ -118,6 +106,7 @@ export const screeningsApi = {
     api.post(`screenings/${id}/finish`, { json: { durationSec } }).json<ScreeningSession>(),
   attachAudio: (id: UUID, fileId: UUID) =>
     api.post(`screenings/${id}/audio`, { json: { fileId } }).json<ScreeningSession>(),
+  segments: (id: UUID) => api.get(`screenings/${id}/segments`).json<ScreeningSegment[]>(),
   addQuestion: (id: UUID, payload: { text: string; goal?: string; position?: number }) =>
     api.post(`screenings/${id}/questions`, { json: payload }).json<ScreeningSession>(),
   updateQuestion: (
@@ -130,10 +119,4 @@ export const screeningsApi = {
       .json<ScreeningSession>(),
   removeQuestion: (id: UUID, questionId: UUID) =>
     api.delete(`screenings/${id}/questions/${questionId}`).json<ScreeningSession>(),
-  regenerateQuestions: (id: UUID, payload: RegenerateQuestionsPayload = {}) =>
-    api
-      .post(`screenings/${id}/regenerate-questions`, { json: payload })
-      .json<ScreeningSession>(),
-  transcript: (id: UUID) =>
-    api.get(`screenings/${id}/transcript`).json<TranscriptResponse>(),
 };

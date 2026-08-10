@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate, useParams, useRouterState } from '@tanstack/react-router';
+import { Link, useNavigate, useParams, useRouterState } from '@tanstack/react-router';
 import { HTTPError } from 'ky';
 import { toast } from 'sonner';
 import {
@@ -13,6 +13,7 @@ import {
   Inbox,
   Mail,
   MessageCircle,
+  Mic,
   MoreHorizontal,
   Phone,
   Plus,
@@ -74,6 +75,9 @@ import { candidateStatuses } from '@/mocks/db/candidates';
 import { CommentsSection } from '@/features/comments/CommentsSection';
 import { AttachVacancyDialog } from '@/features/matching/AttachVacancyDialog';
 import { useAttachCandidate, useDetachCandidate } from '@/features/matching/hooks';
+import { useScreenings } from '@/features/screening/hooks';
+import { ScreeningReportPanel } from '@/features/screening/ScreeningReportPanel';
+import { NewScreeningDialog } from '@/features/screening/NewScreeningDialog';
 import {
   downloadResumePdf,
   generateResumeDocxBlob,
@@ -271,11 +275,21 @@ export function CandidateCardPage({ source: sourceProp }: CandidateCardPageProps
   const attachCandidate = useAttachCandidate();
   const canArchive = useCan('candidate:archive');
   const canDeletePermanent = useCan('candidate:delete_permanent');
+  const canRunScreening = useCan('screening:run');
+  const canViewScreeningReport = useCan('screening:view_report');
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [archiveReason, setArchiveReason] = useState('');
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
+  const [screeningOpen, setScreeningOpen] = useState(false);
   const [activityExpanded, setActivityExpanded] = useState(fromDatabase);
+
+  const { data: screeningsData } = useScreenings(
+    { candidateId: id || undefined, pageSize: 10 },
+    { pollProcessing: true },
+  );
+  const screeningSessions = screeningsData?.items ?? [];
+  const showScreenings = canViewScreeningReport || canRunScreening;
 
   // Закрытие карточки возвращает на тот же раздел, откуда её открыли.
   const close = () => navigate({ to: fromDatabase ? '/database' : '/candidates' });
@@ -926,6 +940,63 @@ export function CandidateCardPage({ source: sourceProp }: CandidateCardPageProps
               )}
             </Section>
 
+            {showScreenings && (
+              <Section
+                title={`AI-скрининг · ${screeningSessions.length}`}
+                action={
+                  canRunScreening ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 gap-1 px-2 text-xs"
+                      onClick={() => setScreeningOpen(true)}
+                    >
+                      <Mic className="h-3.5 w-3.5" />
+                      Новый
+                    </Button>
+                  ) : undefined
+                }
+              >
+                {screeningSessions.length === 0 ? (
+                  <div className="py-2 text-xs text-muted-foreground">
+                    Скринингов пока нет. Создайте сессию и проведите видеоинтервью в Телемосте.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {screeningSessions.map((s) => (
+                      <div key={s.id} className="rounded-md border bg-muted/20 px-3 py-2.5">
+                        <div className="mb-2 flex flex-wrap items-center gap-2 text-[11.5px] text-muted-foreground">
+                          <Link
+                            to="/video-interviews/$id"
+                            params={{ id: s.id }}
+                            className="font-medium text-foreground hover:underline"
+                          >
+                            {s.vacancyTitle ?? 'Скрининг'}
+                          </Link>
+                          <span>·</span>
+                          <span>
+                            {new Date(s.createdAt).toLocaleString('ru-RU', {
+                              day: '2-digit',
+                              month: 'short',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </span>
+                        </div>
+                        {canViewScreeningReport ? (
+                          <ScreeningReportPanel session={s} compact />
+                        ) : (
+                          <div className="text-[12px] text-muted-foreground">
+                            Нет права на просмотр отчёта.
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Section>
+            )}
+
             {fromDatabase && (
               <Section title={`История смены статусов · ${statusHistory.length}`}>
                 {statusHistory.length === 0 ? (
@@ -1136,6 +1207,13 @@ export function CandidateCardPage({ source: sourceProp }: CandidateCardPageProps
         onOpenChange={setAttachOpen}
         candidateId={candidate.id}
         excludeIds={candidate.vacancyIds}
+      />
+    )}
+    {candidate && (
+      <NewScreeningDialog
+        open={screeningOpen}
+        onOpenChange={setScreeningOpen}
+        defaultCandidateId={candidate.id}
       />
     )}
     </>

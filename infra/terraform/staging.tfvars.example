@@ -26,3 +26,12 @@ backups_bucket = "crm-lg-staging-backups"
 
 # Домен staging — используется в CORS для files-bucket и в outputs.
 domain = "staging.crm.lg.ru"
+
+# ── AI-скрининг STT (Этап 6) ──
+# false = STT в docker-compose на основной VM (CPU/small).
+# true  = отдельная VM (см. stt.tf); для T4: stt_platform_id="gpu-standard-v3", stt_gpus=1.
+create_stt_vm   = false
+# stt_platform_id = "gpu-standard-v3"
+# stt_gpus        = 1
+# stt_cores       = 8
+# stt_memory_gb   = 32

@@ -50,6 +50,8 @@ sentry-cli releases finalize "$VERSION"
 | New issue | Любая новая issue (`is:unresolved is:new`) | Telegram |
 | Issue regressed | `is:regressed` | Telegram |
 | Performance | p95 latency `/api/v1/*` > 1500 ms за 10 минут | Telegram |
+| Screening STT slow | message:`screening.stt_final` AND `latency_ms:>5000` — >10 за 5 мин | Telegram |
+| Screening AI down | message:`screening.ai_agent_unavailable` OR `ai_report_fallback` — >5 за 10 мин | Telegram |
 
 ### P3 — информационные (только в Sentry)
 
@@ -64,6 +66,8 @@ sentry-cli releases finalize "$VERSION"
 path:backend/app/modules/auth/*      @ops
 path:backend/app/modules/matching/*  @backend-team
 path:backend/app/modules/files/*     @backend-team
+path:backend/app/modules/screening/* @backend-team
+path:services/stt/*                  @backend-team
 path:frontend/src/features/*         @frontend-team
 ```
 

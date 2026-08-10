@@ -1,7 +1,6 @@
 """Тесты AI-скрининга: CRUD сессий, согласие, чек-лист, видимость."""
 from __future__ import annotations
 
-import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,8 +30,6 @@ def _make_screening(client: TestClient, h: dict, candidate_id: str, **overrides)
     payload = {
         "candidateId": candidate_id,
         "questions": ["Расскажите про опыт", "Почему ищете работу?"],
-        # Юнит-тесты не ходят в YandexGPT — генерацию гоняем отдельно.
-        "generateQuestions": False,
     }
     payload.update(overrides)
     r = client.post("/api/v1/screenings", headers=h, json=payload)
@@ -168,6 +165,43 @@ def test_delete_only_owner_or_admin(
     assert r.status_code == 404
 
 
+async def test_segments_transcript(
+    client: TestClient, recruiter_user, other_recruiter_user, candidate, db
+) -> None:
+    """GET /segments отдаёт транскрипт по порядку seq; чужому — 404."""
+    import uuid as uuid_mod
+
+    from app.modules.screening.models import ScreeningSegment, ScreeningSpeaker
+
+    h = auth_headers(client, recruiter_user.email)
+    s = _make_screening(client, h, str(candidate.id))
+
+    db.add_all([
+        ScreeningSegment(
+            session_id=uuid_mod.UUID(s["id"]), seq=2,
+            speaker=ScreeningSpeaker.candidate,
+            text_="Ответ кандидата", started_ms=5000, ended_ms=9000,
+        ),
+        ScreeningSegment(
+            session_id=uuid_mod.UUID(s["id"]), seq=1,
+            speaker=ScreeningSpeaker.recruiter,
+            text_="Вопрос рекрутера", started_ms=0, ended_ms=4000,
+        ),
+    ])
+    await db.commit()
+
+    r = client.get(f"/api/v1/screenings/{s['id']}/segments", headers=h)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert [seg["seq"] for seg in body] == [1, 2]
+    assert body[0]["speaker"] == "recruiter"
+    assert body[0]["text"] == "Вопрос рекрутера"
+
+    h2 = auth_headers(client, other_recruiter_user.email)
+    r = client.get(f"/api/v1/screenings/{s['id']}/segments", headers=h2)
+    assert r.status_code == 404
+
+
 def test_list_filters(client: TestClient, recruiter_user, candidate) -> None:
     h = auth_headers(client, recruiter_user.email)
     _make_screening(client, h, str(candidate.id))
@@ -181,182 +215,3 @@ def test_list_filters(client: TestClient, recruiter_user, candidate) -> None:
 
     r = client.get("/api/v1/screenings", headers=h, params={"status": "live"})
     assert r.json()["total"] == 0
-
-
-def test_transcript_empty(client: TestClient, recruiter_user, candidate) -> None:
-    h = auth_headers(client, recruiter_user.email)
-    s = _make_screening(client, h, str(candidate.id))
-
-    r = client.get(f"/api/v1/screenings/{s['id']}/transcript", headers=h)
-    assert r.status_code == 200
-    body = r.json()
-    assert body["items"] == []
-    assert body["lastSeq"] == 0
-
-
-@pytest.mark.asyncio
-async def test_append_segment_and_list_transcript(
-    db: AsyncSession, recruiter_user, candidate
-) -> None:
-    """Этап 2: финальные сегменты пишутся с seq и отдаются в порядке."""
-    from app.modules.screening import service as screening_service
-    from app.modules.screening.models import ScreeningSpeaker
-    from app.modules.screening.schemas import CreateScreeningRequest
-
-    session = await screening_service.create(
-        db,
-        recruiter_user,
-        CreateScreeningRequest(candidate_id=candidate.id, questions=["Q1"]),
-    )
-    empty = await screening_service.list_transcript(db, recruiter_user, session.id)
-    assert empty.items == []
-    assert empty.last_seq == 0
-
-    s1 = await screening_service.append_segment(
-        db,
-        session.id,
-        speaker=ScreeningSpeaker.candidate,
-        text="Меня зовут Иван",
-        started_ms=1000,
-        ended_ms=2500,
-    )
-    s2 = await screening_service.append_segment(
-        db,
-        session.id,
-        speaker=ScreeningSpeaker.recruiter,
-        text="Расскажите про опыт",
-        started_ms=3000,
-        ended_ms=4500,
-    )
-    assert s1.seq == 1
-    assert s2.seq == 2
-
-    tr = await screening_service.list_transcript(db, recruiter_user, session.id)
-    assert tr.last_seq == 2
-    assert [x.text for x in tr.items] == ["Меня зовут Иван", "Расскажите про опыт"]
-    assert [x.speaker.value for x in tr.items] == ["candidate", "recruiter"]
-
-
-def test_regenerate_questions_ai(
-    client: TestClient, recruiter_user, candidate, monkeypatch
-) -> None:
-    """Этап 3: regenerate-questions наполняет чек-лист source=pregenerated."""
-    async def fake_generate(**kwargs):
-        return [
-            {"text": f"Вопрос {i}", "goal": f"Цель {i}"} for i in range(1, 6)
-        ]
-
-    monkeypatch.setattr(
-        "app.modules.screening.ai.generate_screening_questions", fake_generate
-    )
-
-    h = auth_headers(client, recruiter_user.email)
-    s = _make_screening(client, h, str(candidate.id), questions=[])
-
-    r = client.post(
-        f"/api/v1/screenings/{s['id']}/regenerate-questions", headers=h, json={}
-    )
-    assert r.status_code == 200, r.text
-    qs = r.json()["questions"]
-    assert len(qs) == 5
-    assert all(q["source"] == "pregenerated" for q in qs)
-    assert qs[0]["text"] == "Вопрос 1"
-    assert qs[0]["goal"] == "Цель 1"
-
-
-def test_regenerate_keeps_manual(
-    client: TestClient, recruiter_user, candidate, monkeypatch
-) -> None:
-    async def fake_generate(**kwargs):
-        return [{"text": f"AI {i}", "goal": "g"} for i in range(5)]
-
-    monkeypatch.setattr(
-        "app.modules.screening.ai.generate_screening_questions", fake_generate
-    )
-
-    h = auth_headers(client, recruiter_user.email)
-    s = _make_screening(
-        client, h, str(candidate.id), questions=["Ручной вопрос"]
-    )
-    assert s["questions"][0]["source"] == "manual"
-
-    r = client.post(
-        f"/api/v1/screenings/{s['id']}/regenerate-questions", headers=h, json={}
-    )
-    assert r.status_code == 200
-    qs = r.json()["questions"]
-    manuals = [q for q in qs if q["source"] == "manual"]
-    ais = [q for q in qs if q["source"] == "pregenerated"]
-    assert len(manuals) == 1
-    assert manuals[0]["text"] == "Ручной вопрос"
-    assert len(ais) == 5
-
-
-def test_regenerate_unavailable(
-    client: TestClient, recruiter_user, candidate, monkeypatch
-) -> None:
-    from app.modules.screening.ai import AiUnavailableError
-
-    async def boom(**kwargs):
-        raise AiUnavailableError("no key")
-
-    monkeypatch.setattr(
-        "app.modules.screening.ai.generate_screening_questions", boom
-    )
-
-    h = auth_headers(client, recruiter_user.email)
-    s = _make_screening(client, h, str(candidate.id), questions=[])
-    r = client.post(
-        f"/api/v1/screenings/{s['id']}/regenerate-questions", headers=h, json={}
-    )
-    assert r.status_code == 503
-    assert r.json()["detail"]["code"] == "ai_unavailable"
-
-
-def test_regenerate_only_draft(
-    client: TestClient, recruiter_user, candidate, monkeypatch
-) -> None:
-    async def fake_generate(**kwargs):
-        return [{"text": f"Q{i}", "goal": "g"} for i in range(5)]
-
-    monkeypatch.setattr(
-        "app.modules.screening.ai.generate_screening_questions", fake_generate
-    )
-
-    h = auth_headers(client, recruiter_user.email)
-    s = _make_screening(client, h, str(candidate.id), questions=[])
-    client.patch(
-        f"/api/v1/screenings/{s['id']}", headers=h, json={"consentConfirmed": True}
-    )
-    client.post(f"/api/v1/screenings/{s['id']}/start", headers=h)
-
-    r = client.post(
-        f"/api/v1/screenings/{s['id']}/regenerate-questions", headers=h, json={}
-    )
-    assert r.status_code == 409
-    assert r.json()["detail"]["code"] == "invalid_status"
-
-
-def test_create_soft_skips_ai_failure(
-    client: TestClient, recruiter_user, candidate, monkeypatch
-) -> None:
-    """create с пустыми questions и упавшим AI всё равно возвращает 201."""
-    from app.modules.screening.ai import AiUnavailableError
-
-    async def boom(**kwargs):
-        raise AiUnavailableError("no key")
-
-    monkeypatch.setattr(
-        "app.modules.screening.ai.generate_screening_questions", boom
-    )
-
-    h = auth_headers(client, recruiter_user.email)
-    r = client.post(
-        "/api/v1/screenings",
-        headers=h,
-        json={"candidateId": str(candidate.id), "questions": []},
-    )
-    assert r.status_code == 201, r.text
-    assert r.json()["questions"] == []
-
-

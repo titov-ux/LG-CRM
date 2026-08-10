@@ -12,8 +12,17 @@ export const screeningKeys = {
   all: ['screenings'] as const,
   list: (params: ScreeningsListParams) => [...screeningKeys.all, 'list', params] as const,
   byId: (id: UUID) => [...screeningKeys.all, 'byId', id] as const,
-  transcript: (id: UUID) => [...screeningKeys.all, 'transcript', id] as const,
+  segments: (id: UUID) => [...screeningKeys.all, 'segments', id] as const,
 };
+
+export function useScreeningSegments(id: UUID | undefined, enabled = true) {
+  return useQuery({
+    queryKey: screeningKeys.segments(id ?? ''),
+    queryFn: () => screeningsApi.segments(id as UUID),
+    enabled: !!id && enabled,
+    ...QUERY_DEFAULTS,
+  });
+}
 
 export function useScreenings(params: ScreeningsListParams = {}) {
   return useQuery({
@@ -28,15 +37,6 @@ export function useScreening(id: UUID | undefined) {
     queryKey: screeningKeys.byId(id ?? ''),
     queryFn: () => screeningsApi.byId(id as UUID),
     enabled: !!id,
-    ...QUERY_DEFAULTS,
-  });
-}
-
-export function useScreeningTranscript(id: UUID | undefined, enabled = true) {
-  return useQuery({
-    queryKey: screeningKeys.transcript(id ?? ''),
-    queryFn: () => screeningsApi.transcript(id as UUID),
-    enabled: !!id && enabled,
     ...QUERY_DEFAULTS,
   });
 }
@@ -114,7 +114,7 @@ export function useUpdateQuestion() {
     }: {
       id: UUID;
       questionId: UUID;
-      payload: { text?: string; goal?: string; status?: ScreeningQuestionStatus; position?: number };
+      payload: { text?: string; status?: ScreeningQuestionStatus; position?: number };
     }) => screeningsApi.updateQuestion(id, questionId, payload),
   );
 }
@@ -122,17 +122,5 @@ export function useUpdateQuestion() {
 export function useRemoveQuestion() {
   return useSessionMutation(({ id, questionId }: { id: UUID; questionId: UUID }) =>
     screeningsApi.removeQuestion(id, questionId),
-  );
-}
-
-export function useRegenerateQuestions() {
-  return useSessionMutation(
-    ({
-      id,
-      payload,
-    }: {
-      id: UUID;
-      payload?: { count?: number; replaceManual?: boolean };
-    }) => screeningsApi.regenerateQuestions(id, payload ?? {}),
   );
 }

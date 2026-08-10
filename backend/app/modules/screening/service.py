@@ -1,24 +1,27 @@
 """Сервис AI-скрининга: сессии, чек-лист вопросов, привязка записи.
 
 Бизнес-правила Этапа 1:
-* создать сессию может admin / account_manager / recruiter; ведущим
-  (`recruiter_id`) становится автор;
+* ведущим (`recruiter_id`) становится автор;
 * видимость: admin и account_manager видят все сессии; остальные — только
   свои (где они ведущие) и сессии по вакансиям, где они назначены;
 * переход draft → live требует `consent_confirmed=true` (409 consent_required):
   запись разговора без согласия кандидата не начинаем (152-ФЗ);
-* finish: live → done (на Этапе 5 здесь появится Celery-пост-анализ и
-  промежуточный статус processing);
+* finish: live → processing + постановка пост-анализа (Этап 5) → done/error;
 * удалять сессию может ведущий или admin.
 
 Этап 3: генерация / перегенерация плана вопросов через YandexGPT
 (`screening/ai.py`) по резюме кандидата и полям вакансии.
+Этап 4: live-обновления чек-листа — в `screening/agent.py` + WS.
+Этап 5: пост-анализ → `screening_reports` + activity/notify.
+Этап 6: права `screening:run` / `screening:view_report` (permissions-matrix),
+метрики (`screening/metrics.py`), hard-stop по длительности, retention аудио.
 """
 from __future__ import annotations
 
 import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
 from fastapi import status
 from sqlalchemy import func, or_, select
@@ -26,20 +29,31 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.config import get_settings
 from app.core.errors import ApiError, Forbidden, NotFound
+from app.modules.permissions import service as permissions_service
+from app.modules.screening import metrics as screening_metrics
+from app.db.session import SessionLocal
+from app.modules.audit import service as audit_service
+from app.modules.audit.models import ActivityEntityType, ActivityKind
 from app.modules.candidates.models import Candidate
 from app.modules.files.models import File, FileEntityType
 from app.modules.matching.models import VacancyCandidate
 from app.modules.matching.service import candidate_payload, vacancy_payload
+from app.modules.notifications import service as notify_service
+from app.modules.notifications.models import NotificationEntityType, NotificationKind
 from app.modules.screening import ai as screening_ai
+from app.modules.screening import report as screening_report
 from app.modules.screening.models import (
     ScreeningQuestion,
     ScreeningQuestionSource,
+    ScreeningQuestionStatus,
     ScreeningReport,
     ScreeningSegment,
     ScreeningSession,
     ScreeningSpeaker,
     ScreeningStatus,
+    ScreeningVerdict,
 )
 from app.modules.screening.schemas import (
     AddQuestionRequest,
@@ -55,13 +69,25 @@ from app.modules.screening.schemas import (
     UpdateQuestionRequest,
     UpdateScreeningRequest,
 )
+from app.modules.screening.tasks import enqueue_screening_analysis
 from app.modules.users.models import Role, User
 from app.modules.vacancies.models import Vacancy, VacancyRecruiter
+from app.realtime.events import publish_screening_report_ready
+
+if TYPE_CHECKING:
+    from app.integrations.s3 import S3Adapter
 
 logger = logging.getLogger(__name__)
 
-_CREATOR_ROLES = (Role.admin, Role.account_manager, Role.recruiter)
+ACTION_RUN = "screening:run"
+ACTION_VIEW_REPORT = "screening:view_report"
 _SEE_ALL_ROLES = (Role.admin, Role.account_manager)
+
+_VERDICT_LABELS = {
+    ScreeningVerdict.fit: "подходит",
+    ScreeningVerdict.partial_fit: "частично подходит",
+    ScreeningVerdict.no_fit: "не подходит",
+}
 
 
 # --- helpers ---------------------------------------------------------------
@@ -94,6 +120,24 @@ def _ensure_can_edit(user: User, s: ScreeningSession) -> None:
     if user.role == Role.admin or s.recruiter_id == user.id:
         return
     raise Forbidden("Изменять сессию может ведущий рекрутер или админ")
+
+
+async def _require_run(db: AsyncSession, user: User) -> None:
+    await permissions_service.require_action(
+        db,
+        user,
+        ACTION_RUN,
+        message="Недостаточно прав на проведение скрининга",
+    )
+
+
+async def _require_view_report(db: AsyncSession, user: User) -> None:
+    await permissions_service.require_action(
+        db,
+        user,
+        ACTION_VIEW_REPORT,
+        message="Недостаточно прав на просмотр отчёта скрининга",
+    )
 
 
 async def _names_for(
@@ -170,20 +214,30 @@ def _to_dto(
     )
 
 
-async def to_dto(db: AsyncSession, s: ScreeningSession) -> ScreeningSessionResponse:
+async def to_dto(
+    db: AsyncSession,
+    s: ScreeningSession,
+    *,
+    user: User | None = None,
+) -> ScreeningSessionResponse:
     cand_names, vac_titles, rec_names = await _names_for(db, [s])
     report = (
         await db.execute(
             select(ScreeningReport).where(ScreeningReport.session_id == s.id)
         )
     ).scalar_one_or_none()
-    return _to_dto(
+    dto = _to_dto(
         s,
         cand_names=cand_names,
         vac_titles=vac_titles,
         rec_names=rec_names,
         report=report,
     )
+    if user is not None and not await permissions_service.user_has_action(
+        db, user, ACTION_VIEW_REPORT
+    ):
+        dto = dto.model_copy(update={"report": None, "audio_file_id": None})
+    return dto
 
 
 # --- queries ---------------------------------------------------------------
@@ -233,13 +287,19 @@ async def list_sessions(
     )
     sessions = list((await db.execute(stmt)).scalars().all())
     cand_names, vac_titles, rec_names = await _names_for(db, sessions)
+    can_view = await permissions_service.user_has_action(
+        db, user, ACTION_VIEW_REPORT
+    )
+    items = []
+    for s in sessions:
+        dto = _to_dto(
+            s, cand_names=cand_names, vac_titles=vac_titles, rec_names=rec_names
+        )
+        if not can_view:
+            dto = dto.model_copy(update={"report": None, "audio_file_id": None})
+        items.append(dto)
     return ScreeningListResponse(
-        items=[
-            _to_dto(
-                s, cand_names=cand_names, vac_titles=vac_titles, rec_names=rec_names
-            )
-            for s in sessions
-        ],
+        items=items,
         total=total,
         page=page,
         page_size=page_size,
@@ -252,8 +312,7 @@ async def list_sessions(
 async def create(
     db: AsyncSession, user: User, payload: CreateScreeningRequest
 ) -> ScreeningSessionResponse:
-    if user.role not in _CREATOR_ROLES:
-        raise Forbidden("Создавать скрининг могут админ, AM и рекрутер")
+    await _require_run(db, user)
 
     cand = await db.get(Candidate, payload.candidate_id)
     if cand is None:
@@ -309,7 +368,7 @@ async def create(
             else:
                 raise
 
-    return await to_dto(db, session)
+    return await to_dto(db, session, user=user)
 
 
 async def get(
@@ -317,12 +376,13 @@ async def get(
 ) -> ScreeningSessionResponse:
     session = await _load(db, session_id)
     await _ensure_can_see(db, user, session)
-    return await to_dto(db, session)
+    return await to_dto(db, session, user=user)
 
 
 async def update(
     db: AsyncSession, user: User, session_id: uuid.UUID, payload: UpdateScreeningRequest
 ) -> ScreeningSessionResponse:
+    await _require_run(db, user)
     session = await _load(db, session_id)
     _ensure_can_edit(user, session)
     if payload.telemost_url is not None:
@@ -331,12 +391,13 @@ async def update(
         session.consent_confirmed = payload.consent_confirmed
     await db.commit()
     session = await _load(db, session_id)
-    return await to_dto(db, session)
+    return await to_dto(db, session, user=user)
 
 
 async def start(
     db: AsyncSession, user: User, session_id: uuid.UUID
 ) -> ScreeningSessionResponse:
+    await _require_run(db, user)
     session = await _load(db, session_id)
     _ensure_can_edit(user, session)
     if session.status not in (ScreeningStatus.draft, ScreeningStatus.live):
@@ -356,7 +417,7 @@ async def start(
         session.started_at = datetime.now(UTC)
         await db.commit()
         session = await _load(db, session_id)
-    return await to_dto(db, session)
+    return await to_dto(db, session, user=user)
 
 
 async def finish(
@@ -365,16 +426,21 @@ async def finish(
     session_id: uuid.UUID,
     payload: FinishScreeningRequest,
 ) -> ScreeningSessionResponse:
+    await _require_run(db, user)
     session = await _load(db, session_id)
     _ensure_can_edit(user, session)
-    if session.status not in (ScreeningStatus.live, ScreeningStatus.done):
+    if session.status not in (
+        ScreeningStatus.live,
+        ScreeningStatus.processing,
+        ScreeningStatus.done,
+    ):
         raise ApiError(
             status.HTTP_409_CONFLICT,
             "invalid_status",
             "Завершить можно только идущую сессию",
         )
     if session.status == ScreeningStatus.live:
-        session.status = ScreeningStatus.done  # Этап 5: processing + Celery
+        session.status = ScreeningStatus.processing
         session.ended_at = datetime.now(UTC)
         if payload.duration_sec is not None:
             session.duration_sec = payload.duration_sec
@@ -382,14 +448,17 @@ async def finish(
             session.duration_sec = int(
                 (session.ended_at - session.started_at).total_seconds()
             )
+        # После commit — Celery / in-process анализ (см. screening.tasks).
+        enqueue_screening_analysis(db.sync_session, session.id)
         await db.commit()
         session = await _load(db, session_id)
-    return await to_dto(db, session)
+    return await to_dto(db, session, user=user)
 
 
 async def attach_audio(
     db: AsyncSession, user: User, session_id: uuid.UUID, file_id: uuid.UUID
 ) -> ScreeningSessionResponse:
+    await _require_run(db, user)
     session = await _load(db, session_id)
     _ensure_can_edit(user, session)
     file = await db.get(File, file_id)
@@ -404,10 +473,11 @@ async def attach_audio(
     session.audio_file_id = file_id
     await db.commit()
     session = await _load(db, session_id)
-    return await to_dto(db, session)
+    return await to_dto(db, session, user=user)
 
 
 async def delete(db: AsyncSession, user: User, session_id: uuid.UUID) -> None:
+    await _require_run(db, user)
     session = await _load(db, session_id)
     _ensure_can_edit(user, session)
     await db.delete(session)
@@ -420,6 +490,7 @@ async def delete(db: AsyncSession, user: User, session_id: uuid.UUID) -> None:
 async def add_question(
     db: AsyncSession, user: User, session_id: uuid.UUID, payload: AddQuestionRequest
 ) -> ScreeningSessionResponse:
+    await _require_run(db, user)
     session = await _load(db, session_id)
     _ensure_can_edit(user, session)
     if not payload.text.strip():
@@ -443,7 +514,7 @@ async def add_question(
     )
     await db.commit()
     session = await _load(db, session_id)
-    return await to_dto(db, session)
+    return await to_dto(db, session, user=user)
 
 
 async def update_question(
@@ -453,6 +524,7 @@ async def update_question(
     question_id: uuid.UUID,
     payload: UpdateQuestionRequest,
 ) -> ScreeningSessionResponse:
+    await _require_run(db, user)
     session = await _load(db, session_id)
     _ensure_can_edit(user, session)
     question = next((q for q in session.questions if q.id == question_id), None)
@@ -468,12 +540,13 @@ async def update_question(
         question.position = payload.position
     await db.commit()
     session = await _load(db, session_id)
-    return await to_dto(db, session)
+    return await to_dto(db, session, user=user)
 
 
 async def delete_question(
     db: AsyncSession, user: User, session_id: uuid.UUID, question_id: uuid.UUID
 ) -> ScreeningSessionResponse:
+    await _require_run(db, user)
     session = await _load(db, session_id)
     _ensure_can_edit(user, session)
     question = next((q for q in session.questions if q.id == question_id), None)
@@ -482,7 +555,7 @@ async def delete_question(
     session.questions.remove(question)
     await db.commit()
     session = await _load(db, session_id)
-    return await to_dto(db, session)
+    return await to_dto(db, session, user=user)
 
 
 # --- AI questions (Этап 3) -------------------------------------------------
@@ -500,6 +573,7 @@ async def regenerate_questions(
     `replace_manual=true` — полный сброс чек-листа.
     """
     payload = payload or RegenerateQuestionsRequest()
+    await _require_run(db, user)
     session = await _load(db, session_id)
     _ensure_can_edit(user, session)
     if session.status != ScreeningStatus.draft:
@@ -575,7 +649,7 @@ async def regenerate_questions(
 
     await db.commit()
     session = await _load(db, session_id)
-    return await to_dto(db, session)
+    return await to_dto(db, session, user=user)
 
 
 # --- transcript (Этап 2) ---------------------------------------------------
@@ -644,6 +718,7 @@ async def append_segment(
 async def list_transcript(
     db: AsyncSession, user: User, session_id: uuid.UUID
 ) -> TranscriptResponse:
+    await _require_view_report(db, user)
     session = await _load(db, session_id)
     await _ensure_can_see(db, user, session)
     rows = list(
@@ -662,3 +737,320 @@ async def list_transcript(
         items=[_segment_dto(s) for s in rows],
         last_seq=last,
     )
+
+
+# --- report / post-analysis (Этап 5) ---------------------------------------
+
+
+async def get_report(
+    db: AsyncSession, user: User, session_id: uuid.UUID
+) -> ScreeningReportDTO:
+    await _require_view_report(db, user)
+    session = await _load(db, session_id)
+    await _ensure_can_see(db, user, session)
+    report = (
+        await db.execute(
+            select(ScreeningReport).where(ScreeningReport.session_id == session_id)
+        )
+    ).scalar_one_or_none()
+    if report is None:
+        raise NotFound("Отчёт ещё не готов")
+    return ScreeningReportDTO.model_validate(report)
+
+
+def _question_payload(q: ScreeningQuestion) -> dict:
+    return {
+        "text": q.text_,
+        "status": q.status.value if hasattr(q.status, "value") else str(q.status),
+        "answer_summary": q.answer_summary,
+        "goal": q.goal,
+    }
+
+
+def _segment_payload(seg: ScreeningSegment) -> dict:
+    return {
+        "speaker": seg.speaker.value if hasattr(seg.speaker, "value") else str(seg.speaker),
+        "text": seg.text_,
+        "started_ms": seg.started_ms,
+        "ended_ms": seg.ended_ms,
+    }
+
+
+async def run_post_analysis(session_id: uuid.UUID) -> None:
+    """Собрать отчёт по сессии (вызывается из Celery / eager-task).
+
+    Идемпотентно: если отчёт уже есть и статус done — no-op.
+    При сбое AI пишет fallback-отчёт; при неожиданной ошибке — status=error.
+    """
+    async with SessionLocal() as db:
+        session = (
+            await db.execute(
+                select(ScreeningSession)
+                .where(ScreeningSession.id == session_id)
+                .options(selectinload(ScreeningSession.questions))
+            )
+        ).scalar_one_or_none()
+        if session is None:
+            logger.warning("screening.analysis: session %s not found", session_id)
+            return
+        if session.status == ScreeningStatus.done:
+            existing = (
+                await db.execute(
+                    select(ScreeningReport).where(
+                        ScreeningReport.session_id == session_id
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                return
+        if session.status not in (
+            ScreeningStatus.processing,
+            ScreeningStatus.done,
+            ScreeningStatus.error,
+        ):
+            logger.info(
+                "screening.analysis: skip %s (status=%s)",
+                session_id,
+                session.status,
+            )
+            return
+
+        cand = await db.get(Candidate, session.candidate_id)
+        if cand is None:
+            session.status = ScreeningStatus.error
+            await db.commit()
+            return
+        vac = (
+            await db.get(Vacancy, session.vacancy_id)
+            if session.vacancy_id is not None
+            else None
+        )
+        segments = list(
+            (
+                await db.execute(
+                    select(ScreeningSegment)
+                    .where(ScreeningSegment.session_id == session_id)
+                    .order_by(ScreeningSegment.seq.asc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        questions = list(session.questions)
+        q_payloads = [_question_payload(q) for q in questions]
+        seg_payloads = [_segment_payload(s) for s in segments]
+        transcript_chars = sum(len(s.text_ or "") for s in segments)
+        answered = sum(
+            1 for q in questions if q.status == ScreeningQuestionStatus.answered
+        )
+
+        try:
+            raw = await screening_report.generate_screening_report(
+                candidate_payload=candidate_payload(cand),
+                vacancy_payload=vacancy_payload(vac) if vac is not None else None,
+                questions=q_payloads,
+                segments=seg_payloads,
+            )
+        except (screening_report.AiUnavailableError, screening_report.AiBadRequestError) as exc:
+            logger.warning(
+                "screening.analysis: AI failed for %s (%s) — fallback",
+                session_id,
+                exc,
+            )
+            screening_metrics.record_ai_report_fallback()
+            raw = screening_report.fallback_report(
+                transcript_chars=transcript_chars,
+                answered_questions=answered,
+                total_questions=len(questions),
+            )
+        except Exception:
+            logger.exception("screening.analysis: unexpected error for %s", session_id)
+            screening_metrics.record_ai_report_error()
+            session.status = ScreeningStatus.error
+            await db.commit()
+            if session.recruiter_id is not None:
+                try:
+                    async with SessionLocal() as ndb:
+                        await notify_service.notify(
+                            ndb,
+                            recipient_id=session.recruiter_id,
+                            kind=NotificationKind.system,
+                            text=(
+                                "Не удалось сформировать отчёт AI-скрининга по "
+                                f"«{cand.full_name}». Статус сессии: ошибка."
+                            ),
+                            entity_type=NotificationEntityType.candidate,
+                            entity_id=session.candidate_id,
+                            payload={"screeningId": str(session.id)},
+                        )
+                        await ndb.commit()
+                except Exception:
+                    logger.exception(
+                        "screening.analysis: notify on error failed for %s",
+                        session_id,
+                    )
+            publish_screening_report_ready(
+                session_id=session.id,
+                candidate_id=session.candidate_id,
+                vacancy_id=session.vacancy_id,
+                status=ScreeningStatus.error.value,
+                actor_id=session.recruiter_id,
+            )
+            return
+
+        existing = (
+            await db.execute(
+                select(ScreeningReport).where(ScreeningReport.session_id == session_id)
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            db.add(
+                ScreeningReport(
+                    session_id=session.id,
+                    summary=raw["summary"],
+                    verdict=raw["verdict"],
+                    scores=raw.get("scores"),
+                    red_flags=raw.get("red_flags"),
+                    recommendation=raw.get("recommendation"),
+                    model=raw.get("model"),
+                    prompt_version=raw.get("prompt_version"),
+                )
+            )
+        else:
+            existing.summary = raw["summary"]
+            existing.verdict = raw["verdict"]
+            existing.scores = raw.get("scores")
+            existing.red_flags = raw.get("red_flags")
+            existing.recommendation = raw.get("recommendation")
+            existing.model = raw.get("model")
+            existing.prompt_version = raw.get("prompt_version")
+
+        session.status = ScreeningStatus.done
+        screening_metrics.record_ai_report_ok()
+        actor_id = session.recruiter_id
+        verdict: ScreeningVerdict = raw["verdict"]
+        verdict_label = _VERDICT_LABELS.get(verdict, verdict.value)
+        vac_title = vac.title if vac is not None else None
+        activity_text = (
+            f"AI-скрининг завершён: вердикт «{verdict_label}»"
+            + (f" ({vac_title})" if vac_title else "")
+        )
+        if actor_id is not None:
+            await audit_service.record_activity(
+                db,
+                entity_type=ActivityEntityType.candidate,
+                entity_id=session.candidate_id,
+                actor_id=actor_id,
+                kind=ActivityKind.note,
+                text=activity_text,
+            )
+            await notify_service.notify(
+                db,
+                recipient_id=actor_id,
+                kind=NotificationKind.system,
+                text=(
+                    f"Отчёт AI-скрининга по «{cand.full_name}» готов: "
+                    f"«{verdict_label}»."
+                ),
+                entity_type=NotificationEntityType.candidate,
+                entity_id=session.candidate_id,
+                payload={
+                    "screeningId": str(session.id),
+                    "verdict": verdict.value,
+                },
+            )
+        await db.commit()
+
+        publish_screening_report_ready(
+            session_id=session.id,
+            candidate_id=session.candidate_id,
+            vacancy_id=session.vacancy_id,
+            status=ScreeningStatus.done.value,
+            verdict=verdict.value,
+            actor_id=actor_id,
+        )
+        logger.info(
+            "screening.analysis: report ready for %s (verdict=%s, model=%s)",
+            session_id,
+            verdict.value,
+            raw.get("model"),
+        )
+
+
+# --- hard-stop / retention (Этап 6) -----------------------------------------
+
+
+async def finish_by_timeout(session_id: uuid.UUID) -> None:
+    """Завершить live-сессию по SCREENING_MAX_DURATION_MIN (из WS).
+
+    Без проверки пользователя: вызывается серверным hard-stop.
+    """
+    async with SessionLocal() as db:
+        session = await db.get(ScreeningSession, session_id)
+        if session is None or session.status != ScreeningStatus.live:
+            return
+        session.status = ScreeningStatus.processing
+        session.ended_at = datetime.now(UTC)
+        if session.started_at is not None:
+            session.duration_sec = int(
+                (session.ended_at - session.started_at).total_seconds()
+            )
+        enqueue_screening_analysis(db.sync_session, session.id)
+        await db.commit()
+    screening_metrics.record_max_duration_stop()
+    logger.warning("screening.finish_by_timeout: session %s", session_id)
+
+
+async def purge_expired_audio(
+    db: AsyncSession,
+    s3: S3Adapter,
+    retention_days: int | None = None,
+) -> int:
+    """Удалить аудио скрининга старше retention (coalesce(ended_at, created_at)).
+
+    Транскрипт и отчёт не трогаем. `retention_days=0` / конфиг 0 — no-op.
+    """
+    settings = get_settings()
+    days = (
+        settings.screening_audio_retention_days
+        if retention_days is None
+        else retention_days
+    )
+    if days <= 0:
+        return 0
+    cutoff = datetime.now(UTC) - timedelta(days=days)
+    anchor = func.coalesce(ScreeningSession.ended_at, ScreeningSession.created_at)
+    sessions = list(
+        (
+            await db.execute(
+                select(ScreeningSession).where(
+                    ScreeningSession.audio_file_id.is_not(None),
+                    anchor < cutoff,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    purged = 0
+    for session in sessions:
+        file_id = session.audio_file_id
+        if file_id is None:
+            continue
+        file = await db.get(File, file_id)
+        if file is not None:
+            try:
+                s3.delete(file_key=file.file_key)
+            except Exception:
+                logger.exception(
+                    "screening.retention: S3 delete failed for %s", file.file_key
+                )
+                continue
+            await db.delete(file)
+        session.audio_file_id = None
+        purged += 1
+    if purged:
+        await db.commit()
+        screening_metrics.record_retention_purged(purged)
+    return purged
+

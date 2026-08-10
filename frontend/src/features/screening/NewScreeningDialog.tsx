@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
@@ -44,9 +44,17 @@ export function NewScreeningDialog({
   const { data: candidates } = useCandidatesList(open);
   const { data: vacancies } = useVacanciesList(open);
 
-  const [candidateId, setCandidateId] = useState(defaultCandidateId ?? '');
-  const [vacancyId, setVacancyId] = useState(defaultVacancyId ?? NONE);
+  const [candidateId, setCandidateId] = useState('');
+  const [vacancyId, setVacancyId] = useState(NONE);
   const [telemostUrl, setTelemostUrl] = useState('');
+
+  // При каждом открытии — чистая форма (иначе остаются поля с прошлого раза).
+  useEffect(() => {
+    if (!open) return;
+    setCandidateId(defaultCandidateId ?? '');
+    setVacancyId(defaultVacancyId ?? NONE);
+    setTelemostUrl('');
+  }, [open, defaultCandidateId, defaultVacancyId]);
 
   const submit = async () => {
     if (!candidateId) return;
@@ -78,7 +86,7 @@ export function NewScreeningDialog({
         <div className="space-y-3.5">
           <div className="space-y-1.5">
             <Label>Кандидат *</Label>
-            <Select value={candidateId} onValueChange={setCandidateId}>
+            <Select value={candidateId || undefined} onValueChange={setCandidateId}>
               <SelectTrigger>
                 <SelectValue placeholder="Выберите кандидата" />
               </SelectTrigger>

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useParams } from '@tanstack/react-router';
+import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import {
   ArrowLeft,
   Check,
@@ -30,6 +30,7 @@ import { ScreeningCapture } from './audioCapture';
 import {
   useAddQuestion,
   useAttachScreeningAudio,
+  useDeleteScreening,
   useFinishScreening,
   useRemoveQuestion,
   useScreening,
@@ -204,11 +205,13 @@ function QuestionRow({
 
 export function ScreeningRoomPage() {
   const { id } = useParams({ from: '/_authed/video-interviews_/$id' });
+  const navigate = useNavigate();
   const { data: session, isLoading } = useScreening(id);
 
   const updateSession = useUpdateScreening();
   const startSession = useStartScreening();
   const finishSession = useFinishScreening();
+  const deleteSession = useDeleteScreening();
   const attachAudio = useAttachScreeningAudio();
   const addQuestion = useAddQuestion();
   const updateQuestion = useUpdateQuestion();
@@ -457,6 +460,25 @@ export function ScreeningRoomPage() {
                     Работайте в наушниках. Телемост — во вкладке этого же браузера. В диалоге
                     выбора включите «Поделиться звуком вкладки».
                   </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    disabled={deleteSession.isPending}
+                    onClick={async () => {
+                      if (!confirm('Удалить черновик скрининга?')) return;
+                      try {
+                        await deleteSession.mutateAsync(session.id);
+                        toast.success('Черновик удалён');
+                        navigate({ to: '/video-interviews' });
+                      } catch {
+                        toast.error('Не удалось удалить черновик');
+                      }
+                    }}
+                  >
+                    <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                    {deleteSession.isPending ? 'Удаляем…' : 'Удалить черновик'}
+                  </Button>
                 </>
               )}
 
@@ -504,14 +526,6 @@ export function ScreeningRoomPage() {
                   )}
                 </div>
               )}
-            </CardContent>
-          </Card>
-
-          <Card className="bg-muted/20">
-            <CardContent className="p-4 text-[11.5px] leading-snug text-muted-foreground">
-              <span className="font-medium text-foreground">Скоро:</span> AI-вопросы по
-              резюме и вакансии, живая адаптация чек-листа и автоотчёт
-              «подходит / не подходит» после встречи.
             </CardContent>
           </Card>
         </div>

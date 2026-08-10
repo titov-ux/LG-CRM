@@ -1,20 +1,21 @@
 import { useState } from 'react';
 import { Link } from '@tanstack/react-router';
-import { Mic, Plus, Video } from 'lucide-react';
+import { Mic, Plus, Trash2, Video } from 'lucide-react';
+import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/common/EmptyState';
 import { NewScreeningDialog } from '@/features/screening/NewScreeningDialog';
-import { useScreenings } from '@/features/screening/hooks';
+import { useDeleteScreening, useScreenings } from '@/features/screening/hooks';
 import type { ScreeningStatus } from '@/api/screenings';
 
 /**
  * Раздел «Видеоинтервью» — список сессий AI-скрининга.
  *
- * Сессия = видеоинтервью в Яндекс Телемосте с записью звука, live-транскриптом
- * (Этап 2), чек-листом вопросов; AI-план и отчёт — на следующих этапах.
+ * Сессия = видеоинтервью в Яндекс Телемосте с записью звука, live-транскриптом,
+ * чек-листом вопросов и AI-отчётом после встречи.
  */
 
 const STATUS_LABELS: Record<ScreeningStatus, { label: string; className: string }> = {
@@ -43,12 +44,12 @@ function fmtDuration(sec?: number | null): string | null {
 
 export function VideoInterviewsPage() {
   const [createOpen, setCreateOpen] = useState(false);
-  const { data, isLoading } = useScreenings({ pageSize: 50 }, { pollProcessing: true });
+  const { data, isLoading } = useScreenings({ pageSize: 50 });
+  const deleteSession = useDeleteScreening();
   const items = data?.items ?? [];
 
   return (
     <div className="flex-1 space-y-4 overflow-auto px-6 pb-8 pt-5">
-      {/* Заголовок */}
       <div className="flex items-start gap-3">
         <div className="mt-0.5 flex h-9 w-9 items-center justify-center rounded-md bg-muted text-foreground">
           <Video className="h-4.5 w-4.5" strokeWidth={1.8} />
@@ -89,32 +90,55 @@ export function VideoInterviewsPage() {
           const st = STATUS_LABELS[s.status];
           const dur = fmtDuration(s.durationSec);
           return (
-            <Link
+            <div
               key={s.id}
-              to="/video-interviews/$id"
-              params={{ id: s.id }}
-              className="block rounded-lg border bg-card px-4 py-3 transition-colors hover:bg-muted/40"
+              className="flex items-center gap-2 rounded-lg border bg-card px-4 py-3 transition-colors hover:bg-muted/40"
             >
-              <div className="flex items-center gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate text-[13.5px] font-medium">
-                      {s.candidateName ?? 'Кандидат'}
-                    </span>
-                    <Badge variant="secondary" className={st.className}>
-                      {st.label}
-                    </Badge>
-                  </div>
-                  <div className="mt-0.5 truncate text-[11.5px] text-muted-foreground">
-                    {s.vacancyTitle ? `${s.vacancyTitle} · ` : ''}
-                    {s.recruiterName ? `ведёт ${s.recruiterName} · ` : ''}
-                    {fmtDate(s.createdAt)}
-                    {dur ? ` · ${dur}` : ''}
-                    {s.questions.length ? ` · вопросов: ${s.questions.length}` : ''}
-                  </div>
+              <Link
+                to="/video-interviews/$id"
+                params={{ id: s.id }}
+                className="min-w-0 flex-1"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="truncate text-[13.5px] font-medium">
+                    {s.candidateName ?? 'Кандидат'}
+                  </span>
+                  <Badge variant="secondary" className={st.className}>
+                    {st.label}
+                  </Badge>
                 </div>
-              </div>
-            </Link>
+                <div className="mt-0.5 truncate text-[11.5px] text-muted-foreground">
+                  {s.vacancyTitle ? `${s.vacancyTitle} · ` : ''}
+                  {s.recruiterName ? `ведёт ${s.recruiterName} · ` : ''}
+                  {fmtDate(s.createdAt)}
+                  {dur ? ` · ${dur}` : ''}
+                  {s.questions.length ? ` · вопросов: ${s.questions.length}` : ''}
+                </div>
+              </Link>
+              {s.status === 'draft' && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
+                  title="Удалить черновик"
+                  disabled={deleteSession.isPending}
+                  onClick={async (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (!confirm('Удалить черновик скрининга?')) return;
+                    try {
+                      await deleteSession.mutateAsync(s.id);
+                      toast.success('Черновик удалён');
+                    } catch {
+                      toast.error('Не удалось удалить черновик');
+                    }
+                  }}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
           );
         })}
       </div>

@@ -42,6 +42,13 @@ ALLOWED_MIME_TYPES: frozenset[str] = frozenset(
         "image/jpeg",
         "image/gif",
         "image/webp",
+        # Аудиозаписи AI-скрининга (MediaRecorder в браузере отдаёт
+        # audio/webm или audio/mp4 в Safari; ogg/wav — на будущее).
+        "audio/webm",
+        "audio/ogg",
+        "audio/mp4",
+        "audio/mpeg",
+        "audio/wav",
     }
 )
 

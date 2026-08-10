@@ -25,6 +25,8 @@ export type Action =
   | 'event:edit'
   | 'event:set_outcome'
   | 'event:delete'
+  | 'screening:run'
+  | 'screening:view_report'
   | 'user:manage';
 
 /** Одна строка матрицы доступов. `id` — стабильный slug, под него завязаны мутации. */
@@ -164,6 +166,22 @@ export const DEFAULT_PERMISSIONS: MatrixPermission[] = [
     description: 'Доступ к разделу «Аналитика» и выгрузкам.',
     actions: ['analytics:view'],
     matrix: { admin: true, account_manager: true, recruiter: false, viewer: true },
+  },
+  {
+    id: 'screening.run',
+    group: 'AI-скрининг',
+    permission: 'Проведение скрининга',
+    description: 'Создавать сессии AI-скрининга и вести видеоинтервью с записью.',
+    actions: ['screening:run'],
+    matrix: { admin: true, account_manager: true, recruiter: true, viewer: false },
+  },
+  {
+    id: 'screening.view_report',
+    group: 'AI-скрининг',
+    permission: 'Просмотр отчётов',
+    description: 'Доступ к транскриптам, записям и AI-отчётам скрининга.',
+    actions: ['screening:view_report'],
+    matrix: { admin: true, account_manager: true, recruiter: true, viewer: false },
   },
   {
     id: 'audit.view',

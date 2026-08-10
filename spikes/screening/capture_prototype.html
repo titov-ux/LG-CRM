@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Spike: захват звука скрининга (Телемост + микрофон)</title>
+<style>
+  :root { --accent:#1f4e79; --ok:#16a34a; --warn:#dc2626; --muted:#6b7280; }
+  * { box-sizing:border-box; }
+  body { font-family:-apple-system,Segoe UI,Roboto,sans-serif; margin:0; background:#f6f7f9; color:#111827; }
+  .wrap { max-width:1080px; margin:0 auto; padding:24px; }
+  h1 { font-size:20px; color:var(--accent); }
+  .cols { display:grid; grid-template-columns: 340px 1fr; gap:16px; }
+  .card { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:16px; }
+  button { padding:9px 14px; border-radius:8px; border:1px solid #d1d5db; background:#fff; cursor:pointer; font-size:14px; width:100%; margin-bottom:8px; }
+  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  .meter { height:10px; background:#e5e7eb; border-radius:5px; overflow:hidden; margin:4px 0 12px; }
+  .meter > div { height:100%; width:0; background:var(--ok); transition:width .1s; }
+  .lbl { font-size:13px; color:var(--muted); display:flex; justify-content:space-between; }
+  .status { font-size:13px; margin-top:8px; }
+  .status b { font-weight:600; }
+  #warnTab { display:none; background:#fef2f2; border:1px solid #fecaca; color:var(--warn); padding:10px 12px; border-radius:8px; font-size:13px; margin-top:8px; }
+  #log { height:520px; overflow-y:auto; font-size:14px; line-height:1.5; }
+  .seg { padding:6px 10px; border-radius:8px; margin-bottom:6px; }
+  .seg.recruiter { background:#eef4fb; }
+  .seg.candidate { background:#f0fdf4; }
+  .seg .who { font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; }
+  .seg .lat { font-size:11px; color:var(--muted); float:right; }
+  .seg.partial { opacity:.55; font-style:italic; }
+  .stats { font-size:13px; background:#fffbeb; border:1px solid #fde68a; padding:8px 10px; border-radius:8px; margin-top:8px; white-space:pre-wrap; }
+  code { background:#f3f4f6; padding:1px 5px; border-radius:4px; font-size:12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Spike Этап 0 — захват звука интервью (Телемост во вкладке + микрофон)</h1>
+  <p style="font-size:13px;color:var(--muted)">
+    1) Запустите <code>python stt_server.py --fake</code> (или с моделью) ·
+    2) Откройте Телемост в другой вкладке этого же браузера ·
+    3) Нажмите кнопки по порядку. В диалоге выбора экрана выберите <b>вкладку</b> Телемоста
+    и обязательно включите <b>«Поделиться звуком вкладки»</b>. Работать в наушниках!
+  </p>
+  <div class="cols">
+    <div class="card">
+      <button id="btnMic">1. Разрешить микрофон (рекрутер)</button>
+      <div class="lbl"><span>Микрофон</span><span id="micState">—</span></div>
+      <div class="meter"><div id="micMeter"></div></div>
+
+      <button id="btnTab">2. Выбрать вкладку Телемоста (кандидат)</button>
+      <div class="lbl"><span>Звук вкладки</span><span id="tabState">—</span></div>
+      <div class="meter"><div id="tabMeter"></div></div>
+      <div id="warnTab">⚠️ Со вкладки не идёт звук. Вероятно, не включена галка
+        «Поделиться звуком вкладки» или выбрана не та вкладка. Нажмите кнопку 2 ещё раз.</div>
+
+      <button id="btnStart" class="primary" disabled>3. Начать стрим на stt-server</button>
+      <button id="btnStop" disabled>Завершить</button>
+      <div class="status">WS: <b id="wsState">не подключён</b> · отправлено: <b id="sent">0</b> фреймов</div>
+      <div class="status">Сервер: <input id="wsUrl" value="ws://localhost:8765" style="width:180px;font-size:12px"></div>
+      <div id="stats" class="stats" style="display:none"></div>
+    </div>
+    <div class="card">
+      <div style="font-weight:600;margin-bottom:8px">Живой транскрипт</div>
+      <div id="log"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const TARGET_RATE = 16000;
+const $ = id => document.getElementById(id);
+
+let micStream = null, tabStream = null, ws = null, audioCtx = null;
+let sentFrames = 0, silentTabMs = 0, partialEls = {};
+
+// ---------- AudioWorklet: даунсемпл до 16кГц PCM16, чанки ~100мс ----------
+const workletCode = `
+class PCMWorklet extends AudioWorkletProcessor {
+  constructor(options) {
+    super();
+    this.ratio = sampleRate / ${TARGET_RATE};
+    this.acc = [];
+    this.accLen = 0;
+    this.chunk = ${TARGET_RATE} / 10; // 100 мс
+    this.pos = 0;
+  }
+  process(inputs) {
+    const input = inputs[0];
+    if (!input || !input[0]) return true;
+    const ch = input[0];
+    // линейная интерполяция вниз до 16кГц
+    const out = [];
+    while (this.pos < ch.length) {
+      const i = Math.floor(this.pos);
+      const frac = this.pos - i;
+      const a = ch[i], b = ch[Math.min(i + 1, ch.length - 1)];
+      out.push(a + (b - a) * frac);
+      this.pos += this.ratio;
+    }
+    this.pos -= ch.length;
+    if (out.length) { this.acc.push(Float32Array.from(out)); this.accLen += out.length; }
+    while (this.accLen >= this.chunk) {
+      const flat = new Float32Array(this.accLen);
+      let o = 0;
+      for (const a of this.acc) { flat.set(a, o); o += a.length; }
+      const piece = flat.subarray(0, this.chunk);
+      const rest = flat.subarray(this.chunk);
+      const pcm = new Int16Array(piece.length);
+      let level = 0;
+      for (let i = 0; i < piece.length; i++) {
+        const s = Math.max(-1, Math.min(1, piece[i]));
+        pcm[i] = s * 0x7fff;
+        level = Math.max(level, Math.abs(s));
+      }
+      this.port.postMessage({ pcm: pcm.buffer, level }, [pcm.buffer]);
+      this.acc = [Float32Array.from(rest)];
+      this.accLen = rest.length;
+    }
+    return true;
+  }
+}
+registerProcessor('pcm-worklet', PCMWorklet);
+`;
+
+async function ensureCtx() {
+  if (!audioCtx) {
+    audioCtx = new AudioContext();
+    const blob = new Blob([workletCode], { type: 'application/javascript' });
+    await audioCtx.audioWorklet.addModule(URL.createObjectURL(blob));
+  }
+  if (audioCtx.state === 'suspended') await audioCtx.resume();
+  return audioCtx;
+}
+
+function attachWorklet(stream, channelByte, meterEl, onLevel) {
+  const ctx = audioCtx;
+  const src = ctx.createMediaStreamSource(stream);
+  const node = new AudioWorkletNode(ctx, 'pcm-worklet');
+  node.port.onmessage = (e) => {
+    const { pcm, level } = e.data;
+    meterEl.style.width = Math.min(100, level * 300) + '%';
+    meterEl.style.background = level > 0.02 ? 'var(--ok)' : '#9ca3af';
+    if (onLevel) onLevel(level);
+    if (ws && ws.readyState === 1) {
+      const buf = new Uint8Array(1 + pcm.byteLength);
+      buf[0] = channelByte;
+      buf.set(new Uint8Array(pcm), 1);
+      ws.send(buf);
+      $('sent').textContent = ++sentFrames;
+    }
+  };
+  src.connect(node);
+  // ВАЖНО: worklet не подключаем к destination — иначе звук вкладки
+  // пойдёт в колонки вторым потоком (эхо)
+  return node;
+}
+
+// ---------- Кнопки ----------
+$('btnMic').onclick = async () => {
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 }
+    });
+    await ensureCtx();
+    attachWorklet(micStream, 0, $('micMeter'));
+    $('micState').textContent = '✅ активен';
+    checkReady();
+  } catch (e) { $('micState').textContent = '❌ ' + e.name; }
+};
+
+$('btnTab').onclick = async () => {
+  try {
+    // video:true обязателен — иначе Chrome не покажет пикер вкладок
+    tabStream = await navigator.mediaDevices.getDisplayMedia({
+      video: true,
+      audio: { echoCancellation: false, noiseSuppression: false },
+      // подсказки Chrome: сразу вкладка, свою скрывать
+      selfBrowserSurface: 'exclude', preferCurrentTab: false,
+      systemAudio: 'exclude',
+    });
+    const audioTracks = tabStream.getAudioTracks();
+    if (!audioTracks.length) {
+      $('tabState').textContent = '❌ нет аудио';
+      $('warnTab').style.display = 'block';
+      tabStream.getTracks().forEach(t => t.stop());
+      tabStream = null;
+      return;
+    }
+    // видеодорожку останавливаем — на Этапе 0 нужен только звук
+    tabStream.getVideoTracks().forEach(t => t.stop());
+    await ensureCtx();
+    silentTabMs = 0;
+    attachWorklet(new MediaStream(audioTracks), 1, $('tabMeter'), (level) => {
+      // детект «нет звука с вкладки»: 15с тишины подряд при активном стриме
+      if (ws && ws.readyState === 1) {
+        silentTabMs = level > 0.005 ? 0 : silentTabMs + 100;
+        $('warnTab').style.display = silentTabMs > 15000 ? 'block' : 'none';
+      }
+    });
+    $('tabState').textContent = '✅ активен';
+    $('warnTab').style.display = 'none';
+    checkReady();
+  } catch (e) { $('tabState').textContent = '❌ ' + e.name; }
+};
+
+function checkReady() {
+  $('btnStart').disabled = !(micStream && tabStream);
+}
+
+$('btnStart').onclick = () => {
+  ws = new WebSocket($('wsUrl').value);
+  ws.onopen = () => {
+    $('wsState').textContent = '✅ подключён';
+    ws.send(JSON.stringify({ type: 'start', sampleRate: TARGET_RATE }));
+    $('btnStart').disabled = true;
+    $('btnStop').disabled = false;
+  };
+  ws.onclose = () => { $('wsState').textContent = 'закрыт'; };
+  ws.onerror = () => { $('wsState').textContent = '❌ ошибка (сервер запущен?)'; };
+  ws.onmessage = (e) => {
+    const m = JSON.parse(e.data);
+    if (m.type === 'transcript.final') addSeg(m, false);
+    else if (m.type === 'transcript.partial') addSeg(m, true);
+    else if (m.type === 'stats') {
+      $('stats').style.display = 'block';
+      $('stats').textContent = 'СТАТИСТИКА ЛАТЕНТНОСТИ\n' + JSON.stringify(m.channels, null, 2);
+    }
+  };
+};
+
+$('btnStop').onclick = () => {
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'stop' }));
+  setTimeout(() => ws && ws.close(), 1500);
+  $('btnStop').disabled = true;
+  $('btnStart').disabled = false;
+};
+
+function addSeg(m, partial) {
+  const log = $('log');
+  const key = m.speaker;
+  if (partial) {
+    let el = partialEls[key];
+    if (!el) {
+      el = document.createElement('div');
+      partialEls[key] = el;
+      log.appendChild(el);
+    }
+    el.className = 'seg partial ' + key;
+    el.innerHTML = who(m) + escapeHtml(m.text);
+  } else {
+    if (partialEls[key]) { partialEls[key].remove(); partialEls[key] = null; }
+    const el = document.createElement('div');
+    el.className = 'seg ' + key;
+    el.innerHTML = who(m) + `<span class="lat">+${m.latencyMs} мс</span>` + escapeHtml(m.text);
+    log.appendChild(el);
+  }
+  log.scrollTop = log.scrollHeight;
+}
+const who = m => `<div class="who">${m.speaker === 'recruiter' ? '🎙 Рекрутер' : '👤 Кандидат'}</div>`;
+const escapeHtml = s => s.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+</script>
+</body>
+</html>

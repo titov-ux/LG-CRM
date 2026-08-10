@@ -19,6 +19,7 @@ from app.api.v1.endpoints import (
     notifications,
     permissions,
     realtime,
+    screenings,
     telegram,
     tenders,
     users,
@@ -49,3 +50,4 @@ api_router.include_router(integrations.router)
 api_router.include_router(telegram.router)
 api_router.include_router(api_tokens.router)
 api_router.include_router(calendar.router)
+api_router.include_router(screenings.router)

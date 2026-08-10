@@ -408,6 +408,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/users/{id}/password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Сбросить пароль пользователя (админ)
+         * @description Задаёт пользователю новый пароль без знания текущего. Все его активные
+         *     сессии разлогиниваются (refresh-токены отзываются). Свой пароль так
+         *     менять нельзя — 400 `use_profile_endpoint`, для себя используется
+         *     `POST /auth/me/password` с подтверждением текущего пароля.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["SetPasswordRequest"];
+                };
+            };
+            responses: {
+                200: components["responses"]["Ok"];
+                /** @description Попытка сменить пароль самому себе (code=use_profile_endpoint) */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/invite/{token}": {
         parameters: {
             query?: never;
@@ -1566,6 +1618,8 @@ export interface paths {
          * AI-распознавание сплошного текста резюме в поля карточки кандидата
          * @description Использует LLM (YandexGPT). Возвращает `ParsedCandidate` —
          *     частично заполненный объект, фронт применяет его поверх формы.
+         *     Большие резюме (10+ страниц HH) бэкенд парсит по частям несколькими
+         *     параллельными вызовами модели и склеивает результат.
          *     Если AI недоступен (нет ключа/сетевая ошибка), эндпоинт возвращает
          *     503 `ai_unavailable`; фронт показывает соответствующее сообщение.
          */
@@ -3509,6 +3563,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/analytics/weekly-activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Итоги недели — новые вакансии и поданные кандидаты за окно
+         * @description Без параметров окно — текущая рабочая неделя (понедельник 00:00 UTC → сейчас). Фронт передаёт границы недели, посчитанные в локальной таймзоне пользователя.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    from?: string;
+                    to?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description WeeklyActivityResponse */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WeeklyActivityResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/analytics/chat": {
         parameters: {
             query?: never;
@@ -4780,6 +4876,460 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/screenings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Список сессий скрининга
+         * @description Видимость: admin и account_manager видят все сессии; остальные — свои
+         *     (где ведущие) и сессии по вакансиям, где они назначены рекрутерами.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    candidateId?: components["schemas"]["UUID"];
+                    vacancyId?: components["schemas"]["UUID"];
+                    recruiterId?: components["schemas"]["UUID"];
+                    status?: components["schemas"]["ScreeningStatus"];
+                    page?: number;
+                    pageSize?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Страница сессий */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ScreeningListResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Создать сессию скрининга */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CreateScreeningRequest"];
+                };
+            };
+            responses: {
+                /** @description ScreeningSession */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ScreeningSession"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/screenings/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        /** Сессия скрининга */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description ScreeningSession */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ScreeningSession"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        post?: never;
+        /** Удалить сессию (ведущий или admin) */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: components["responses"]["Ok"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        options?: never;
+        head?: never;
+        /** Обновить сессию (ссылка на Телемост, согласие на запись) */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["UpdateScreeningRequest"];
+                };
+            };
+            responses: {
+                /** @description ScreeningSession */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ScreeningSession"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        trace?: never;
+    };
+    "/screenings/{id}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Начать встречу (draft → live)
+         * @description Требует `consentConfirmed=true` — иначе 409 `consent_required`
+         *     (запись без согласия кандидата не начинаем, 152-ФЗ). Идемпотентен
+         *     для уже идущей сессии.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description ScreeningSession */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ScreeningSession"];
+                    };
+                };
+                /** @description consent_required | invalid_status */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/screenings/{id}/finish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Завершить встречу (live → done) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        durationSec?: number | null;
+                    };
+                };
+            };
+            responses: {
+                /** @description ScreeningSession */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ScreeningSession"];
+                    };
+                };
+                /** @description invalid_status */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/screenings/{id}/audio": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Привязать запись разговора (файл из /files, entityType=screening) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        fileId: components["schemas"]["UUID"];
+                    };
+                };
+            };
+            responses: {
+                /** @description ScreeningSession */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ScreeningSession"];
+                    };
+                };
+                /** @description file_entity_mismatch */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/screenings/{id}/questions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Добавить вопрос в чек-лист */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        text: string;
+                        goal?: string | null;
+                        position?: number | null;
+                    };
+                };
+            };
+            responses: {
+                /** @description ScreeningSession */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ScreeningSession"];
+                    };
+                };
+                /** @description empty_question */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/screenings/{id}/questions/{questionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+                questionId: components["schemas"]["UUID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Удалить вопрос */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                    questionId: components["schemas"]["UUID"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description ScreeningSession */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ScreeningSession"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        options?: never;
+        head?: never;
+        /** Изменить вопрос (текст / статус / порядок) */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                    questionId: components["schemas"]["UUID"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        text?: string | null;
+                        goal?: string | null;
+                        status?: components["schemas"]["ScreeningQuestionStatus"];
+                        position?: number | null;
+                    };
+                };
+            };
+            responses: {
+                /** @description ScreeningSession */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ScreeningSession"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -4806,6 +5356,10 @@ export interface components {
         ChangePasswordRequest: {
             currentPassword: string;
             newPassword: string;
+        };
+        /** @description Админский сброс пароля другому пользователю (без текущего пароля). */
+        SetPasswordRequest: {
+            password: string;
         };
         /** @enum {string} */
         Role: "admin" | "account_manager" | "recruiter" | "viewer";
@@ -5541,6 +6095,64 @@ export interface components {
             items: components["schemas"]["ClientMetric"][];
             period: components["schemas"]["PeriodWindow"];
         };
+        WeeklyVacancyItem: {
+            id: components["schemas"]["UUID"];
+            title: string;
+            status: components["schemas"]["VacancyStatus"];
+            /** Format: date-time */
+            createdAt: string;
+            clientId: components["schemas"]["UUID"];
+            clientName: string;
+        };
+        WeeklyVacancyBlock: {
+            total: number;
+            items: components["schemas"]["WeeklyVacancyItem"][];
+        };
+        WeeklySubmissionItem: {
+            matchId: components["schemas"]["UUID"];
+            status: components["schemas"]["MatchStatus"];
+            /** Format: date-time */
+            addedAt: string;
+            candidateId: components["schemas"]["UUID"];
+            candidateName: string;
+            vacancyId: components["schemas"]["UUID"];
+            vacancyTitle: string;
+            clientName: string;
+            addedByName?: string | null;
+        };
+        WeeklySubmissionBlock: {
+            total: number;
+            items: components["schemas"]["WeeklySubmissionItem"][];
+        };
+        WeeklyInterviewItem: {
+            eventId: components["schemas"]["UUID"];
+            title: string;
+            /** Format: date-time */
+            startsAt: string;
+            status: components["schemas"]["EventStatus"];
+            candidateId?: components["schemas"]["UUID"] | null;
+            candidateName?: string | null;
+            vacancyId?: components["schemas"]["UUID"] | null;
+            vacancyTitle?: string | null;
+        };
+        WeeklyInterviewBlock: {
+            total: number;
+            items: components["schemas"]["WeeklyInterviewItem"][];
+        };
+        WeeklyUserCount: {
+            userId?: components["schemas"]["UUID"] | null;
+            fullName?: string | null;
+            count: number;
+        };
+        WeeklyActivityResponse: {
+            period: components["schemas"]["PeriodWindow"];
+            newVacancies: components["schemas"]["WeeklyVacancyBlock"];
+            submittedCandidates: components["schemas"]["WeeklySubmissionBlock"];
+            interviews: components["schemas"]["WeeklyInterviewBlock"];
+            interviewsHeld: components["schemas"]["WeeklyInterviewBlock"];
+            byManagers: components["schemas"]["WeeklyUserCount"][];
+            byRecruiters: components["schemas"]["WeeklyUserCount"][];
+        };
         /** @enum {string} */
         WorkSessionEndReason: "disconnect" | "sweep" | "server_shutdown" | "reconcile";
         WorklogUserSummary: {
@@ -5833,6 +6445,81 @@ export interface components {
             status: "held" | "no_show";
             outcome?: string | null;
             nextMatchStatus?: components["schemas"]["MatchStatus"];
+        };
+        /** @enum {string} */
+        ScreeningStatus: "draft" | "live" | "processing" | "done" | "error";
+        /** @enum {string} */
+        ScreeningSpeaker: "recruiter" | "candidate";
+        /** @enum {string} */
+        ScreeningQuestionSource: "pregenerated" | "followup" | "manual";
+        /** @enum {string} */
+        ScreeningQuestionStatus: "pending" | "asked" | "answered" | "skipped";
+        /** @enum {string} */
+        ScreeningVerdict: "fit" | "partial_fit" | "no_fit";
+        ScreeningQuestion: {
+            id: components["schemas"]["UUID"];
+            position: number;
+            text: string;
+            goal?: string | null;
+            source: components["schemas"]["ScreeningQuestionSource"];
+            status: components["schemas"]["ScreeningQuestionStatus"];
+            answerSummary?: string | null;
+        };
+        ScreeningReport: {
+            id: components["schemas"]["UUID"];
+            summary: string;
+            verdict: components["schemas"]["ScreeningVerdict"];
+            scores?: {
+                [key: string]: unknown;
+            } | null;
+            redFlags?: string[] | null;
+            recommendation?: string | null;
+            model?: string | null;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        ScreeningSession: {
+            id: components["schemas"]["UUID"];
+            candidateId: components["schemas"]["UUID"];
+            vacancyId?: components["schemas"]["UUID"];
+            matchId?: components["schemas"]["UUID"];
+            recruiterId?: components["schemas"]["UUID"];
+            status: components["schemas"]["ScreeningStatus"];
+            telemostUrl?: string | null;
+            consentConfirmed: boolean;
+            /** Format: date-time */
+            startedAt?: string | null;
+            /** Format: date-time */
+            endedAt?: string | null;
+            durationSec?: number | null;
+            audioFileId?: components["schemas"]["UUID"];
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+            questions: components["schemas"]["ScreeningQuestion"][];
+            candidateName?: string | null;
+            vacancyTitle?: string | null;
+            recruiterName?: string | null;
+            report?: components["schemas"]["ScreeningReport"] | null;
+        };
+        ScreeningListResponse: {
+            items: components["schemas"]["ScreeningSession"][];
+            total: number;
+            page: number;
+            pageSize: number;
+        };
+        CreateScreeningRequest: {
+            candidateId: components["schemas"]["UUID"];
+            vacancyId?: components["schemas"]["UUID"];
+            matchId?: components["schemas"]["UUID"];
+            telemostUrl?: string | null;
+            /** @default [] */
+            questions: string[];
+        };
+        UpdateScreeningRequest: {
+            telemostUrl?: string | null;
+            consentConfirmed?: boolean | null;
         };
     };
     responses: {

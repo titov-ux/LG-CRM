@@ -31,6 +31,9 @@ class FileEntityType(str, enum.Enum):
     # Добавлено миграцией 0033_file_entity_document — файлы документов базы
     # знаний; entity_id ссылается на documents.id.
     document = "document"
+    # Добавлено миграцией 0034_screening — записи разговоров AI-скрининга;
+    # entity_id ссылается на screening_sessions.id.
+    screening = "screening"
 
 
 class ScanStatus(str, enum.Enum):

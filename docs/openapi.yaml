@@ -43,6 +43,11 @@ tags:
   - name: analytics
   - name: permissions
   - name: files
+  - name: screenings
+    description: |
+      AI-скрининг: видеоинтервью в Яндекс Телемосте с записью звука,
+      чек-листом вопросов и (этапы 2–5) live-транскриптом и AI-отчётом.
+      Захват звука — на стороне рекрутера (вкладка Телемоста + микрофон).
   - name: documents
     description: |
       База знаний и хранилище документов команды: разделы (клиенты, регламенты, компания,
@@ -2235,6 +2240,215 @@ paths:
               schema: { $ref: '#/components/schemas/CalendarEvent' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  # ─────────────── SCREENINGS (AI-скрининг) ───────────────
+  /screenings:
+    get:
+      tags: [screenings]
+      summary: Список сессий скрининга
+      description: |
+        Видимость: admin и account_manager видят все сессии; остальные — свои
+        (где ведущие) и сессии по вакансиям, где они назначены рекрутерами.
+      parameters:
+        - { in: query, name: candidateId, schema: { $ref: '#/components/schemas/UUID' } }
+        - { in: query, name: vacancyId,   schema: { $ref: '#/components/schemas/UUID' } }
+        - { in: query, name: recruiterId, schema: { $ref: '#/components/schemas/UUID' } }
+        - { in: query, name: status, schema: { $ref: '#/components/schemas/ScreeningStatus' } }
+        - { in: query, name: page,     schema: { type: integer, minimum: 1, default: 1 } }
+        - { in: query, name: pageSize, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+      responses:
+        '200':
+          description: Страница сессий
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScreeningListResponse' }
+    post:
+      tags: [screenings]
+      summary: Создать сессию скрининга
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateScreeningRequest' }
+      responses:
+        '201':
+          description: ScreeningSession
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScreeningSession' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /screenings/{id}:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    get:
+      tags: [screenings]
+      summary: Сессия скрининга
+      responses:
+        '200':
+          description: ScreeningSession
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScreeningSession' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [screenings]
+      summary: Обновить сессию (ссылка на Телемост, согласие на запись)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateScreeningRequest' }
+      responses:
+        '200':
+          description: ScreeningSession
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScreeningSession' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [screenings]
+      summary: Удалить сессию (ведущий или admin)
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /screenings/{id}/start:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [screenings]
+      summary: Начать встречу (draft → live)
+      description: |
+        Требует `consentConfirmed=true` — иначе 409 `consent_required`
+        (запись без согласия кандидата не начинаем, 152-ФЗ). Идемпотентен
+        для уже идущей сессии.
+      responses:
+        '200':
+          description: ScreeningSession
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScreeningSession' }
+        '409':
+          description: consent_required | invalid_status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+  /screenings/{id}/finish:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [screenings]
+      summary: Завершить встречу (live → done)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                durationSec: { type: integer, nullable: true }
+      responses:
+        '200':
+          description: ScreeningSession
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScreeningSession' }
+        '409':
+          description: invalid_status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+  /screenings/{id}/audio:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [screenings]
+      summary: Привязать запись разговора (файл из /files, entityType=screening)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fileId]
+              properties:
+                fileId: { $ref: '#/components/schemas/UUID' }
+      responses:
+        '200':
+          description: ScreeningSession
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScreeningSession' }
+        '400':
+          description: file_entity_mismatch
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /screenings/{id}/questions:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [screenings]
+      summary: Добавить вопрос в чек-лист
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text:     { type: string }
+                goal:     { type: string, nullable: true }
+                position: { type: integer, nullable: true }
+      responses:
+        '200':
+          description: ScreeningSession
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScreeningSession' }
+        '422':
+          description: empty_question
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+  /screenings/{id}/questions/{questionId}:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+      - { in: path, name: questionId, required: true, schema: { $ref: '#/components/schemas/UUID' } }
+    patch:
+      tags: [screenings]
+      summary: Изменить вопрос (текст / статус / порядок)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text:     { type: string, nullable: true }
+                goal:     { type: string, nullable: true }
+                status:   { $ref: '#/components/schemas/ScreeningQuestionStatus' }
+                position: { type: integer, nullable: true }
+      responses:
+        '200':
+          description: ScreeningSession
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScreeningSession' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [screenings]
+      summary: Удалить вопрос
+      responses:
+        '200':
+          description: ScreeningSession
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScreeningSession' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+
 # ───────────────────────────────────────────────────────────
 components:
   securitySchemes:
@@ -3854,3 +4068,96 @@ components:
         status:          { type: string, enum: [held, no_show] }
         outcome:         { type: string, nullable: true }
         nextMatchStatus: { $ref: '#/components/schemas/MatchStatus' }
+    # ─────────────── SCREENINGS ───────────────
+    ScreeningStatus:
+      type: string
+      enum: [draft, live, processing, done, error]
+    ScreeningSpeaker:
+      type: string
+      enum: [recruiter, candidate]
+    ScreeningQuestionSource:
+      type: string
+      enum: [pregenerated, followup, manual]
+    ScreeningQuestionStatus:
+      type: string
+      enum: [pending, asked, answered, skipped]
+    ScreeningVerdict:
+      type: string
+      enum: [fit, partial_fit, no_fit]
+    ScreeningQuestion:
+      type: object
+      required: [id, position, text, source, status]
+      properties:
+        id:            { $ref: '#/components/schemas/UUID' }
+        position:      { type: integer }
+        text:          { type: string }
+        goal:          { type: string, nullable: true }
+        source:        { $ref: '#/components/schemas/ScreeningQuestionSource' }
+        status:        { $ref: '#/components/schemas/ScreeningQuestionStatus' }
+        answerSummary: { type: string, nullable: true }
+    ScreeningReport:
+      type: object
+      required: [id, summary, verdict, createdAt]
+      properties:
+        id:             { $ref: '#/components/schemas/UUID' }
+        summary:        { type: string }
+        verdict:        { $ref: '#/components/schemas/ScreeningVerdict' }
+        scores:         { type: object, additionalProperties: true, nullable: true }
+        redFlags:       { type: array, items: { type: string }, nullable: true }
+        recommendation: { type: string, nullable: true }
+        model:          { type: string, nullable: true }
+        createdAt:      { type: string, format: date-time }
+    ScreeningSession:
+      type: object
+      required: [id, candidateId, status, consentConfirmed, createdAt, updatedAt, questions]
+      properties:
+        id:               { $ref: '#/components/schemas/UUID' }
+        candidateId:      { $ref: '#/components/schemas/UUID' }
+        vacancyId:        { $ref: '#/components/schemas/UUID', nullable: true }
+        matchId:          { $ref: '#/components/schemas/UUID', nullable: true }
+        recruiterId:      { $ref: '#/components/schemas/UUID', nullable: true }
+        status:           { $ref: '#/components/schemas/ScreeningStatus' }
+        telemostUrl:      { type: string, nullable: true }
+        consentConfirmed: { type: boolean }
+        startedAt:        { type: string, format: date-time, nullable: true }
+        endedAt:          { type: string, format: date-time, nullable: true }
+        durationSec:      { type: integer, nullable: true }
+        audioFileId:      { $ref: '#/components/schemas/UUID', nullable: true }
+        createdAt:        { type: string, format: date-time }
+        updatedAt:        { type: string, format: date-time }
+        questions:
+          type: array
+          items: { $ref: '#/components/schemas/ScreeningQuestion' }
+        candidateName: { type: string, nullable: true }
+        vacancyTitle:  { type: string, nullable: true }
+        recruiterName: { type: string, nullable: true }
+        report:
+          nullable: true
+          allOf: [{ $ref: '#/components/schemas/ScreeningReport' }]
+    ScreeningListResponse:
+      type: object
+      required: [items, total, page, pageSize]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ScreeningSession' }
+        total:    { type: integer }
+        page:     { type: integer }
+        pageSize: { type: integer }
+    CreateScreeningRequest:
+      type: object
+      required: [candidateId]
+      properties:
+        candidateId: { $ref: '#/components/schemas/UUID' }
+        vacancyId:   { $ref: '#/components/schemas/UUID', nullable: true }
+        matchId:     { $ref: '#/components/schemas/UUID', nullable: true }
+        telemostUrl: { type: string, nullable: true }
+        questions:
+          type: array
+          items: { type: string }
+          default: []
+    UpdateScreeningRequest:
+      type: object
+      properties:
+        telemostUrl:      { type: string, nullable: true }
+        consentConfirmed: { type: boolean, nullable: true }

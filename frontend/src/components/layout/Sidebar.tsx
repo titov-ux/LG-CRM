@@ -56,13 +56,7 @@ const GROUPS: NavGroup[] = [
       { to: '/contacts', label: 'Контакты', icon: ContactRound },
       { to: '/chat', label: 'Чат', icon: MessageSquare },
       { to: '/calendar', label: 'Календарь', icon: Calendar },
-      {
-        to: '/video-interviews',
-        label: 'Видеоинтервью',
-        icon: Video,
-        tag: 'скоро',
-        tagHint: 'Раздел в разработке',
-      },
+      { to: '/video-interviews', label: 'Видеоинтервью', icon: Video },
     ],
   },
   {

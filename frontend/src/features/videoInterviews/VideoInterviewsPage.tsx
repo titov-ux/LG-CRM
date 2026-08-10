@@ -1,57 +1,51 @@
-import { CalendarClock, FileText, Link2, MonitorPlay, Sparkles, Video } from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
+import { useState } from 'react';
+import { Link } from '@tanstack/react-router';
+import { Mic, Plus, Video } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/common/EmptyState';
+import { NewScreeningDialog } from '@/features/screening/NewScreeningDialog';
+import { useScreenings } from '@/features/screening/hooks';
+import type { ScreeningStatus } from '@/api/screenings';
 
 /**
- * Видеоинтервью — задел под будущий раздел.
+ * Раздел «Видеоинтервью» — список сессий AI-скрининга.
  *
- * Здесь появятся записи видеоинтервью с кандидатами: планирование встреч,
- * хранение записей, расшифровки и AI-саммари по итогам разговора.
- * Пока раздел в разработке — страница показывает планируемые возможности,
- * чтобы застолбить место в навигации и роутинге.
+ * Сессия = видеоинтервью в Яндекс Телемосте с записью звука, чек-листом
+ * вопросов и (на следующих этапах) живым транскриптом и AI-отчётом.
  */
 
-interface PlannedFeature {
-  icon: LucideIcon;
-  title: string;
-  description: string;
+const STATUS_LABELS: Record<ScreeningStatus, { label: string; className: string }> = {
+  draft: { label: 'Черновик', className: 'bg-muted text-muted-foreground' },
+  live: { label: 'Идёт встреча', className: 'bg-red-500/10 text-red-600' },
+  processing: { label: 'Анализ…', className: 'bg-amber-500/10 text-amber-600' },
+  done: { label: 'Завершён', className: 'bg-emerald-500/10 text-emerald-600' },
+  error: { label: 'Ошибка', className: 'bg-red-500/10 text-red-600' },
+};
+
+function fmtDate(iso: string): string {
+  return new Date(iso).toLocaleString('ru-RU', {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
-const PLANNED: PlannedFeature[] = [
-  {
-    icon: CalendarClock,
-    title: 'Планирование интервью',
-    description:
-      'Назначение видеовстречи с кандидатом прямо из карточки — со ссылкой и событием в календаре.',
-  },
-  {
-    icon: MonitorPlay,
-    title: 'Записи встреч',
-    description:
-      'Хранение записей интервью, привязанных к кандидату и вакансии, с быстрым просмотром.',
-  },
-  {
-    icon: FileText,
-    title: 'Расшифровка разговора',
-    description:
-      'Автоматическая текстовая расшифровка записи с таймкодами и поиском по содержимому.',
-  },
-  {
-    icon: Sparkles,
-    title: 'AI-саммари и оценка',
-    description:
-      'Краткое резюме интервью, ключевые ответы кандидата и рекомендации по следующему шагу.',
-  },
-  {
-    icon: Link2,
-    title: 'Интеграции',
-    description:
-      'Подключение Zoom / Google Meet / Телемост для автоматического подтягивания записей.',
-  },
-];
+function fmtDuration(sec?: number | null): string | null {
+  if (!sec) return null;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
 
 export function VideoInterviewsPage() {
+  const [createOpen, setCreateOpen] = useState(false);
+  const { data, isLoading } = useScreenings({ pageSize: 50 });
+  const items = data?.items ?? [];
+
   return (
     <div className="flex-1 space-y-4 overflow-auto px-6 pb-8 pt-5">
       {/* Заголовок */}
@@ -59,46 +53,73 @@ export function VideoInterviewsPage() {
         <div className="mt-0.5 flex h-9 w-9 items-center justify-center rounded-md bg-muted text-foreground">
           <Video className="h-4.5 w-4.5" strokeWidth={1.8} />
         </div>
-        <div>
-          <h1 className="text-[15px] font-semibold tracking-tight">Видеоинтервью</h1>
+        <div className="flex-1">
+          <h1 className="text-[15px] font-semibold tracking-tight">Видеоинтервью · AI-скрининг</h1>
           <p className="text-[11.5px] text-muted-foreground">
-            Записи, расшифровки и итоги видеоинтервью с кандидатами.
+            Интервью в Яндекс Телемосте с записью, чек-листом вопросов и AI-разбором.
           </p>
         </div>
+        <Button size="sm" onClick={() => setCreateOpen(true)}>
+          <Plus className="mr-1.5 h-4 w-4" /> Новый скрининг
+        </Button>
       </div>
 
-      {/* Заглушка: раздел в разработке */}
-      <Card>
-        <CardContent className="p-4">
-          <EmptyState
-            icon={Video}
-            title="Раздел в разработке"
-            description="Здесь появятся видеоинтервью с кандидатами: записи, расшифровки и AI-саммари. Ниже — что планируется."
-          />
-        </CardContent>
-      </Card>
+      {isLoading && (
+        <div className="space-y-2">
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-16 w-full rounded-lg" />
+          ))}
+        </div>
+      )}
 
-      {/* Планируемые возможности */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {PLANNED.map((f) => {
-          const Icon = f.icon;
+      {!isLoading && items.length === 0 && (
+        <Card>
+          <CardContent className="p-4">
+            <EmptyState
+              icon={Mic}
+              title="Скринингов пока нет"
+              description="Создайте сессию, откройте встречу в Телемосте и ведите интервью с записью и чек-листом вопросов."
+            />
+          </CardContent>
+        </Card>
+      )}
+
+      <div className="space-y-2">
+        {items.map((s) => {
+          const st = STATUS_LABELS[s.status];
+          const dur = fmtDuration(s.durationSec);
           return (
-            <Card key={f.title} className="bg-muted/20">
-              <CardContent className="flex items-start gap-3 p-4">
-                <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-background">
-                  <Icon className="h-4 w-4 text-muted-foreground" strokeWidth={1.8} />
+            <Link
+              key={s.id}
+              to="/video-interviews/$id"
+              params={{ id: s.id }}
+              className="block rounded-lg border bg-card px-4 py-3 transition-colors hover:bg-muted/40"
+            >
+              <div className="flex items-center gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate text-[13.5px] font-medium">
+                      {s.candidateName ?? 'Кандидат'}
+                    </span>
+                    <Badge variant="secondary" className={st.className}>
+                      {st.label}
+                    </Badge>
+                  </div>
+                  <div className="mt-0.5 truncate text-[11.5px] text-muted-foreground">
+                    {s.vacancyTitle ? `${s.vacancyTitle} · ` : ''}
+                    {s.recruiterName ? `ведёт ${s.recruiterName} · ` : ''}
+                    {fmtDate(s.createdAt)}
+                    {dur ? ` · ${dur}` : ''}
+                    {s.questions.length ? ` · вопросов: ${s.questions.length}` : ''}
+                  </div>
                 </div>
-                <div>
-                  <div className="text-[13px] font-medium">{f.title}</div>
-                  <p className="mt-0.5 text-[11.5px] leading-snug text-muted-foreground">
-                    {f.description}
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
+              </div>
+            </Link>
           );
         })}
       </div>
+
+      <NewScreeningDialog open={createOpen} onOpenChange={setCreateOpen} />
     </div>
   );
 }

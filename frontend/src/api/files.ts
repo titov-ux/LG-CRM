@@ -13,7 +13,8 @@ export type FileEntityType =
   | 'client'
   | 'contact'
   | 'chat_message'
-  | 'document';
+  | 'document'
+  | 'screening';
 
 export type ScanStatus = 'pending' | 'clean' | 'infected' | 'error';
 

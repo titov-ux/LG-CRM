@@ -155,6 +155,22 @@ DEFAULT_PERMISSIONS: list[DefaultPermission] = [
         "matrix": {"admin": True, "account_manager": True, "recruiter": False, "viewer": True},
     },
     {
+        "id": "screening.run",
+        "group": "AI-скрининг",
+        "permission": "Проведение скрининга",
+        "description": "Создавать сессии AI-скрининга и вести видеоинтервью с записью.",
+        "actions": ["screening:run"],
+        "matrix": {"admin": True, "account_manager": True, "recruiter": True, "viewer": False},
+    },
+    {
+        "id": "screening.view_report",
+        "group": "AI-скрининг",
+        "permission": "Просмотр отчётов",
+        "description": "Доступ к транскриптам, записям и AI-отчётам скрининга.",
+        "actions": ["screening:view_report"],
+        "matrix": {"admin": True, "account_manager": True, "recruiter": True, "viewer": False},
+    },
+    {
         "id": "audit.view",
         "group": "Администрирование",
         "permission": "Журнал действий",

@@ -89,6 +89,13 @@ export interface CreateScreeningPayload {
   matchId?: UUID;
   telemostUrl?: string;
   questions?: string[];
+  /** Дефолт true на бэке: сгенерировать план через YandexGPT, если questions пуст. */
+  generateQuestions?: boolean;
+}
+
+export interface RegenerateQuestionsPayload {
+  count?: number;
+  replaceManual?: boolean;
 }
 
 export const screeningsApi = {
@@ -123,6 +130,10 @@ export const screeningsApi = {
       .json<ScreeningSession>(),
   removeQuestion: (id: UUID, questionId: UUID) =>
     api.delete(`screenings/${id}/questions/${questionId}`).json<ScreeningSession>(),
+  regenerateQuestions: (id: UUID, payload: RegenerateQuestionsPayload = {}) =>
+    api
+      .post(`screenings/${id}/regenerate-questions`, { json: payload })
+      .json<ScreeningSession>(),
   transcript: (id: UUID) =>
     api.get(`screenings/${id}/transcript`).json<TranscriptResponse>(),
 };

@@ -114,7 +114,7 @@ export function useUpdateQuestion() {
     }: {
       id: UUID;
       questionId: UUID;
-      payload: { text?: string; status?: ScreeningQuestionStatus; position?: number };
+      payload: { text?: string; goal?: string; status?: ScreeningQuestionStatus; position?: number };
     }) => screeningsApi.updateQuestion(id, questionId, payload),
   );
 }
@@ -122,5 +122,17 @@ export function useUpdateQuestion() {
 export function useRemoveQuestion() {
   return useSessionMutation(({ id, questionId }: { id: UUID; questionId: UUID }) =>
     screeningsApi.removeQuestion(id, questionId),
+  );
+}
+
+export function useRegenerateQuestions() {
+  return useSessionMutation(
+    ({
+      id,
+      payload,
+    }: {
+      id: UUID;
+      payload?: { count?: number; replaceManual?: boolean };
+    }) => screeningsApi.regenerateQuestions(id, payload ?? {}),
   );
 }

@@ -31,6 +31,8 @@ def _make_screening(client: TestClient, h: dict, candidate_id: str, **overrides)
     payload = {
         "candidateId": candidate_id,
         "questions": ["Расскажите про опыт", "Почему ищете работу?"],
+        # Юнит-тесты не ходят в YandexGPT — генерацию гоняем отдельно.
+        "generateQuestions": False,
     }
     payload.update(overrides)
     r = client.post("/api/v1/screenings", headers=h, json=payload)
@@ -233,5 +235,128 @@ async def test_append_segment_and_list_transcript(
     assert tr.last_seq == 2
     assert [x.text for x in tr.items] == ["Меня зовут Иван", "Расскажите про опыт"]
     assert [x.speaker.value for x in tr.items] == ["candidate", "recruiter"]
+
+
+def test_regenerate_questions_ai(
+    client: TestClient, recruiter_user, candidate, monkeypatch
+) -> None:
+    """Этап 3: regenerate-questions наполняет чек-лист source=pregenerated."""
+    async def fake_generate(**kwargs):
+        return [
+            {"text": f"Вопрос {i}", "goal": f"Цель {i}"} for i in range(1, 6)
+        ]
+
+    monkeypatch.setattr(
+        "app.modules.screening.ai.generate_screening_questions", fake_generate
+    )
+
+    h = auth_headers(client, recruiter_user.email)
+    s = _make_screening(client, h, str(candidate.id), questions=[])
+
+    r = client.post(
+        f"/api/v1/screenings/{s['id']}/regenerate-questions", headers=h, json={}
+    )
+    assert r.status_code == 200, r.text
+    qs = r.json()["questions"]
+    assert len(qs) == 5
+    assert all(q["source"] == "pregenerated" for q in qs)
+    assert qs[0]["text"] == "Вопрос 1"
+    assert qs[0]["goal"] == "Цель 1"
+
+
+def test_regenerate_keeps_manual(
+    client: TestClient, recruiter_user, candidate, monkeypatch
+) -> None:
+    async def fake_generate(**kwargs):
+        return [{"text": f"AI {i}", "goal": "g"} for i in range(5)]
+
+    monkeypatch.setattr(
+        "app.modules.screening.ai.generate_screening_questions", fake_generate
+    )
+
+    h = auth_headers(client, recruiter_user.email)
+    s = _make_screening(
+        client, h, str(candidate.id), questions=["Ручной вопрос"]
+    )
+    assert s["questions"][0]["source"] == "manual"
+
+    r = client.post(
+        f"/api/v1/screenings/{s['id']}/regenerate-questions", headers=h, json={}
+    )
+    assert r.status_code == 200
+    qs = r.json()["questions"]
+    manuals = [q for q in qs if q["source"] == "manual"]
+    ais = [q for q in qs if q["source"] == "pregenerated"]
+    assert len(manuals) == 1
+    assert manuals[0]["text"] == "Ручной вопрос"
+    assert len(ais) == 5
+
+
+def test_regenerate_unavailable(
+    client: TestClient, recruiter_user, candidate, monkeypatch
+) -> None:
+    from app.modules.screening.ai import AiUnavailableError
+
+    async def boom(**kwargs):
+        raise AiUnavailableError("no key")
+
+    monkeypatch.setattr(
+        "app.modules.screening.ai.generate_screening_questions", boom
+    )
+
+    h = auth_headers(client, recruiter_user.email)
+    s = _make_screening(client, h, str(candidate.id), questions=[])
+    r = client.post(
+        f"/api/v1/screenings/{s['id']}/regenerate-questions", headers=h, json={}
+    )
+    assert r.status_code == 503
+    assert r.json()["detail"]["code"] == "ai_unavailable"
+
+
+def test_regenerate_only_draft(
+    client: TestClient, recruiter_user, candidate, monkeypatch
+) -> None:
+    async def fake_generate(**kwargs):
+        return [{"text": f"Q{i}", "goal": "g"} for i in range(5)]
+
+    monkeypatch.setattr(
+        "app.modules.screening.ai.generate_screening_questions", fake_generate
+    )
+
+    h = auth_headers(client, recruiter_user.email)
+    s = _make_screening(client, h, str(candidate.id), questions=[])
+    client.patch(
+        f"/api/v1/screenings/{s['id']}", headers=h, json={"consentConfirmed": True}
+    )
+    client.post(f"/api/v1/screenings/{s['id']}/start", headers=h)
+
+    r = client.post(
+        f"/api/v1/screenings/{s['id']}/regenerate-questions", headers=h, json={}
+    )
+    assert r.status_code == 409
+    assert r.json()["detail"]["code"] == "invalid_status"
+
+
+def test_create_soft_skips_ai_failure(
+    client: TestClient, recruiter_user, candidate, monkeypatch
+) -> None:
+    """create с пустыми questions и упавшим AI всё равно возвращает 201."""
+    from app.modules.screening.ai import AiUnavailableError
+
+    async def boom(**kwargs):
+        raise AiUnavailableError("no key")
+
+    monkeypatch.setattr(
+        "app.modules.screening.ai.generate_screening_questions", boom
+    )
+
+    h = auth_headers(client, recruiter_user.email)
+    r = client.post(
+        "/api/v1/screenings",
+        headers=h,
+        json={"candidateId": str(candidate.id), "questions": []},
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["questions"] == []
 
 

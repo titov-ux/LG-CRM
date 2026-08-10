@@ -1,8 +1,9 @@
 """SQLAlchemy-модели AI-скрининга (видеоинтервью в Телемосте).
 
 См. «План_AI_скрининга.docx» (корень репо). Этап 1: сессии, чек-лист вопросов.
-Этап 2: realtime WS + stt-service → screening_segments. AI вопросов/отчёта —
-Этапы 3–5; модель данных заложена сразу.
+Этап 2: realtime WS + stt-service → screening_segments. Этап 3: генерация
+плана вопросов (source=pregenerated) через YandexGPT. Realtime-агент /
+отчёт — Этапы 4–5.
 
 Связи:
 * `candidate_id` — обязательная (скрининг всегда про кандидата), CASCADE:

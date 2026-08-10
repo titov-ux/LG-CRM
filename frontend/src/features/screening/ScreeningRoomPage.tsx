@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from '@tanstack/react-router';
+import { HTTPError } from 'ky';
 import {
   ArrowLeft,
   Check,
   CircleDot,
   ExternalLink,
+  Loader2,
   Mic,
   MonitorUp,
   Plus,
+  Sparkles,
   Square,
   Trash2,
   Video,
@@ -31,6 +34,7 @@ import {
   useAddQuestion,
   useAttachScreeningAudio,
   useFinishScreening,
+  useRegenerateQuestions,
   useRemoveQuestion,
   useScreening,
   useScreeningTranscript,
@@ -40,9 +44,29 @@ import {
 } from './hooks';
 
 /**
- * Комната скрининга (Этапы 1–2): согласие → захват → запись + live-транскрипт
- * по WS → выгрузка в S3. Чек-лист пока вручную; AI-агент — Этапы 3–4.
+ * Комната скрининга: подготовка вопросов (Этап 3) → захват → live-транскрипт
+ * (Этап 2). Realtime-агент follow-up — Этап 4.
  */
+
+async function extractAiError(e: unknown): Promise<string> {
+  if (e instanceof HTTPError) {
+    try {
+      const body = (await e.response.clone().json()) as
+        | { detail?: { code?: string; message?: string } }
+        | undefined;
+      if (body?.detail?.message) return body.detail.message;
+    } catch {
+      /* ignore */
+    }
+    if (e.response.status === 503) {
+      return 'Сервис AI временно недоступен. Добавьте вопросы вручную.';
+    }
+    if (e.response.status === 502) {
+      return 'Не удалось сгенерировать вопросы. Попробуйте ещё раз.';
+    }
+  }
+  return 'Не удалось сгенерировать вопросы';
+}
 
 function LevelBar({ level, label, active }: { level: number; label: string; active: boolean }) {
   return (
@@ -69,14 +93,41 @@ const Q_STATUS_LABEL: Record<ScreeningQuestionStatus, string> = {
 function QuestionRow({
   q,
   disabled,
+  editable,
   onCycle,
   onRemove,
+  onSave,
 }: {
   q: ScreeningQuestion;
   disabled: boolean;
+  editable: boolean;
   onCycle: () => void;
   onRemove: () => void;
+  onSave: (patch: { text?: string; goal?: string }) => void;
 }) {
+  const [text, setText] = useState(q.text);
+  const [goal, setGoal] = useState(q.goal ?? '');
+
+  useEffect(() => {
+    setText(q.text);
+    setGoal(q.goal ?? '');
+  }, [q.id, q.text, q.goal]);
+
+  const commitText = () => {
+    const next = text.trim();
+    if (!next || next === q.text) {
+      setText(q.text);
+      return;
+    }
+    onSave({ text: next });
+  };
+
+  const commitGoal = () => {
+    const next = goal.trim();
+    if (next === (q.goal ?? '').trim()) return;
+    onSave({ goal: next });
+  };
+
   return (
     <div
       className={cn(
@@ -87,7 +138,7 @@ function QuestionRow({
     >
       <button
         type="button"
-        disabled={disabled}
+        disabled={disabled || editable}
         onClick={onCycle}
         title={`Статус: ${Q_STATUS_LABEL[q.status]} (клик — следующий)`}
         className={cn(
@@ -95,18 +146,43 @@ function QuestionRow({
           q.status === 'answered'
             ? 'border-emerald-500 bg-emerald-500 text-white'
             : 'border-muted-foreground/40 text-muted-foreground hover:border-foreground',
+          editable && 'cursor-default opacity-40',
         )}
       >
         {q.status === 'answered' && <Check className="h-3 w-3" />}
         {q.status === 'asked' && <CircleDot className="h-3 w-3" />}
       </button>
-      <div className="min-w-0 flex-1">
-        <div className={cn('text-[13px] leading-snug', q.status === 'skipped' && 'line-through')}>
-          {q.text}
-        </div>
-        {q.goal && <div className="text-[11px] text-muted-foreground">{q.goal}</div>}
+      <div className="min-w-0 flex-1 space-y-1">
+        {editable ? (
+          <>
+            <Input
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onBlur={commitText}
+              onKeyDown={(e) => e.key === 'Enter' && (e.currentTarget.blur(), commitText())}
+              className="h-8 text-[13px]"
+              disabled={disabled}
+            />
+            <Input
+              value={goal}
+              onChange={(e) => setGoal(e.target.value)}
+              onBlur={commitGoal}
+              onKeyDown={(e) => e.key === 'Enter' && (e.currentTarget.blur(), commitGoal())}
+              placeholder="Цель вопроса (для вас)"
+              className="h-7 text-[11px] text-muted-foreground"
+              disabled={disabled}
+            />
+          </>
+        ) : (
+          <>
+            <div className={cn('text-[13px] leading-snug', q.status === 'skipped' && 'line-through')}>
+              {q.text}
+            </div>
+            {q.goal && <div className="text-[11px] text-muted-foreground">{q.goal}</div>}
+          </>
+        )}
         {q.source !== 'manual' && (
-          <Badge variant="secondary" className="mt-1 text-[10px]">
+          <Badge variant="secondary" className="text-[10px]">
             {q.source === 'pregenerated' ? 'AI · до встречи' : 'AI · follow-up'}
           </Badge>
         )}
@@ -230,6 +306,7 @@ export function ScreeningRoomPage() {
   const addQuestion = useAddQuestion();
   const updateQuestion = useUpdateQuestion();
   const removeQuestion = useRemoveQuestion();
+  const regenerateQuestions = useRegenerateQuestions();
 
   const captureRef = useRef<ScreeningCapture | null>(null);
   const socketRef = useRef<ScreeningSocket | null>(null);
@@ -458,6 +535,15 @@ export function ScreeningRoomPage() {
     setNewQuestion('');
   };
 
+  const onRegenerate = async () => {
+    try {
+      await regenerateQuestions.mutateAsync({ id: session.id });
+      toast.success('План вопросов обновлён');
+    } catch (e) {
+      toast.error(await extractAiError(e));
+    }
+  };
+
   const mmss = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`;
 
   return (
@@ -638,7 +724,7 @@ export function ScreeningRoomPage() {
 
         <Card>
           <CardContent className="space-y-2.5 p-4">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2">
               <div className="text-[13px] font-medium">
                 Вопросы
                 <span className="ml-2 text-[11px] font-normal text-muted-foreground">
@@ -646,11 +732,35 @@ export function ScreeningRoomPage() {
                   {session.questions.length} отвечено
                 </span>
               </div>
+              {isDraft && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={onRegenerate}
+                  disabled={regenerateQuestions.isPending}
+                >
+                  {regenerateQuestions.isPending ? (
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="mr-1.5 h-3.5 w-3.5" />
+                  )}
+                  {session.questions.length ? 'Перегенерировать' : 'Сгенерировать'}
+                </Button>
+              )}
             </div>
 
-            {session.questions.length === 0 && (
+            {regenerateQuestions.isPending && session.questions.length === 0 && (
+              <p className="flex items-center justify-center gap-2 py-6 text-[12px] text-muted-foreground">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                AI готовит план вопросов…
+              </p>
+            )}
+
+            {!regenerateQuestions.isPending && session.questions.length === 0 && (
               <p className="py-4 text-center text-[12px] text-muted-foreground">
-                Добавьте вопросы — во время встречи отмечайте их кликом по кружку.
+                {isDraft
+                  ? 'Сгенерируйте план AI или добавьте вопросы вручную.'
+                  : 'Добавьте вопросы — во время встречи отмечайте их кликом по кружку.'}
               </p>
             )}
             <div className="space-y-1.5">
@@ -658,9 +768,13 @@ export function ScreeningRoomPage() {
                 <QuestionRow
                   key={q.id}
                   q={q}
-                  disabled={!editable}
+                  disabled={!editable || regenerateQuestions.isPending}
+                  editable={isDraft}
                   onCycle={() => cycleStatus(q)}
                   onRemove={() => removeQuestion.mutate({ id: session.id, questionId: q.id })}
+                  onSave={(payload) =>
+                    updateQuestion.mutate({ id: session.id, questionId: q.id, payload })
+                  }
                 />
               ))}
             </div>

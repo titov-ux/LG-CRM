@@ -10,15 +10,19 @@
 * finish: live → done (на Этапе 5 здесь появится Celery-пост-анализ и
   промежуточный статус processing);
 * удалять сессию может ведущий или admin.
+
+Этап 3: генерация / перегенерация плана вопросов через YandexGPT
+(`screening/ai.py`) по резюме кандидата и полям вакансии.
 """
 from __future__ import annotations
 
+import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from sqlalchemy.exc import IntegrityError
 from fastapi import status
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -26,6 +30,8 @@ from app.core.errors import ApiError, Forbidden, NotFound
 from app.modules.candidates.models import Candidate
 from app.modules.files.models import File, FileEntityType
 from app.modules.matching.models import VacancyCandidate
+from app.modules.matching.service import candidate_payload, vacancy_payload
+from app.modules.screening import ai as screening_ai
 from app.modules.screening.models import (
     ScreeningQuestion,
     ScreeningQuestionSource,
@@ -39,6 +45,7 @@ from app.modules.screening.schemas import (
     AddQuestionRequest,
     CreateScreeningRequest,
     FinishScreeningRequest,
+    RegenerateQuestionsRequest,
     ScreeningListResponse,
     ScreeningQuestionDTO,
     ScreeningReportDTO,
@@ -50,6 +57,8 @@ from app.modules.screening.schemas import (
 )
 from app.modules.users.models import Role, User
 from app.modules.vacancies.models import Vacancy, VacancyRecruiter
+
+logger = logging.getLogger(__name__)
 
 _CREATOR_ROLES = (Role.admin, Role.account_manager, Role.recruiter)
 _SEE_ALL_ROLES = (Role.admin, Role.account_manager)
@@ -266,17 +275,40 @@ async def create(
         telemost_url=payload.telemost_url,
         status=ScreeningStatus.draft,
     )
-    for i, text in enumerate(q for q in payload.questions if q.strip()):
+    manual = [q.strip() for q in payload.questions if q.strip()]
+    for i, text in enumerate(manual):
         session.questions.append(
             ScreeningQuestion(
                 position=i,
-                text_=text.strip(),
+                text_=text,
                 source=ScreeningQuestionSource.manual,
             )
         )
     db.add(session)
     await db.commit()
     session = await _load(db, session.id)
+
+    # Этап 3: если рекрутер не вбил вопросы руками — пробуем AI.
+    # Ошибки AI глотаем: сессия уже создана, перегенерация — отдельной кнопкой.
+    if not manual and payload.generate_questions:
+        try:
+            return await regenerate_questions(
+                db, user, session.id, RegenerateQuestionsRequest()
+            )
+        except ApiError as exc:
+            # 503/502 от regenerate — сессия уже есть, рекрутер догенерит кнопкой.
+            if exc.status_code in (
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                status.HTTP_502_BAD_GATEWAY,
+            ):
+                logger.warning(
+                    "screening.create: AI questions skipped for %s: %s",
+                    session.id,
+                    exc.detail,
+                )
+            else:
+                raise
+
     return await to_dto(db, session)
 
 
@@ -321,7 +353,7 @@ async def start(
         )
     if session.status == ScreeningStatus.draft:
         session.status = ScreeningStatus.live
-        session.started_at = datetime.now(timezone.utc)
+        session.started_at = datetime.now(UTC)
         await db.commit()
         session = await _load(db, session_id)
     return await to_dto(db, session)
@@ -343,7 +375,7 @@ async def finish(
         )
     if session.status == ScreeningStatus.live:
         session.status = ScreeningStatus.done  # Этап 5: processing + Celery
-        session.ended_at = datetime.now(timezone.utc)
+        session.ended_at = datetime.now(UTC)
         if payload.duration_sec is not None:
             session.duration_sec = payload.duration_sec
         elif session.started_at is not None:
@@ -448,6 +480,99 @@ async def delete_question(
     if question is None:
         raise NotFound("Вопрос не найден")
     session.questions.remove(question)
+    await db.commit()
+    session = await _load(db, session_id)
+    return await to_dto(db, session)
+
+
+# --- AI questions (Этап 3) -------------------------------------------------
+
+
+async def regenerate_questions(
+    db: AsyncSession,
+    user: User,
+    session_id: uuid.UUID,
+    payload: RegenerateQuestionsRequest | None = None,
+) -> ScreeningSessionResponse:
+    """Перегенерировать план вопросов (только draft).
+
+    По умолчанию сохраняет `source=manual`, заменяет AI/follow-up.
+    `replace_manual=true` — полный сброс чек-листа.
+    """
+    payload = payload or RegenerateQuestionsRequest()
+    session = await _load(db, session_id)
+    _ensure_can_edit(user, session)
+    if session.status != ScreeningStatus.draft:
+        raise ApiError(
+            status.HTTP_409_CONFLICT,
+            "invalid_status",
+            "Перегенерировать вопросы можно только до начала встречи",
+        )
+
+    cand = await db.get(Candidate, session.candidate_id)
+    if cand is None:
+        raise NotFound("Кандидат не найден")
+    vac = (
+        await db.get(Vacancy, session.vacancy_id)
+        if session.vacancy_id is not None
+        else None
+    )
+
+    try:
+        generated = await screening_ai.generate_screening_questions(
+            candidate_payload=candidate_payload(cand),
+            vacancy_payload=vacancy_payload(vac) if vac is not None else None,
+            count=payload.count if payload.count is not None else 8,
+        )
+    except screening_ai.AiUnavailableError as exc:
+        logger.warning("screening.regenerate unavailable: %s", exc)
+        raise ApiError(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "ai_unavailable",
+            "Сервис AI временно недоступен. Добавьте вопросы вручную или попробуйте позже.",
+        ) from exc
+    except screening_ai.AiBadRequestError as exc:
+        logger.error("screening.regenerate bad request: %s", exc)
+        raise ApiError(
+            status.HTTP_502_BAD_GATEWAY,
+            "ai_bad_request",
+            "Не удалось сгенерировать вопросы. Попробуйте ещё раз.",
+        ) from exc
+
+    keep: list[ScreeningQuestion] = []
+    if not payload.replace_manual:
+        keep = [
+            q
+            for q in session.questions
+            if q.source == ScreeningQuestionSource.manual
+        ]
+    # SQLAlchemy orphan-delete: очищаем коллекцию и наполняем заново.
+    session.questions.clear()
+    await db.flush()
+
+    position = 0
+    for q in sorted(keep, key=lambda x: x.position):
+        session.questions.append(
+            ScreeningQuestion(
+                position=position,
+                text_=q.text_,
+                goal=q.goal,
+                source=ScreeningQuestionSource.manual,
+                status=q.status,
+            )
+        )
+        position += 1
+    for item in generated:
+        session.questions.append(
+            ScreeningQuestion(
+                position=position,
+                text_=item["text"],
+                goal=item.get("goal"),
+                source=ScreeningQuestionSource.pregenerated,
+            )
+        )
+        position += 1
+
     await db.commit()
     session = await _load(db, session_id)
     return await to_dto(db, session)

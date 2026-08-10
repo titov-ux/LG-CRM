@@ -85,7 +85,9 @@ class CreateScreeningRequest(CamelModel):
     match_id: uuid.UUID | None = None
     telemost_url: str | None = None
     # Стартовый список вопросов (рекрутер может вбить руками при создании).
+    # Если пусто и generate_questions=true — бэкенд вызовет YandexGPT (Этап 3).
     questions: list[str] = []
+    generate_questions: bool = True
 
 
 class UpdateScreeningRequest(CamelModel):
@@ -117,3 +119,12 @@ class UpdateQuestionRequest(CamelModel):
     goal: str | None = None
     status: ScreeningQuestionStatus | None = None
     position: int | None = None
+
+
+class RegenerateQuestionsRequest(CamelModel):
+    """Перегенерация плана вопросов (только draft)."""
+
+    # Сколько вопросов просить у модели; None → дефолт из screening/ai.py.
+    count: int | None = None
+    # true → убрать и ручные вопросы; false → сохранить source=manual.
+    replace_manual: bool = False

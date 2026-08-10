@@ -2384,6 +2384,47 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ApiError' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /screenings/{id}/regenerate-questions:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [screenings]
+      summary: Сгенерировать / перегенерировать план вопросов (AI)
+      description: |
+        Только для сессии в статусе `draft`. Промпт строится по резюме кандидата
+        и полям вакансии (если привязана). По умолчанию сохраняет вопросы с
+        `source=manual`, заменяет AI/follow-up. Ошибки: 503 `ai_unavailable`,
+        502 `ai_bad_request`, 409 `invalid_status`.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                count: { type: integer, minimum: 5, maximum: 12, nullable: true }
+                replaceManual: { type: boolean, default: false }
+      responses:
+        '200':
+          description: ScreeningSession
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScreeningSession' }
+        '409':
+          description: invalid_status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '502':
+          description: ai_bad_request
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '503':
+          description: ai_unavailable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
   /screenings/{id}/questions:
     parameters:
       - $ref: '#/components/parameters/UuidPathId'
@@ -4156,6 +4197,12 @@ components:
           type: array
           items: { type: string }
           default: []
+        generateQuestions:
+          type: boolean
+          default: true
+          description: |
+            Если true и `questions` пуст — при создании вызывается YandexGPT.
+            Сбой AI не блокирует создание (сессия вернётся с пустым чек-листом).
     UpdateScreeningRequest:
       type: object
       properties:

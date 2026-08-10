@@ -59,6 +59,13 @@ class UpdateUserRequest(CamelModel):
     is_active: bool | None = None
 
 
+class SetPasswordRequest(CamelModel):
+    """Админский сброс пароля другому пользователю (POST /users/{id}/password)."""
+
+    # Границы синхронны с ActivateInviteRequest и zod-схемой на фронте.
+    password: str = Field(min_length=8, max_length=128)
+
+
 class UpdateProfileRequest(CamelModel):
     email: EmailStr | None = None
     telegram: str | None = None

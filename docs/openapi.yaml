@@ -221,6 +221,30 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ApiError' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /users/{id}/password:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [users]
+      summary: Сбросить пароль пользователя (админ)
+      description: |
+        Задаёт пользователю новый пароль без знания текущего. Все его активные
+        сессии разлогиниваются (refresh-токены отзываются). Свой пароль так
+        менять нельзя — 400 `use_profile_endpoint`, для себя используется
+        `POST /auth/me/password` с подтверждением текущего пароля.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetPasswordRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '400':
+          description: Попытка сменить пароль самому себе (code=use_profile_endpoint)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   # ─────────────── INVITE (публичные) ───────────────
   /auth/invite/{token}:
@@ -2297,6 +2321,13 @@ components:
       properties:
         currentPassword: { type: string, minLength: 1 }
         newPassword:     { type: string, minLength: 8, maxLength: 128 }
+
+    SetPasswordRequest:
+      description: Админский сброс пароля другому пользователю (без текущего пароля).
+      type: object
+      required: [password]
+      properties:
+        password: { type: string, minLength: 8, maxLength: 128 }
 
     # ─── Users ───
     Role:

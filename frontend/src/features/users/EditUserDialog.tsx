@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
+import { Copy, Dices, KeyRound } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -6,11 +8,26 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Separator } from '@/components/ui/separator';
 import { UserAvatar } from '@/components/common/UserAvatar';
 import type { User } from '@/api/types';
 import { useAuthStore } from '@/stores/auth';
 import { UserForm } from './UserForm';
-import { useUpdateUser } from './hooks';
+import { useSetUserPassword, useUpdateUser } from './hooks';
+
+/** Читаемый случайный пароль: буквы + цифры, без похожих символов (l/1/O/0). */
+function generatePassword(length = 12): string {
+  const alphabet = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = new Uint32Array(length);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => alphabet[b % alphabet.length]).join('');
+}
+
+const PASSWORD_VALID = (v: string) =>
+  v.length >= 8 && v.length <= 64 && /[A-Za-zА-Яа-я]/.test(v) && /\d/.test(v);
 
 interface Props {
   user: User | null;
@@ -25,8 +42,35 @@ interface Props {
  */
 export function EditUserDialog({ user, onOpenChange }: Props) {
   const updateUser = useUpdateUser();
+  const setPassword = useSetUserPassword();
   const currentUser = useAuthStore((s) => s.user);
   const isSelf = !!user && currentUser?.id === user.id;
+  const [newPassword, setNewPassword] = useState('');
+
+  // Не тащим введённый пароль между разными пользователями.
+  useEffect(() => {
+    setNewPassword('');
+  }, [user?.id]);
+
+  const handleSetPassword = () => {
+    if (!user) return;
+    if (!PASSWORD_VALID(newPassword)) {
+      toast.error('Пароль: минимум 8 символов, буквы и цифры');
+      return;
+    }
+    setPassword.mutate(
+      { id: user.id, password: newPassword },
+      {
+        onSuccess: () => {
+          toast.success(
+            `Пароль для «${user.fullName}» обновлён. Все его активные сессии завершены.`,
+          );
+          setNewPassword('');
+        },
+        onError: () => toast.error('Не удалось сменить пароль'),
+      },
+    );
+  };
 
   return (
     <Dialog open={!!user} onOpenChange={(o) => !updateUser.isPending && !o && onOpenChange(false)}>
@@ -87,6 +131,68 @@ export function EditUserDialog({ user, onOpenChange }: Props) {
               )
             }
           />
+        )}
+
+        {user && !isSelf && (
+          <>
+            <Separator />
+            <div className="space-y-2">
+              <Label htmlFor="admin-new-password" className="flex items-center gap-1.5 text-sm">
+                <KeyRound className="h-3.5 w-3.5" />
+                Сбросить пароль
+              </Label>
+              <p className="text-[12px] text-muted-foreground">
+                Пользователь будет разлогинен на всех устройствах и сможет войти
+                только с новым паролем. Передайте его сотруднику лично.
+              </p>
+              <div className="flex gap-2">
+                <Input
+                  id="admin-new-password"
+                  type="text"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Минимум 8 символов, буквы и цифры"
+                  autoComplete="off"
+                  className="font-mono"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="shrink-0"
+                  title="Сгенерировать пароль"
+                  onClick={() => setNewPassword(generatePassword())}
+                >
+                  <Dices className="h-4 w-4" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="shrink-0"
+                  title="Скопировать пароль"
+                  disabled={!newPassword}
+                  onClick={() => {
+                    navigator.clipboard.writeText(newPassword);
+                    toast.success('Пароль скопирован');
+                  }}
+                >
+                  <Copy className="h-4 w-4" />
+                </Button>
+              </div>
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={!newPassword || setPassword.isPending}
+                  onClick={handleSetPassword}
+                >
+                  {setPassword.isPending ? 'Сохранение…' : 'Установить пароль'}
+                </Button>
+              </div>
+            </div>
+          </>
         )}
       </DialogContent>
     </Dialog>

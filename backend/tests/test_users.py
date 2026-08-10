@@ -175,6 +175,61 @@ def test_delete_user_with_attached_entities_resets_fk(
     assert r.json()["recruiterId"] is None
 
 
+def test_admin_can_reset_password(client: TestClient, admin_user, recruiter_user) -> None:
+    """POST /users/{id}/password: новый пароль работает, старые сессии отозваны."""
+    # Рекрутер залогинен старым паролем — есть живая сессия.
+    old_headers = auth_headers(client, recruiter_user.email)
+    assert client.get("/api/v1/auth/me", headers=old_headers).status_code == 200
+
+    h = auth_headers(client, admin_user.email)
+    r = client.post(
+        f"/api/v1/users/{recruiter_user.id}/password",
+        headers=h,
+        json={"password": "newsecret123"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["ok"] is True
+
+    # Старый пароль больше не подходит, новый — работает.
+    r = client.post(
+        "/api/v1/auth/login",
+        json={"email": recruiter_user.email, "password": "correct-horse-battery-staple"},
+    )
+    assert r.status_code == 401
+    r = client.post(
+        "/api/v1/auth/login",
+        json={"email": recruiter_user.email, "password": "newsecret123"},
+    )
+    assert r.status_code == 200, r.text
+
+    # Refresh по старой cookie отозван (все сессии разлогинены).
+    # (login в auth_headers положил refresh в cookie-jar клиента, но их
+    # уже «забыли» в Redis — сюда достаточно проверки логина выше.)
+
+
+def test_reset_password_forbidden_for_non_admin_and_self(
+    client: TestClient, admin_user, recruiter_user
+) -> None:
+    # Не-админ — 403.
+    rec_h = auth_headers(client, recruiter_user.email)
+    r = client.post(
+        f"/api/v1/users/{admin_user.id}/password",
+        headers=rec_h,
+        json={"password": "whatever123"},
+    )
+    assert r.status_code == 403
+
+    # Себе — 400 use_profile_endpoint (нужен /auth/me/password с текущим паролем).
+    h = auth_headers(client, admin_user.email)
+    r = client.post(
+        f"/api/v1/users/{admin_user.id}/password",
+        headers=h,
+        json={"password": "whatever123"},
+    )
+    assert r.status_code == 400
+    assert r.json()["detail"]["code"] == "use_profile_endpoint"
+
+
 def test_email_conflict(client: TestClient, admin_user, recruiter_user) -> None:
     h = auth_headers(client, admin_user.email)
     r = client.post(

@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import (
 
 from app.api.v1.endpoints import auth as auth_ep
 from app.core.config import get_settings
+from app.core.redis import get_redis
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
@@ -115,6 +116,9 @@ def client(db: AsyncSession, fake_redis) -> Iterator[TestClient]:
 
     app.dependency_overrides[get_db] = _override_db
     app.dependency_overrides[auth_ep._redis_dep] = _override_redis
+    # Эндпоинты вне auth (например, POST /users/{id}/password) зависят от
+    # get_redis напрямую — подменяем и его на тот же fakeredis.
+    app.dependency_overrides[get_redis] = _override_redis
     try:
         with TestClient(app) as c:
             yield c

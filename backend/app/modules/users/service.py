@@ -11,6 +11,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import status
+from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +20,7 @@ from app.core.config import get_settings
 from app.core.errors import ApiError
 from app.core.security import hash_password
 from app.integrations.email import render_invite_email, send_email
+from app.modules.auth import store as auth_store
 from app.modules.users.invites import (
     INVITE_TTL_DAYS,
     PasswordInvite,
@@ -212,6 +214,37 @@ async def update_user(
             status.HTTP_409_CONFLICT, "email_exists", "Email уже занят"
         ) from e
     await db.refresh(user)
+    return user
+
+
+async def set_password(
+    db: AsyncSession,
+    redis: Redis,
+    user_id: uuid.UUID,
+    new_password: str,
+    *,
+    actor_id: uuid.UUID,
+) -> User:
+    """Админский сброс пароля другому пользователю.
+
+    Себе пароль так менять нельзя — свой пароль требует подтверждения текущим
+    (POST /auth/me/password), иначе угнанная админская сессия могла бы
+    «переприсвоить» аккаунт без знания пароля.
+
+    После смены отзываются ВСЕ refresh-токены пользователя: активные сессии на
+    его устройствах разлогиниваются, вход — только с новым паролем.
+    """
+    if user_id == actor_id:
+        raise ApiError(
+            status.HTTP_400_BAD_REQUEST,
+            "use_profile_endpoint",
+            "Свой пароль меняется в профиле — там нужно подтвердить текущий",
+        )
+    user = await get_user(db, user_id)
+    user.password_hash = hash_password(new_password)
+    await db.commit()
+    await db.refresh(user)
+    await auth_store.forget_all_refresh(redis, str(user.id))
     return user
 
 

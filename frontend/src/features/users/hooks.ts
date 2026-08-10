@@ -53,6 +53,13 @@ export function useDeleteUser() {
   });
 }
 
+export function useSetUserPassword() {
+  return useMutation({
+    mutationFn: ({ id, password }: { id: UUID; password: string }) =>
+      usersApi.setPassword(id, password),
+  });
+}
+
 export function useResendInvite() {
   const queryClient = useQueryClient();
   return useMutation({

@@ -9,8 +9,10 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, status
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.redis import get_redis
 from app.db.session import get_db
 from app.modules.auth.dependencies import get_current_user, require_roles
 from app.modules.auth.schemas import OkResponse
@@ -20,6 +22,7 @@ from app.modules.users.schemas import (
     CreateUserRequest,
     CreateUserResponse,
     InviteResendResponse,
+    SetPasswordRequest,
     UpdateUserRequest,
     UserResponse,
 )
@@ -90,6 +93,27 @@ async def update_user(
 ) -> UserResponse:
     user = await service.update_user(db, user_id, payload)
     return UserResponse.model_validate(user)
+
+
+@router.post(
+    "/{user_id}/password",
+    response_model=OkResponse,
+    summary="Сбросить пароль пользователя (админ)",
+)
+async def set_user_password(
+    user_id: uuid.UUID,
+    payload: SetPasswordRequest,
+    actor: User = Depends(require_roles(Role.admin.value)),
+    db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
+) -> OkResponse:
+    """Задать пользователю новый пароль без знания текущего.
+
+    Все его активные сессии разлогиниваются. Свой пароль так менять нельзя —
+    для этого POST /auth/me/password (с подтверждением текущего пароля).
+    """
+    await service.set_password(db, redis, user_id, payload.password, actor_id=actor.id)
+    return OkResponse()
 
 
 @router.delete("/{user_id}", response_model=OkResponse, summary="Удалить пользователя")

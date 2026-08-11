@@ -22,6 +22,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
+import type { Vacancy } from '@/api/types';
 import { useAuthStore } from '@/stores/auth';
 import { useCandidatesList, useVacanciesList } from '@/features/calendar/pickers';
 import { useCreateScreening } from './hooks';
@@ -34,6 +35,8 @@ type PickOption = {
   keywords?: string;
   /** Подпись справа, напр. «мой» / «кандидат». */
   hint?: string;
+  /** Заголовок группы в списке; опции с одним group идут подряд. */
+  group?: string;
 };
 
 function SearchablePick({
@@ -55,6 +58,20 @@ function SearchablePick({
 }) {
   const [open, setOpen] = useState(false);
   const selected = options.find((o) => o.value === value);
+
+  const groups = useMemo(() => {
+    const order: string[] = [];
+    const map = new Map<string, PickOption[]>();
+    for (const o of options) {
+      const key = o.group ?? '';
+      if (!map.has(key)) {
+        map.set(key, []);
+        order.push(key);
+      }
+      map.get(key)!.push(o);
+    }
+    return order.map((key) => ({ heading: key || undefined, items: map.get(key)! }));
+  }, [options]);
 
   return (
     <Popover open={open} onOpenChange={setOpen} modal>
@@ -82,31 +99,33 @@ function SearchablePick({
           <CommandInput placeholder={searchPlaceholder} />
           <CommandList>
             <CommandEmpty>{emptyText}</CommandEmpty>
-            <CommandGroup>
-              {options.map((o) => (
-                <CommandItem
-                  key={o.value}
-                  value={`${o.label} ${o.keywords ?? ''} ${o.hint ?? ''} ${o.value}`}
-                  onSelect={() => {
-                    onChange(o.value);
-                    setOpen(false);
-                  }}
-                >
-                  <Check
-                    className={cn(
-                      'mr-2 h-4 w-4 shrink-0',
-                      value === o.value ? 'opacity-100' : 'opacity-0',
+            {groups.map(({ heading, items }) => (
+              <CommandGroup key={heading ?? '__default'} heading={heading}>
+                {items.map((o) => (
+                  <CommandItem
+                    key={o.value}
+                    value={`${o.label} ${o.keywords ?? ''} ${o.hint ?? ''} ${o.value}`}
+                    onSelect={() => {
+                      onChange(o.value);
+                      setOpen(false);
+                    }}
+                  >
+                    <Check
+                      className={cn(
+                        'mr-2 h-4 w-4 shrink-0',
+                        value === o.value ? 'opacity-100' : 'opacity-0',
+                      )}
+                    />
+                    <span className="min-w-0 flex-1 truncate">{o.label}</span>
+                    {o.hint && (
+                      <span className="ml-2 shrink-0 text-[10px] text-muted-foreground">
+                        {o.hint}
+                      </span>
                     )}
-                  />
-                  <span className="min-w-0 flex-1 truncate">{o.label}</span>
-                  {o.hint && (
-                    <span className="ml-2 shrink-0 text-[10px] text-muted-foreground">
-                      {o.hint}
-                    </span>
-                  )}
-                </CommandItem>
-              ))}
-            </CommandGroup>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            ))}
           </CommandList>
         </Command>
       </PopoverContent>
@@ -189,31 +208,37 @@ export function NewScreeningDialog({
 
   const vacancyOptions = useMemo<PickOption[]>(() => {
     const linked = new Set(linkedVacancyIds);
+    /** Прикреплённая к кандидату → где я ответственный → остальные. */
+    const rank = (v: Vacancy) => {
+      if (linked.has(v.id)) return 0;
+      if (meId && (v.recruiterIds?.includes(meId) || v.accountManagerId === meId)) {
+        return 1;
+      }
+      return 2;
+    };
     const list = [...(vacancies ?? [])];
     list.sort((a, b) => {
-      const aLinked = linked.has(a.id) ? 0 : 1;
-      const bLinked = linked.has(b.id) ? 0 : 1;
-      if (aLinked !== bLinked) return aLinked - bLinked;
-      if (aLinked === 0 && bLinked === 0) {
+      const ra = rank(a);
+      const rb = rank(b);
+      if (ra !== rb) return ra - rb;
+      if (ra === 0) {
         return linkedVacancyIds.indexOf(a.id) - linkedVacancyIds.indexOf(b.id);
       }
-      const aMine = meId && a.recruiterIds?.includes(meId) ? 0 : 1;
-      const bMine = meId && b.recruiterIds?.includes(meId) ? 0 : 1;
-      if (aMine !== bMine) return aMine - bMine;
       return a.title.localeCompare(b.title, 'ru');
     });
+
     return [
       { value: NONE, label: 'Без вакансии' },
-      ...list.map((v) => ({
-        value: v.id,
-        label: v.title,
-        keywords: [v.project, ...(v.stack ?? [])].filter(Boolean).join(' '),
-        hint: linked.has(v.id)
-          ? 'кандидат'
-          : meId && v.recruiterIds?.includes(meId)
-            ? 'моя'
-            : undefined,
-      })),
+      ...list.map((v) => {
+        const r = rank(v);
+        return {
+          value: v.id,
+          label: v.title,
+          keywords: [v.project, ...(v.stack ?? [])].filter(Boolean).join(' '),
+          hint: r === 0 ? 'кандидат' : r === 1 ? 'моя' : undefined,
+          group: r === 0 ? 'У кандидата' : r === 1 ? 'Мои' : 'Остальные',
+        };
+      }),
     ];
   }, [vacancies, linkedVacancyIds, meId]);
 

@@ -43,8 +43,15 @@ export function useCandidatesList(enabled = true) {
 
 export function useVacanciesList(enabled = true) {
   return useQuery({
-    queryKey: ['calendar', 'pick', 'vacancies'],
-    queryFn: async () => normalize<Vacancy>(await (vacanciesApi as { list: (p?: unknown) => Promise<unknown> }).list()),
+    queryKey: ['calendar', 'pick', 'vacancies', { pageSize: 200 }],
+    // Как у кандидатов: бэкенд режет pageSize сверху (le=200), иначе в пикере
+    // не хватает «моих» вакансий с хвоста списка.
+    queryFn: async () =>
+      normalize<Vacancy>(
+        await (vacanciesApi as { list: (p?: unknown) => Promise<unknown> }).list({
+          pageSize: 200,
+        }),
+      ),
     staleTime: 60_000,
     enabled,
   });

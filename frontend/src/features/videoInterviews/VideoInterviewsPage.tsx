@@ -45,6 +45,20 @@ function fmtDuration(sec?: number | null): string | null {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
+function confirmDeleteScreening(status: ScreeningStatus): boolean {
+  if (status === 'draft') {
+    return confirm('Удалить черновик скрининга?');
+  }
+  if (status === 'live') {
+    return confirm(
+      'Удалить идущую встречу? Запись и данные будут удалены безвозвратно.',
+    );
+  }
+  return confirm(
+    'Удалить интервью? Запись, транскрипт и отчёт будут удалены безвозвратно.',
+  );
+}
+
 export function VideoInterviewsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const canRun = useCan('screening:run');
@@ -168,23 +182,29 @@ export function VideoInterviewsPage() {
                   {s.questions.length ? ` · вопросов: ${s.questions.length}` : ''}
                 </div>
               </Link>
-              {s.status === 'draft' && canRun && isOwner(s.recruiterId) && (
+              {canRun && isOwner(s.recruiterId) && (
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon"
                   className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
-                  title="Удалить черновик"
+                  title={s.status === 'draft' ? 'Удалить черновик' : 'Удалить интервью'}
                   disabled={deleteSession.isPending}
                   onClick={async (e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    if (!confirm('Удалить черновик скрининга?')) return;
+                    if (!confirmDeleteScreening(s.status)) return;
                     try {
                       await deleteSession.mutateAsync(s.id);
-                      toast.success('Черновик удалён');
+                      toast.success(
+                        s.status === 'draft' ? 'Черновик удалён' : 'Интервью удалено',
+                      );
                     } catch {
-                      toast.error('Не удалось удалить черновик');
+                      toast.error(
+                        s.status === 'draft'
+                          ? 'Не удалось удалить черновик'
+                          : 'Не удалось удалить интервью',
+                      );
                     }
                   }}
                 >

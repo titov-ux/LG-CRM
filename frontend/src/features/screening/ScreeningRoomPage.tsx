@@ -935,25 +935,6 @@ export function ScreeningRoomPage() {
                     Работайте в наушниках. Телемост — во вкладке этого же браузера. В диалоге
                     выбора включите «Поделиться звуком вкладки».
                   </p>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full text-destructive hover:bg-destructive/10 hover:text-destructive"
-                    disabled={deleteSession.isPending}
-                    onClick={async () => {
-                      if (!confirm('Удалить черновик скрининга?')) return;
-                      try {
-                        await deleteSession.mutateAsync(session.id);
-                        toast.success('Черновик удалён');
-                        navigate({ to: '/video-interviews' });
-                      } catch {
-                        toast.error('Не удалось удалить черновик');
-                      }
-                    }}
-                  >
-                    <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-                    {deleteSession.isPending ? 'Удаляем…' : 'Удалить черновик'}
-                  </Button>
                 </>
               )}
 
@@ -1080,6 +1061,45 @@ export function ScreeningRoomPage() {
                     <div>Нет прав на просмотр записи</div>
                   )}
                 </div>
+              )}
+
+              {canControl && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  disabled={deleteSession.isPending}
+                  onClick={async () => {
+                    const ok = isDraft
+                      ? confirm('Удалить черновик скрининга?')
+                      : isLive
+                        ? confirm(
+                            'Удалить идущую встречу? Запись и данные будут удалены безвозвратно.',
+                          )
+                        : confirm(
+                            'Удалить интервью? Запись, транскрипт и отчёт будут удалены безвозвратно.',
+                          );
+                    if (!ok) return;
+                    try {
+                      await deleteSession.mutateAsync(session.id);
+                      toast.success(isDraft ? 'Черновик удалён' : 'Интервью удалено');
+                      navigate({ to: '/video-interviews' });
+                    } catch {
+                      toast.error(
+                        isDraft
+                          ? 'Не удалось удалить черновик'
+                          : 'Не удалось удалить интервью',
+                      );
+                    }
+                  }}
+                >
+                  <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                  {deleteSession.isPending
+                    ? 'Удаляем…'
+                    : isDraft
+                      ? 'Удалить черновик'
+                      : 'Удалить интервью'}
+                </Button>
               )}
             </CardContent>
           </Card>

@@ -143,6 +143,46 @@ async def test_run_post_analysis_fallback_on_ai_unavailable(
 
 
 @pytest.mark.asyncio
+async def test_run_post_analysis_fallback_on_empty_transcript(
+    db: AsyncSession, recruiter_user, candidate, monkeypatch
+) -> None:
+    """Пустой транскрипт → fallback без вызова LLM (не анализ резюме)."""
+    _patch_session_local(monkeypatch, db)
+    session = ScreeningSession(
+        candidate_id=candidate.id,
+        recruiter_id=recruiter_user.id,
+        status=ScreeningStatus.processing,
+        started_at=datetime.now(UTC),
+        ended_at=datetime.now(UTC),
+        duration_sec=60,
+    )
+    db.add(session)
+    await db.commit()
+    sid = session.id
+
+    called = {"n": 0}
+
+    async def _should_not_run(**kwargs):
+        called["n"] += 1
+        raise AssertionError("LLM must not run on empty transcript")
+
+    monkeypatch.setattr(screening_report, "generate_screening_report", _should_not_run)
+
+    await screening_service.run_post_analysis(sid)
+
+    await db.refresh(session)
+    assert session.status == ScreeningStatus.done
+    assert called["n"] == 0
+    report = (
+        await db.execute(
+            select(ScreeningReport).where(ScreeningReport.session_id == sid)
+        )
+    ).scalar_one()
+    assert report.model == "fallback"
+    assert "почти нет" in report.summary
+
+
+@pytest.mark.asyncio
 async def test_run_post_analysis_sets_error_on_unexpected(
     db: AsyncSession, recruiter_user, candidate, monkeypatch
 ) -> None:
@@ -235,8 +275,15 @@ async def test_attach_audio_rejects_foreign_file(
 
 @pytest.mark.asyncio
 async def test_attach_audio_ok(
-    db: AsyncSession, recruiter_user, candidate
+    db: AsyncSession, recruiter_user, candidate, monkeypatch
 ) -> None:
+    _patch_session_local(monkeypatch, db)
+
+    async def _noop_offline(_sid: uuid.UUID) -> int:
+        return 0
+
+    monkeypatch.setattr(screening_service, "run_offline_transcription", _noop_offline)
+
     session = ScreeningSession(
         candidate_id=candidate.id,
         recruiter_id=recruiter_user.id,

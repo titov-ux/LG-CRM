@@ -63,6 +63,7 @@ class PresignedPost:
 class S3Adapter(Protocol):
     def presign_post(self, *, file_key: str, mime: str, max_bytes: int) -> PresignedPost: ...
     def presign_get(self, *, file_key: str, expires_in: int = 300) -> str: ...
+    def download_bytes(self, *, file_key: str) -> bytes: ...
     def delete(self, *, file_key: str) -> None: ...
 
 
@@ -104,6 +105,11 @@ class BotoS3Adapter:
             Params={"Bucket": self._bucket, "Key": file_key},
             ExpiresIn=expires_in,
         )
+
+    def download_bytes(self, *, file_key: str) -> bytes:
+        obj = self._client.get_object(Bucket=self._bucket, Key=file_key)
+        body = obj["Body"].read()
+        return body if isinstance(body, (bytes, bytearray)) else bytes(body)
 
     def delete(self, *, file_key: str) -> None:
         self._client.delete_object(Bucket=self._bucket, Key=file_key)

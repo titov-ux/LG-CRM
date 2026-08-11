@@ -109,11 +109,14 @@ function TranscriptPane({
   segments,
   partials,
   sttStatus,
+  processingAudio,
 }: {
   live: boolean;
   segments: LiveSegment[];
   partials: Partial<Record<ScreeningSpeaker, string>>;
   sttStatus: SttStatus;
+  /** Идёт офлайн-распознавание прикреплённой записи. */
+  processingAudio?: boolean;
 }) {
   const boxRef = useRef<HTMLDivElement | null>(null);
   /** Автоскролл только если рекрутер и так внизу — иначе не дёргаем чтение. */
@@ -145,7 +148,9 @@ function TranscriptPane({
             ? sttStatus === 'ok'
               ? 'Слушаем… реплики появятся здесь по мере разговора.'
               : 'Ожидание распознавания…'
-            : 'Транскрипт пуст.'}
+            : processingAudio
+              ? 'Распознаём запись… текст появится через минуту-две.'
+              : 'Транскрипт пуст.'}
         </p>
       )}
       <div
@@ -406,7 +411,9 @@ export function ScreeningRoomPage() {
   const socket = useScreeningSocket(id, !!isLive && canControl);
   const sendFrameRef = useRef(socket.sendFrame);
   sendFrameRef.current = socket.sendFrame;
-  const { data: storedSegments } = useScreeningSegments(id, !!isDone && canViewReport);
+  const { data: storedSegments } = useScreeningSegments(id, !!isDone && canViewReport, {
+    pollWhileProcessing: session?.status === 'processing',
+  });
 
   /**
    * Длительность считаем по startedAt, а не тиками setInterval: вкладка
@@ -473,7 +480,9 @@ export function ScreeningRoomPage() {
     try {
       await uploadRecording(pendingBlob);
       setPendingBlob(null);
-      toast.success('Запись сохранена');
+      toast.success('Запись сохранена — запускаем распознавание');
+      await queryClient.invalidateQueries({ queryKey: screeningKeys.byId(id) });
+      await queryClient.invalidateQueries({ queryKey: screeningKeys.segments(id) });
     } catch {
       toast.error('Снова не удалось выгрузить запись — попробуйте позже или скачайте локально');
     } finally {
@@ -492,10 +501,27 @@ export function ScreeningRoomPage() {
       const rec = await uploadFile({ entityType: 'screening', entityId: id, file: normalized });
       await attachAudio.mutateAsync({ id, fileId: rec.id });
       setPendingBlob(null);
-      toast.success('Запись сохранена');
+      toast.success('Запись сохранена — запускаем распознавание');
       await queryClient.invalidateQueries({ queryKey: screeningKeys.byId(id) });
+      await queryClient.invalidateQueries({ queryKey: screeningKeys.segments(id) });
     } catch {
       toast.error('Не удалось прикрепить файл — проверьте, что это аудио (.webm) и сеть в порядке');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  /** Повторно привязать уже сохранённый файл → бэкенд запустит офлайн-STT. */
+  const retranscribeAttached = async () => {
+    if (!session?.audioFileId) return;
+    setUploading(true);
+    try {
+      await attachAudio.mutateAsync({ id, fileId: session.audioFileId });
+      toast.success('Запущено распознавание записи');
+      await queryClient.invalidateQueries({ queryKey: screeningKeys.byId(id) });
+      await queryClient.invalidateQueries({ queryKey: screeningKeys.segments(id) });
+    } catch {
+      toast.error('Не удалось запустить распознавание');
     } finally {
       setUploading(false);
     }
@@ -1120,17 +1146,37 @@ export function ScreeningRoomPage() {
                   )}
                   {canViewReport ? (
                     session.audioFileId ? (
-                      audioUrl ? (
-                        <ScreeningAudioPlayer
-                          src={audioUrl}
-                          durationSec={session.durationSec}
-                          className="w-full"
-                        />
-                      ) : audioLoading ? (
-                        <Skeleton className="h-11 w-full rounded-md" />
-                      ) : (
-                        <div>Не удалось загрузить запись</div>
-                      )
+                      <div className="space-y-2">
+                        {audioUrl ? (
+                          <ScreeningAudioPlayer
+                            src={audioUrl}
+                            durationSec={session.durationSec}
+                            className="w-full"
+                          />
+                        ) : audioLoading ? (
+                          <Skeleton className="h-11 w-full rounded-md" />
+                        ) : (
+                          <div>Не удалось загрузить запись</div>
+                        )}
+                        {canControl &&
+                          session.status !== 'processing' &&
+                          (storedSegments?.length ?? 0) === 0 && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={uploading || attachAudio.isPending}
+                              onClick={() => void retranscribeAttached()}
+                            >
+                              <RefreshCw
+                                className={cn(
+                                  'mr-1.5 h-3.5 w-3.5',
+                                  uploading && 'animate-spin',
+                                )}
+                              />
+                              Распознать запись
+                            </Button>
+                          )}
+                      </div>
                     ) : (
                       <div className="space-y-2">
                         <div>Запись не прикреплена</div>
@@ -1313,6 +1359,11 @@ export function ScreeningRoomPage() {
                 live={!!isLive}
                 sttStatus={socket.sttStatus}
                 partials={isLive ? socket.partials : {}}
+                processingAudio={
+                  session?.status === 'processing' &&
+                  !!session.audioFileId &&
+                  (storedSegments?.length ?? 0) === 0
+                }
                 segments={
                   isLive
                     ? socket.segments

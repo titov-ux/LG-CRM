@@ -38,11 +38,14 @@ def test_fallback_empty_transcript():
     )
     assert out["model"] == "fallback"
     assert out["verdict"] == ScreeningVerdict.partial_fit
-    assert "почти пуст" in out["summary"]
+    assert "почти нет" in out["summary"]
 
 
 async def test_generate_report_calls_llm(monkeypatch):
+    captured: dict = {}
+
     async def fake_json_completion(self, **kwargs):
+        captured["user"] = kwargs["user"]
         assert kwargs["schema_name"] == "screening_report"
         return {
             "summary": "Хороший скрининг.",
@@ -53,20 +56,6 @@ async def test_generate_report_calls_llm(monkeypatch):
             "red_flags": ["Нет опыта Kafka"],
             "recommendation": "Уточнить стек на техсобесе.",
         }
-
-    monkeypatch.setattr(
-        "app.integrations.yandex_gpt.YandexGptClient.json_completion",
-        fake_json_completion,
-    )
-    monkeypatch.setattr(
-        "app.integrations.yandex_gpt.YandexGptClient.is_configured",
-        property(lambda self: True),
-    )
-    monkeypatch.setattr(
-        "app.integrations.yandex_gpt.YandexGptClient.model",
-        "yandexgpt/rc",
-        raising=False,
-    )
 
     # YandexGptClient stores model on instance from settings — set via init.
     class _Client:
@@ -84,14 +73,25 @@ async def test_generate_report_calls_llm(monkeypatch):
     )
 
     out = await report.generate_screening_report(
-        candidate_payload={"fullName": "Иван", "role": "Backend"},
-        vacancy_payload={"title": "Java Dev"},
-        questions=[{"text": "Kafka?", "status": "answered", "answer_summary": "да"}],
+        questions=[
+            {
+                "text": "Kafka?",
+                "status": "answered",
+                "answer_summary": "да, 3 года",
+                "goal": "стек",
+            }
+        ],
         segments=[
             {"speaker": "recruiter", "text": "Расскажите про Kafka"},
             {"speaker": "candidate", "text": "Писал продюсеры три года"},
         ],
     )
+    user = captured["user"]
+    assert "=== ЧЕК-ЛИСТ ВОПРОСОВ И ОТВЕТОВ ===" in user
+    assert "=== ТРАНСКРИПТ ===" in user
+    assert "=== ВАКАНСИЯ ===" not in user
+    assert "=== КАНДИДАТ ===" not in user
+    assert "Сопроводительное" not in user
     assert out["verdict"] == ScreeningVerdict.partial_fit
     assert out["red_flags"] == ["Нет опыта Kafka"]
     assert out["prompt_version"] == report.PROMPT_VERSION

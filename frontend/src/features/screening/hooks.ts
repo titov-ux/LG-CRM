@@ -17,12 +17,17 @@ export const screeningKeys = {
   segments: (id: UUID) => [...screeningKeys.all, 'segments', id] as const,
 };
 
-export function useScreeningSegments(id: UUID | undefined, enabled = true) {
+export function useScreeningSegments(
+  id: UUID | undefined,
+  enabled = true,
+  options: { pollWhileProcessing?: boolean } = {},
+) {
   return useQuery({
     queryKey: screeningKeys.segments(id ?? ''),
     queryFn: () => screeningsApi.segments(id as UUID),
     enabled: !!id && enabled,
     ...QUERY_DEFAULTS,
+    refetchInterval: options.pollWhileProcessing ? PROCESSING_POLL_MS : false,
   });
 }
 

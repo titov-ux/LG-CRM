@@ -75,6 +75,7 @@ from app.modules.screening.schemas import (
 )
 from app.modules.screening.tasks import (
     enqueue_screening_analysis,
+    enqueue_screening_offline_transcribe,
     wait_for_pending_analysis,
 )
 from app.modules.users.models import Role, User
@@ -401,6 +402,12 @@ async def get(
 ) -> ScreeningSessionResponse:
     session = await _load(db, session_id)
     await _ensure_can_see(db, user, session)
+    # Запись есть, транскрипта нет (live-STT не сработал) — поднять офлайн-STT
+    # сами, без кнопки. Не ждём: UI поллит status=processing.
+    if await maybe_start_offline_transcription(db, session):
+        await db.commit()
+        db.expire(session)
+        session = await _load(db, session_id)
     return await to_dto(db, session, user=user)
 
 
@@ -482,13 +489,11 @@ async def finish(
             session.duration_sec = int(
                 (session.ended_at - session.started_at).total_seconds()
             )
-        # После commit — Celery / in-process анализ (см. screening.tasks).
-        enqueue_screening_analysis(db.sync_session, session.id)
+        await _enqueue_post_meeting(db, session)
         await db.commit()
-        # eager (dev/tests): дожидаемся анализа, иначе ответ ручки зависит от
-        # планировщика (processing или done). В проде задача уходит в Celery
-        # и ответ всегда processing.
-        await wait_for_pending_analysis()
+        # eager (dev/tests): дожидаемся анализа (и офлайн-STT, если нужен).
+        # В проде задача уходит в Celery и ответ всегда processing.
+        await wait_for_pending_analysis(timeout=180.0)
         # SessionLocal живёт с expire_on_commit=False: без явного сброса
         # мы бы вернули свой устаревший объект (processing), хотя фоновая
         # задача уже перевела сессию в done. Точечно, не expire_all():
@@ -497,6 +502,95 @@ async def finish(
         db.expire(session)
         session = await _load(db, session_id)
     return await to_dto(db, session, user=user)
+
+
+async def _segment_count(db: AsyncSession, session_id: uuid.UUID) -> int:
+    return int(
+        (
+            await db.execute(
+                select(func.count())
+                .select_from(ScreeningSegment)
+                .where(ScreeningSegment.session_id == session_id)
+            )
+        ).scalar_one()
+    )
+
+
+async def _enqueue_post_meeting(db: AsyncSession, session: ScreeningSession) -> None:
+    """После finish: офлайн-STT если нет live-сегментов, иначе сразу отчёт."""
+    n = await _segment_count(db, session.id)
+    if n == 0 and session.audio_file_id is not None:
+        enqueue_screening_offline_transcribe(db.sync_session, session.id)
+    else:
+        enqueue_screening_analysis(db.sync_session, session.id)
+
+
+# Не крутить офлайн-STT на каждом GET после неудачной попытки (отчёт уже есть).
+_OFFLINE_RETRY_COOLDOWN = timedelta(minutes=15)
+
+
+async def maybe_start_offline_transcription(
+    db: AsyncSession,
+    session: ScreeningSession,
+    *,
+    force: bool = False,
+) -> bool:
+    """Если есть запись и нет транскрипта — поставить офлайн-STT в очередь.
+
+    Возвращает True, если задача поставлена (нужен commit вызывающим).
+    `force=True` — явное действие (attach / кнопка), без cooldown по отчёту.
+    Пока статус `processing` и прошло меньше cooldown — не дублируем; после
+    cooldown считаем задачу зависшей и ставим снова.
+    """
+    if session.audio_file_id is None:
+        return False
+    if session.status in (ScreeningStatus.draft, ScreeningStatus.live):
+        return False
+    if await _segment_count(db, session.id) > 0:
+        return False
+
+    if session.status == ScreeningStatus.processing:
+        if force:
+            return False
+        anchor = session.updated_at or session.ended_at or session.created_at
+        if anchor is None:
+            return False
+        if anchor.tzinfo is None:
+            anchor = anchor.replace(tzinfo=UTC)
+        if datetime.now(UTC) - anchor < _OFFLINE_RETRY_COOLDOWN:
+            return False
+        # Зависли в processing без сегментов — повторить офлайн-STT.
+        enqueue_screening_offline_transcribe(db.sync_session, session.id)
+        logger.info("screening.offline: re-queued stuck processing %s", session.id)
+        return True
+
+    if session.status not in (ScreeningStatus.done, ScreeningStatus.error):
+        return False
+
+    if not force:
+        report = (
+            await db.execute(
+                select(ScreeningReport).where(ScreeningReport.session_id == session.id)
+            )
+        ).scalar_one_or_none()
+        if report is not None and report.created_at is not None:
+            created = report.created_at
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=UTC)
+            if datetime.now(UTC) - created < _OFFLINE_RETRY_COOLDOWN:
+                logger.info(
+                    "screening.offline: skip auto for %s — recent report (%s)",
+                    session.id,
+                    created.isoformat(),
+                )
+                return False
+
+    session.status = ScreeningStatus.processing
+    enqueue_screening_offline_transcribe(db.sync_session, session.id)
+    logger.info(
+        "screening.offline: queued for %s (force=%s)", session.id, force
+    )
+    return True
 
 
 async def attach_audio(
@@ -522,8 +616,17 @@ async def attach_audio(
             "К сессии скрининга можно привязать только аудиозапись",
         )
     session.audio_file_id = file_id
+    # Пост-фактум / повтор: запись есть, live-транскрипта нет → офлайн-STT.
+    queue_offline = await maybe_start_offline_transcription(db, session, force=True)
     await db.commit()
-    session = await _load(db, session_id)
+    if queue_offline:
+        # Eager (dev): дождаться текста+отчёта. В prod задача уходит в Celery,
+        # ответ сразу processing — UI поллит.
+        await wait_for_pending_analysis(timeout=180.0)
+        db.expire(session)
+        session = await _load(db, session_id)
+    else:
+        session = await _load(db, session_id)
     return await to_dto(db, session, user=user)
 
 
@@ -921,6 +1024,95 @@ async def list_segments(
     return [_segment_dto(x) for x in await _fetch_segments(db, session_id)]
 
 
+async def insert_offline_segments(
+    db: AsyncSession,
+    session_id: uuid.UUID,
+    items: list[dict],
+    *,
+    speaker: ScreeningSpeaker = ScreeningSpeaker.candidate,
+) -> int:
+    """Записать сегменты офлайн-STT (сессия уже не live).
+
+    Не трогает существующий live-транскрипт: если сегменты уже есть — no-op.
+    Спикер всегда `candidate`: запись — микс, диаризации нет.
+    """
+    if await _segment_count(db, session_id) > 0:
+        return 0
+    written = 0
+    seq = 0
+    for item in items:
+        text = (item.get("text") or "").strip()
+        if not text or is_hallucination(text):
+            continue
+        seq += 1
+        started = int(item.get("startedMs") or item.get("started_ms") or 0)
+        ended = int(item.get("endedMs") or item.get("ended_ms") or started)
+        if ended < started:
+            ended = started
+        db.add(
+            ScreeningSegment(
+                session_id=session_id,
+                seq=seq,
+                speaker=speaker,
+                text_=text,
+                started_ms=started,
+                ended_ms=ended,
+            )
+        )
+        written += 1
+    if written:
+        await db.commit()
+    return written
+
+
+async def run_offline_transcription(session_id: uuid.UUID) -> int:
+    """Скачать audio из S3 → STT → сегменты. 0 если нечего делать / ошибка."""
+    from app.integrations.s3 import get_s3_adapter
+    from app.modules.screening.offline_stt import OfflineSttError, transcribe_audio_bytes
+
+    settings = get_settings()
+    if not (settings.stt_url or "").strip():
+        logger.info("screening.offline: STT_URL empty — skip %s", session_id)
+        return 0
+
+    async with SessionLocal() as db:
+        session = await db.get(ScreeningSession, session_id)
+        if session is None:
+            return 0
+        if session.audio_file_id is None:
+            logger.info("screening.offline: no audio for %s", session_id)
+            return 0
+        if await _segment_count(db, session_id) > 0:
+            logger.info("screening.offline: segments already exist for %s", session_id)
+            return 0
+        file = await db.get(File, session.audio_file_id)
+        if file is None:
+            logger.warning("screening.offline: file missing for %s", session_id)
+            return 0
+        file_key = file.file_key
+
+    try:
+        s3 = get_s3_adapter()
+        audio = await asyncio.to_thread(s3.download_bytes, file_key=file_key)
+    except Exception:
+        logger.exception("screening.offline: S3 download failed for %s", session_id)
+        return 0
+
+    try:
+        items = await transcribe_audio_bytes(audio, settings.stt_url)
+    except OfflineSttError as exc:
+        logger.warning("screening.offline: STT failed for %s (%s)", session_id, exc)
+        return 0
+    except Exception:
+        logger.exception("screening.offline: unexpected STT error for %s", session_id)
+        return 0
+
+    async with SessionLocal() as db:
+        n = await insert_offline_segments(db, session_id, items)
+    logger.info("screening.offline: wrote %d segment(s) for %s", n, session_id)
+    return n
+
+
 # --- report / post-analysis (Этап 5) ---------------------------------------
 
 
@@ -958,10 +1150,13 @@ def _segment_payload(seg: ScreeningSegment) -> dict:
     }
 
 
-async def run_post_analysis(session_id: uuid.UUID) -> None:
+async def run_post_analysis(
+    session_id: uuid.UUID, *, replace_report: bool = False
+) -> None:
     """Собрать отчёт по сессии (вызывается из Celery / eager-task).
 
-    Идемпотентно: если отчёт уже есть и статус done — no-op.
+    Идемпотентно: если отчёт уже есть и статус done — no-op
+    (кроме `replace_report=True` после офлайн-STT).
     При сбое AI пишет fallback-отчёт; при неожиданной ошибке — status=error.
     """
     async with SessionLocal() as db:
@@ -975,7 +1170,7 @@ async def run_post_analysis(session_id: uuid.UUID) -> None:
         if session is None:
             logger.warning("screening.analysis: session %s not found", session_id)
             return
-        if session.status == ScreeningStatus.done:
+        if session.status == ScreeningStatus.done and not replace_report:
             existing = (
                 await db.execute(
                     select(ScreeningReport).where(
@@ -1035,12 +1230,29 @@ async def run_post_analysis(session_id: uuid.UUID) -> None:
         sid = session.id
 
         try:
-            raw = await screening_report.generate_screening_report(
-                candidate_payload=candidate_payload(cand),
-                vacancy_payload=vacancy_payload(vac) if vac is not None else None,
-                questions=q_payloads,
-                segments=seg_payloads,
-            )
+            # Нет улик встречи (транскрипт + краткие ответы) → без LLM.
+            # Иначе модель раньше подменяла отчёт пересказом резюме/вакансии.
+            answer_chars = sum(len(q.answer_summary or "") for q in questions)
+            ev_chars = transcript_chars + answer_chars
+            if ev_chars < screening_report.MIN_EVIDENCE_CHARS:
+                logger.info(
+                    "screening.analysis: no meeting evidence for %s "
+                    "(transcript=%s, answers=%s) — fallback",
+                    session_id,
+                    transcript_chars,
+                    answer_chars,
+                )
+                screening_metrics.record_ai_report_fallback()
+                raw = screening_report.fallback_report(
+                    transcript_chars=transcript_chars,
+                    answered_questions=answered,
+                    total_questions=len(questions),
+                )
+            else:
+                raw = await screening_report.generate_screening_report(
+                    questions=q_payloads,
+                    segments=seg_payloads,
+                )
         except (screening_report.AiUnavailableError, screening_report.AiBadRequestError) as exc:
             logger.warning(
                 "screening.analysis: AI failed for %s (%s) — fallback",
@@ -1185,7 +1397,7 @@ async def finish_by_timeout(session_id: uuid.UUID) -> None:
             session.duration_sec = int(
                 (session.ended_at - session.started_at).total_seconds()
             )
-        enqueue_screening_analysis(db.sync_session, session.id)
+        await _enqueue_post_meeting(db, session)
         await db.commit()
     screening_metrics.record_max_duration_stop()
     logger.warning("screening.finish_by_timeout: session %s", session_id)

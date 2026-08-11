@@ -12,6 +12,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # antiword — конвертация бинарного .doc (Word 97-2003) в текст для
     # /candidates/extract-doc. Лёгкий (~100КБ), без зависимостей.
     antiword \
+    # ffmpeg — офлайн-STT скрининга: webm/ogg → PCM16 для stt-service.
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml ./

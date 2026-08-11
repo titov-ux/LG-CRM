@@ -16,6 +16,7 @@ from tests.conftest import auth_headers
 @dataclass
 class FakeS3:
     deleted: list[str]
+    objects: dict[str, bytes]
 
     def presign_post(self, *, file_key: str, mime: str, max_bytes: int) -> PresignedPost:
         return PresignedPost(
@@ -27,13 +28,18 @@ class FakeS3:
     def presign_get(self, *, file_key: str, expires_in: int = 300) -> str:
         return f"https://download.example/{file_key}?sig=fake&exp={expires_in}"
 
+    def download_bytes(self, *, file_key: str) -> bytes:
+        if file_key not in self.objects:
+            raise KeyError(file_key)
+        return self.objects[file_key]
+
     def delete(self, *, file_key: str) -> None:
         self.deleted.append(file_key)
 
 
 @pytest.fixture()
 def fake_s3() -> FakeS3:
-    s3 = FakeS3(deleted=[])
+    s3 = FakeS3(deleted=[], objects={})
     app.dependency_overrides[files_ep._s3_dep] = lambda: s3
     yield s3
     app.dependency_overrides.pop(files_ep._s3_dep, None)

@@ -85,7 +85,9 @@ export function ScreeningReportPanel({
     return (
       <div className="flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50/60 px-3 py-2.5 text-[12px] text-amber-900">
         <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
-        AI готовит отчёт по встрече — обычно 1–2 минуты…
+        {session.audioFileId
+          ? 'Распознаём запись и готовим AI-отчёт — обычно 1–3 минуты…'
+          : 'AI готовит отчёт по встрече — обычно 1–2 минуты…'}
       </div>
     );
   }

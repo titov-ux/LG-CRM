@@ -1,8 +1,11 @@
 """Пост-анализ сессии скрининга → отчёт (Этап 5).
 
-После «Завершить» Celery / in-process задача собирает транскрипт + чек-лист +
-брифы кандидата/вакансии и просит YandexGPT structured JSON: summary, scores
-по компетенциям, red_flags, verdict, recommendation.
+После «Завершить» Celery / in-process задача собирает чек-лист (вопросы +
+краткие ответы) и транскрипт встречи и просит YandexGPT structured JSON:
+summary, scores по компетенциям, red_flags, verdict, recommendation.
+
+Резюме кандидата и текст вакансии в промпт НЕ передаём — отчёт только по
+тому, что было на встрече.
 """
 from __future__ import annotations
 
@@ -15,12 +18,16 @@ from app.integrations.yandex_gpt import (
     AiUnavailableError,
     YandexGptClient,
 )
-from app.modules.candidates.briefs import candidate_brief, vacancy_brief
 from app.modules.screening.models import ScreeningVerdict
 
 logger = logging.getLogger(__name__)
 
-PROMPT_VERSION = "screening_report_v1"
+PROMPT_VERSION = "screening_report_v3"
+
+# Ниже порога (транскрипт + краткие ответы чек-листа) LLM не вызываем.
+MIN_EVIDENCE_CHARS = 40
+# Обратная совместимость имени для вызовов/тестов.
+MIN_TRANSCRIPT_CHARS = MIN_EVIDENCE_CHARS
 
 # Рубрики скоринга (1–5). Открытый вопрос плана закрываем фиксированным набором
 # для скрининга IT; при необходимости расширим без миграции (JSONB).
@@ -49,7 +56,10 @@ _CRITERION_SCHEMA: dict[str, Any] = {
         },
         "note": {
             "type": "string",
-            "description": "Короткое пояснение по-русски (до ~20 слов) по фактам из транскрипта.",
+            "description": (
+                "Короткое пояснение по-русски (до ~20 слов) только по "
+                "вопросам/ответам встречи."
+            ),
         },
     },
     "required": ["score", "note"],
@@ -61,14 +71,17 @@ REPORT_SCHEMA: dict[str, Any] = {
     "properties": {
         "summary": {
             "type": "string",
-            "description": "Резюме беседы: 3–6 предложений по-русски. Только факты из транскрипта.",
+            "description": (
+                "Резюме беседы: 3–6 предложений по-русски. Только то, что "
+                "спрашивали и что ответил кандидат."
+            ),
         },
         "verdict": {
             "type": "string",
             "enum": ["fit", "partial_fit", "no_fit"],
             "description": (
                 "fit — рекомендовать дальше; partial_fit — с оговорками; "
-                "no_fit — не подходит под вакансию/роль."
+                "no_fit — по итогам ответов не подходит."
             ),
         },
         "scores": {
@@ -81,7 +94,7 @@ REPORT_SCHEMA: dict[str, Any] = {
             "type": "array",
             "items": {"type": "string"},
             "description": (
-                "0–6 красных флагов (риски, противоречия, пробелы). "
+                "0–6 красных флагов из ответов на встрече. "
                 "Пустой массив, если нет."
             ),
         },
@@ -98,20 +111,24 @@ REPORT_SCHEMA: dict[str, Any] = {
 }
 
 _SYSTEM_PROMPT = """\
-Ты — ассистент рекрутингового агентства. По транскрипту видеоскрининга и \
-контексту кандидата/вакансии составь итоговый отчёт для рекрутера.
+Ты — ассистент рекрутингового агентства. По вопросам и ответам видеоскрининга \
+составь итоговый отчёт для рекрутера.
+
+Вход: чек-лист вопросов (статус, цель, краткий ответ) и транскрипт разговора.
+Резюме кандидата и описание вакансии тебе НЕ даны и использовать их нельзя.
 
 Правила:
-1. Опирайся ТОЛЬКО на транскрипт и брифы. Не выдумывай факты, компании, цифры.
-2. Если данных мало — честно отрази это в summary и снизь оценки; verdict тогда \
-чаще partial_fit или no_fit.
-3. scores — пять компетенций (1–5) с кратким note по фактам разговора:
+1. Опирайся ТОЛЬКО на чек-лист и транскрипт. Не выдумывай факты, компании, цифры.
+2. summary — что спрашивали и что ответил кандидат (3–6 предложений). Не пиши \
+биографию «из резюме».
+3. scores — пять компетенций (1–5) с note по фактам из ответов:
    communication, motivation, hard_skills, experience_fit, culture_fit.
-4. red_flags — конкретные риски (джоб-хоппинг, завышенные ожидания, пробелы в \
-стеке, уклончивость). Не выдумывай; пустой список, если флагов нет.
-5. verdict: fit / partial_fit / no_fit относительно вакансии (если вакансии нет — \
-относительно заявленной роли кандидата).
-6. recommendation — что делать дальше рекрутеру.
+   По критерию нет доказательств в ответах → score ≤ 2 и note «в разговоре не \
+раскрыто».
+4. red_flags — риски из ответов. Не выдумывай; [] если флагов нет.
+5. verdict: fit / partial_fit / no_fit по качеству и полноте ответов на вопросы \
+скрининга. При скудных данных — partial_fit или no_fit.
+6. recommendation — следующий шаг рекрутеру по итогам встречи.
 7. Язык ответа — русский. Названия технологий не переводи.
 """
 
@@ -185,17 +202,36 @@ def coerce_report(raw: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def evidence_chars(
+    *,
+    questions: list[dict[str, Any]] | None = None,
+    segments: list[dict[str, Any]] | None = None,
+    transcript_chars: int | None = None,
+    answer_summary_chars: int | None = None,
+) -> int:
+    """Объём улик для отчёта: транскрипт + краткие ответы чек-листа."""
+    t = transcript_chars
+    if t is None:
+        t = sum(len((s.get("text") or "").strip()) for s in (segments or []))
+    a = answer_summary_chars
+    if a is None:
+        a = sum(
+            len((q.get("answer_summary") or "").strip()) for q in (questions or [])
+        )
+    return int(t) + int(a)
+
+
 def fallback_report(
     *,
     transcript_chars: int,
     answered_questions: int,
     total_questions: int,
 ) -> dict[str, Any]:
-    """Детерминированный отчёт без LLM (нет ключа / сбой AI / пустой транскрипт)."""
-    if transcript_chars < 40:
+    """Детерминированный отчёт без LLM (нет ключа / сбой AI / нет улик встречи)."""
+    if transcript_chars < MIN_EVIDENCE_CHARS and answered_questions == 0:
         summary = (
-            "Транскрипт встречи почти пуст — AI-анализ недоступен. "
-            "Проверьте запись и при необходимости перепроведите скрининг."
+            "На встрече почти нет зафиксированных ответов — AI-анализ недоступен. "
+            "Проверьте запись/транскрипт и при необходимости перепроведите скрининг."
         )
         verdict = ScreeningVerdict.partial_fit
         recommendation = (
@@ -257,8 +293,11 @@ def _format_questions(questions: list[dict[str, Any]]) -> str:
     for q in questions:
         status = q.get("status") or "pending"
         text = (q.get("text") or "").strip()
+        goal = (q.get("goal") or "").strip()
         summary = (q.get("answer_summary") or "").strip()
         line = f"- [{status}] {text}"
+        if goal:
+            line += f" (цель: {goal})"
         if summary:
             line += f" → ответ: {summary}"
         lines.append(line)
@@ -267,40 +306,23 @@ def _format_questions(questions: list[dict[str, Any]]) -> str:
 
 async def generate_screening_report(
     *,
-    candidate_payload: dict[str, Any],
-    vacancy_payload: dict[str, Any] | None,
     questions: list[dict[str, Any]],
     segments: list[dict[str, Any]],
+    # Устаревшие kwargs: игнорируем, чтобы старые вызовы/моки не падали.
+    candidate_payload: dict[str, Any] | None = None,
+    vacancy_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Сгенерировать отчёт. Может бросить AiUnavailable/AiBadRequest."""
+    """Сгенерировать отчёт только по Q&A встречи. Может бросить AiUnavailable/AiBadRequest."""
+    del candidate_payload, vacancy_payload  # не используем намеренно
     settings = get_settings()
     max_chars = settings.yandex_ai_max_input_chars
-    # Транскрипт — основной объём; брифы режем пропорционально.
-    transcript_budget = max(4000, int(max_chars * 0.65))
-    brief_budget = max(2000, max_chars - transcript_budget - 2000)
-
-    cand_brief = candidate_brief(candidate_payload)
-    vac_part = (
-        vacancy_brief(vacancy_payload)
-        if vacancy_payload
-        else "Не указана — оценивай относительно роли кандидата."
+    checklist = "=== ЧЕК-ЛИСТ ВОПРОСОВ И ОТВЕТОВ ===\n" + _format_questions(questions)
+    # Чек-лист приоритетнее: режем только транскрипт под остаток бюджета.
+    transcript_budget = max(500, max_chars - len(checklist) - 32)
+    user_msg = (
+        f"{checklist}\n\n=== ТРАНСКРИПТ ===\n"
+        + _format_transcript(segments, max_chars=transcript_budget)
     )
-    briefs = (
-        f"=== ВАКАНСИЯ ===\n{vac_part}\n\n=== КАНДИДАТ ===\n{cand_brief}"
-    )
-    if len(briefs) > brief_budget:
-        briefs = briefs[:brief_budget]
-
-    user_msg = "\n\n".join(
-        [
-            briefs,
-            "=== ЧЕК-ЛИСТ ВОПРОСОВ ===\n" + _format_questions(questions),
-            "=== ТРАНСКРИПТ ===\n"
-            + _format_transcript(segments, max_chars=transcript_budget),
-        ]
-    )
-    if len(user_msg) > max_chars:
-        user_msg = user_msg[:max_chars]
 
     client = YandexGptClient()
     raw = await client.json_completion(
@@ -318,12 +340,15 @@ async def generate_screening_report(
 
 
 __all__ = [
+    "MIN_EVIDENCE_CHARS",
+    "MIN_TRANSCRIPT_CHARS",
     "PROMPT_VERSION",
     "REPORT_SCHEMA",
     "SCORE_KEYS",
     "AiBadRequestError",
     "AiUnavailableError",
     "coerce_report",
+    "evidence_chars",
     "fallback_report",
     "generate_screening_report",
 ]

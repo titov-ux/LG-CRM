@@ -74,6 +74,12 @@ import {
  * AI-отчёт после встречи.
  */
 
+/** MediaRecorder даёт `audio/webm;codecs=opus` — для /files нужен базовый MIME. */
+function recordingMime(raw?: string | null): string {
+  const base = (raw || 'audio/webm').split(';', 1)[0]!.trim().toLowerCase();
+  return base.startsWith('audio/') ? base : 'audio/webm';
+}
+
 function LevelBar({ level, label, active }: { level: number; label: string; active: boolean }) {
   return (
     <div className="flex items-center gap-2">
@@ -433,11 +439,16 @@ export function ScreeningRoomPage() {
     return () => window.clearTimeout(t);
   }, [socket.questionsUpdatedAt]);
 
+  /**
+   * MediaRecorder отдаёт `audio/webm;codecs=opus`, а /files/presign сверяет
+   * MIME по точному совпадению с белым списком (`audio/webm`) — без нормализации
+   * выгрузка всегда падает.
+   */
   /** Выгрузка записи в S3 + привязка к сессии. Бросает при ошибке. */
   const uploadRecording = useCallback(
     async (blob: Blob) => {
       const file = new File([blob], `screening-${id.slice(0, 8)}.webm`, {
-        type: blob.type || 'audio/webm',
+        type: recordingMime(blob.type),
       });
       const rec = await uploadFile({ entityType: 'screening', entityId: id, file });
       await attachAudio.mutateAsync({ id, fileId: rec.id });
@@ -465,6 +476,26 @@ export function ScreeningRoomPage() {
       toast.success('Запись сохранена');
     } catch {
       toast.error('Снова не удалось выгрузить запись — попробуйте позже или скачайте локально');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const attachFromDisk = async (fileList: FileList | null) => {
+    const picked = fileList?.[0];
+    if (!picked) return;
+    setUploading(true);
+    try {
+      const normalized = new File([picked], picked.name || `screening-${id.slice(0, 8)}.webm`, {
+        type: recordingMime(picked.type),
+      });
+      const rec = await uploadFile({ entityType: 'screening', entityId: id, file: normalized });
+      await attachAudio.mutateAsync({ id, fileId: rec.id });
+      setPendingBlob(null);
+      toast.success('Запись сохранена');
+      await queryClient.invalidateQueries({ queryKey: screeningKeys.byId(id) });
+    } catch {
+      toast.error('Не удалось прикрепить файл — проверьте, что это аудио (.webm) и сеть в порядке');
     } finally {
       setUploading(false);
     }
@@ -840,6 +871,21 @@ export function ScreeningRoomPage() {
             <Download className="mr-1.5 h-3.5 w-3.5" />
             Скачать запись локально
           </Button>
+          <Button size="sm" variant="outline" disabled={uploading} asChild>
+            <label className="cursor-pointer">
+              Прикрепить файл с диска
+              <input
+                type="file"
+                accept="audio/webm,audio/*,.webm,.ogg,.mp3,.wav,.m4a"
+                className="sr-only"
+                disabled={uploading}
+                onChange={(e) => {
+                  void attachFromDisk(e.target.files);
+                  e.target.value = '';
+                }}
+              />
+            </label>
+          </Button>
         </div>
       )}
 
@@ -1086,7 +1132,26 @@ export function ScreeningRoomPage() {
                         <div>Не удалось загрузить запись</div>
                       )
                     ) : (
-                      <div>Запись не прикреплена</div>
+                      <div className="space-y-2">
+                        <div>Запись не прикреплена</div>
+                        {canControl && (
+                          <Button size="sm" variant="outline" disabled={uploading} asChild>
+                            <label className="cursor-pointer">
+                              Прикрепить файл с диска
+                              <input
+                                type="file"
+                                accept="audio/webm,audio/*,.webm,.ogg,.mp3,.wav,.m4a"
+                                className="sr-only"
+                                disabled={uploading}
+                                onChange={(e) => {
+                                  void attachFromDisk(e.target.files);
+                                  e.target.value = '';
+                                }}
+                              />
+                            </label>
+                          </Button>
+                        )}
+                      </div>
                     )
                   ) : (
                     <div>Нет прав на просмотр записи</div>

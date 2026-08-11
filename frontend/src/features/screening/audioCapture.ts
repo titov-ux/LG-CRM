@@ -456,8 +456,10 @@ export class ScreeningCapture {
       // отдаём то, что уже накопили в chunks, но не подвешиваем UI навсегда.
       blob = await new Promise<Blob | null>((resolve) => {
         let settled = false;
+        // Без `;codecs=…` — иначе /files/presign отклоняет MIME (белый список
+        // сравнивает точное совпадение с `audio/webm`).
         const collect = () =>
-          new Blob(this.chunks, { type: recorder.mimeType || 'audio/webm' });
+          new Blob(this.chunks, { type: 'audio/webm' });
         const done = (value: Blob | null) => {
           if (settled) return;
           settled = true;

@@ -15,8 +15,14 @@ from app.modules.files.schemas import ConfirmRequest, PresignRequest
 from app.modules.users.models import User
 
 
+def _normalize_mime(mime: str) -> str:
+    """MediaRecorder шлёт `audio/webm;codecs=opus` — в белом списке только база."""
+    return (mime or "").split(";", 1)[0].strip().lower()
+
+
 def _validate_upload(mime: str, size: int) -> None:
     settings = get_settings()
+    mime = _normalize_mime(mime)
     if mime not in ALLOWED_MIME_TYPES:
         raise ApiError(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -36,7 +42,8 @@ def _validate_upload(mime: str, size: int) -> None:
 async def presign(
     s3: S3Adapter, payload: PresignRequest
 ) -> tuple[str, dict[str, str], str, int]:
-    _validate_upload(payload.mime, payload.size)
+    mime = _normalize_mime(payload.mime)
+    _validate_upload(mime, payload.size)
     settings = get_settings()
     file_key = make_file_key(
         entity_type=payload.entity_type.value,
@@ -44,7 +51,7 @@ async def presign(
         original_name=payload.original_name,
     )
     presigned = s3.presign_post(
-        file_key=file_key, mime=payload.mime, max_bytes=settings.file_max_bytes
+        file_key=file_key, mime=mime, max_bytes=settings.file_max_bytes
     )
     return presigned.url, presigned.fields, presigned.file_key, settings.file_max_bytes
 
@@ -52,7 +59,8 @@ async def presign(
 async def confirm(
     db: AsyncSession, user: User, payload: ConfirmRequest
 ) -> File:
-    _validate_upload(payload.mime, payload.size)
+    mime = _normalize_mime(payload.mime)
+    _validate_upload(mime, payload.size)
     # Проверка, что file_key соответствует ожидаемому префиксу — анти-подмена.
     expected_prefix = f"{payload.entity_type.value}/{payload.entity_id}/"
     if not payload.file_key.startswith(expected_prefix):
@@ -72,7 +80,7 @@ async def confirm(
         entity_id=payload.entity_id,
         file_key=payload.file_key,
         original_name=payload.original_name,
-        mime=payload.mime,
+        mime=mime,
         size=payload.size,
         scan_status=ScanStatus.pending,
     )

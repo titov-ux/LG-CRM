@@ -113,11 +113,15 @@ export function ScreeningAudioPlayer({
         type="button"
         variant="outline"
         size="icon"
-        className="h-8 w-8 shrink-0"
+        className="h-8 w-8 shrink-0 text-foreground hover:text-foreground"
         onClick={() => void toggle()}
         aria-label={playing ? 'Пауза' : 'Слушать'}
       >
-        {playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+        {playing ? (
+          <Pause className="h-3.5 w-3.5 fill-foreground text-foreground" strokeWidth={2.25} />
+        ) : (
+          <Play className="h-3.5 w-3.5 fill-foreground text-foreground" strokeWidth={2.25} />
+        )}
       </Button>
       <span className="w-10 shrink-0 text-[11px] tabular-nums text-muted-foreground">
         {formatClock(current)}

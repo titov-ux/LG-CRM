@@ -360,6 +360,7 @@ export function ScreeningRoomPage() {
   const [uploading, setUploading] = useState(false);
   const [newQuestion, setNewQuestion] = useState('');
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [audioLoading, setAudioLoading] = useState(false);
   /** Записанный блоб, который не удалось выгрузить — даём повторить/скачать. */
   const [pendingBlob, setPendingBlob] = useState<Blob | null>(null);
   const [telemostDraft, setTelemostDraft] = useState('');
@@ -689,15 +690,31 @@ export function ScreeningRoomPage() {
     }
   };
 
-  const openAudio = async () => {
-    if (!session.audioFileId) return;
-    try {
-      const { url } = await filesApi.download(session.audioFileId);
-      setAudioUrl(url);
-    } catch {
-      toast.error('Не удалось получить запись');
+  // Плеер сразу: пресайнд URL подгружаем сами, без кнопки «Прослушать».
+  useEffect(() => {
+    if (!isDone || !canViewReport || !session?.audioFileId) {
+      setAudioUrl(null);
+      setAudioLoading(false);
+      return;
     }
-  };
+    let cancelled = false;
+    setAudioLoading(true);
+    setAudioUrl(null);
+    void filesApi
+      .download(session.audioFileId)
+      .then(({ url }) => {
+        if (!cancelled) setAudioUrl(url);
+      })
+      .catch(() => {
+        if (!cancelled) toast.error('Не удалось получить запись');
+      })
+      .finally(() => {
+        if (!cancelled) setAudioLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isDone, canViewReport, session?.audioFileId]);
 
   const cycleStatus = (q: ScreeningQuestion) => {
     const next =
@@ -1054,10 +1071,10 @@ export function ScreeningRoomPage() {
                           durationSec={session.durationSec}
                           className="w-full"
                         />
+                      ) : audioLoading ? (
+                        <Skeleton className="h-11 w-full rounded-md" />
                       ) : (
-                        <Button variant="outline" size="sm" onClick={openAudio}>
-                          Прослушать запись
-                        </Button>
+                        <div>Не удалось загрузить запись</div>
                       )
                     ) : (
                       <div>Запись не прикреплена</div>

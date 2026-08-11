@@ -1,5 +1,5 @@
 // Тонкий клиент к /screenings/* — раздел «AI-скрининг» (видеоинтервью).
-// MSW для этого домена нет (как и для files): фронт всегда ходит в боевой API.
+// В мок-режиме обслуживается MSW (`mocks/db/screenings.ts` + handlers).
 
 import { api } from './client';
 import type { UUID } from './types';

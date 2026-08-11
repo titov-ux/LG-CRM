@@ -32,6 +32,14 @@ import {
   persistTendersDb,
   persistVacanciesDb,
   resetPermissionsMatrix,
+  screeningsDb,
+  screeningSegmentsDb,
+  buildAiQuestions,
+  enrichScreening,
+  getScreening,
+  listScreenings,
+  nextQuestionId,
+  nextScreeningId,
   tendersDb,
   updatePermissionRow,
   usersDb,
@@ -39,6 +47,12 @@ import {
   vacancyStatuses,
 } from './db';
 import type { Role } from '@/api/types';
+import type {
+  CreateScreeningPayload,
+  ScreeningQuestion,
+  ScreeningQuestionStatus,
+  ScreeningSession,
+} from '@/api/screenings';
 import { tenderStatuses } from '@/features/tenders/statuses';
 
 const url = (path: string) => `${API_BASE_URL}${path.startsWith('/') ? '' : '/'}${path}`;
@@ -1925,6 +1939,234 @@ export const handlers = [
     const i = calendarDb.findIndex((e) => e.id === params.id);
     if (i >= 0) calendarDb.splice(i, 1);
     return HttpResponse.json({ ok: true });
+  }),
+
+  // === Screenings (AI-скрининг / видеоинтервью) ===
+  http.get(url('/screenings'), ({ request }) => {
+    const u = new URL(request.url);
+    const items = listScreenings({
+      candidateId: u.searchParams.get('candidateId'),
+      vacancyId: u.searchParams.get('vacancyId'),
+      recruiterId: u.searchParams.get('recruiterId'),
+      status: u.searchParams.get('status') as ScreeningSession['status'] | null,
+    });
+    return HttpResponse.json(
+      paginate(items, u.searchParams.get('page'), u.searchParams.get('pageSize')),
+    );
+  }),
+  http.post(url('/screenings'), async ({ request }) => {
+    const body = (await request.json()) as CreateScreeningPayload;
+    if (!body.candidateId) {
+      return HttpResponse.json({ message: 'Не указан кандидат' }, { status: 400 });
+    }
+    const cand = candidatesDb.find((c) => c.id === body.candidateId);
+    if (!cand) return HttpResponse.json({ message: 'Кандидат не найден' }, { status: 404 });
+
+    let questions: ScreeningQuestion[];
+    if (body.questions?.length) {
+      questions = body.questions.map((text, i) => ({
+        id: nextQuestionId(),
+        position: i,
+        text,
+        goal: null,
+        source: 'manual' as const,
+        status: 'pending' as const,
+        answerSummary: null,
+      }));
+    } else if (body.generateQuestions !== false) {
+      questions = buildAiQuestions();
+    } else {
+      questions = [];
+    }
+
+    const now = new Date().toISOString();
+    const created: ScreeningSession = enrichScreening({
+      id: nextScreeningId(),
+      candidateId: body.candidateId,
+      vacancyId: body.vacancyId ?? null,
+      matchId: body.matchId ?? null,
+      recruiterId: actorIdFromRequest(request),
+      status: 'draft',
+      telemostUrl: body.telemostUrl ?? null,
+      consentConfirmed: false,
+      startedAt: null,
+      endedAt: null,
+      durationSec: null,
+      audioFileId: null,
+      createdAt: now,
+      updatedAt: now,
+      questions,
+    });
+    screeningsDb.unshift(created);
+    return HttpResponse.json(created, { status: 201 });
+  }),
+  http.get(url('/screenings/:id'), ({ params }) => {
+    const s = getScreening(String(params.id));
+    return s ? HttpResponse.json(s) : new HttpResponse(null, { status: 404 });
+  }),
+  http.patch(url('/screenings/:id'), async ({ params, request }) => {
+    const s = screeningsDb.find((x) => x.id === params.id);
+    if (!s) return new HttpResponse(null, { status: 404 });
+    const body = (await request.json()) as {
+      telemostUrl?: string;
+      consentConfirmed?: boolean;
+    };
+    if (body.telemostUrl !== undefined) s.telemostUrl = body.telemostUrl;
+    if (body.consentConfirmed !== undefined) s.consentConfirmed = body.consentConfirmed;
+    s.updatedAt = new Date().toISOString();
+    return HttpResponse.json(enrichScreening(s));
+  }),
+  http.delete(url('/screenings/:id'), ({ params }) => {
+    const idx = screeningsDb.findIndex((x) => x.id === params.id);
+    if (idx === -1) return new HttpResponse(null, { status: 404 });
+    const id = String(params.id);
+    screeningsDb.splice(idx, 1);
+    delete screeningSegmentsDb[id];
+    return HttpResponse.json({ ok: true });
+  }),
+  http.post(url('/screenings/:id/start'), ({ params }) => {
+    const s = screeningsDb.find((x) => x.id === params.id);
+    if (!s) return new HttpResponse(null, { status: 404 });
+    if (s.status !== 'draft' && s.status !== 'live') {
+      return HttpResponse.json(
+        { message: 'Старт доступен только для черновика' },
+        { status: 409 },
+      );
+    }
+    if (!s.consentConfirmed) {
+      return HttpResponse.json(
+        { message: 'Нужно подтвердить согласие на запись' },
+        { status: 400 },
+      );
+    }
+    const now = new Date().toISOString();
+    s.status = 'live';
+    s.startedAt = s.startedAt ?? now;
+    s.updatedAt = now;
+    return HttpResponse.json(enrichScreening(s));
+  }),
+  http.post(url('/screenings/:id/finish'), async ({ params, request }) => {
+    const s = screeningsDb.find((x) => x.id === params.id);
+    if (!s) return new HttpResponse(null, { status: 404 });
+    if (s.status !== 'live' && s.status !== 'draft') {
+      return HttpResponse.json(
+        { message: 'Завершить можно только живую или черновую сессию' },
+        { status: 409 },
+      );
+    }
+    const body = (await request.json().catch(() => ({}))) as { durationSec?: number };
+    const now = new Date().toISOString();
+    s.status = 'processing';
+    s.endedAt = now;
+    s.durationSec = body.durationSec ?? s.durationSec ?? null;
+    s.updatedAt = now;
+    return HttpResponse.json(enrichScreening(s));
+  }),
+  http.post(url('/screenings/:id/audio'), async ({ params, request }) => {
+    const s = screeningsDb.find((x) => x.id === params.id);
+    if (!s) return new HttpResponse(null, { status: 404 });
+    const body = (await request.json()) as { fileId?: string };
+    if (!body.fileId) {
+      return HttpResponse.json({ message: 'Не указан fileId' }, { status: 400 });
+    }
+    s.audioFileId = body.fileId;
+    s.updatedAt = new Date().toISOString();
+    return HttpResponse.json(enrichScreening(s));
+  }),
+  http.get(url('/screenings/:id/segments'), ({ params }) => {
+    const s = getScreening(String(params.id));
+    if (!s) return new HttpResponse(null, { status: 404 });
+    return HttpResponse.json(screeningSegmentsDb[s.id] ?? []);
+  }),
+  http.get(url('/screenings/:id/transcript'), ({ params }) => {
+    const s = getScreening(String(params.id));
+    if (!s) return new HttpResponse(null, { status: 404 });
+    const items = screeningSegmentsDb[s.id] ?? [];
+    const lastSeq = items.reduce((max, seg) => Math.max(max, seg.seq), 0);
+    return HttpResponse.json({ items, lastSeq });
+  }),
+  http.get(url('/screenings/:id/report'), ({ params }) => {
+    const s = getScreening(String(params.id));
+    if (!s) return new HttpResponse(null, { status: 404 });
+    if (!s.report) return new HttpResponse(null, { status: 404 });
+    return HttpResponse.json(s.report);
+  }),
+  http.post(url('/screenings/:id/regenerate-questions'), ({ params }) => {
+    const s = screeningsDb.find((x) => x.id === params.id);
+    if (!s) return new HttpResponse(null, { status: 404 });
+    if (s.status !== 'draft') {
+      return HttpResponse.json(
+        { message: 'Перегенерация доступна только в черновике' },
+        { status: 409 },
+      );
+    }
+    const manual = s.questions.filter((q) => q.source === 'manual');
+    const generated = buildAiQuestions();
+    s.questions = [
+      ...generated,
+      ...manual.map((q, i) => ({ ...q, position: generated.length + i })),
+    ];
+    s.updatedAt = new Date().toISOString();
+    return HttpResponse.json(enrichScreening(s));
+  }),
+  http.post(url('/screenings/:id/questions'), async ({ params, request }) => {
+    const s = screeningsDb.find((x) => x.id === params.id);
+    if (!s) return new HttpResponse(null, { status: 404 });
+    const body = (await request.json()) as {
+      text?: string;
+      goal?: string;
+      position?: number;
+    };
+    const text = (body.text ?? '').trim();
+    if (!text) {
+      return HttpResponse.json({ message: 'Пустой текст вопроса' }, { status: 400 });
+    }
+    const position =
+      body.position ?? (s.questions.length ? Math.max(...s.questions.map((q) => q.position)) + 1 : 0);
+    const q: ScreeningQuestion = {
+      id: nextQuestionId(),
+      position,
+      text,
+      goal: body.goal ?? null,
+      source: 'manual',
+      status: 'pending',
+      answerSummary: null,
+    };
+    s.questions.push(q);
+    s.questions.sort((a, b) => a.position - b.position);
+    s.updatedAt = new Date().toISOString();
+    return HttpResponse.json(enrichScreening(s));
+  }),
+  http.patch(url('/screenings/:id/questions/:questionId'), async ({ params, request }) => {
+    const s = screeningsDb.find((x) => x.id === params.id);
+    if (!s) return new HttpResponse(null, { status: 404 });
+    const q = s.questions.find((x) => x.id === params.questionId);
+    if (!q) return new HttpResponse(null, { status: 404 });
+    const body = (await request.json()) as {
+      text?: string;
+      goal?: string;
+      status?: ScreeningQuestionStatus;
+      position?: number;
+    };
+    if (body.text !== undefined) q.text = body.text;
+    if (body.goal !== undefined) q.goal = body.goal;
+    if (body.status !== undefined) q.status = body.status;
+    if (body.position !== undefined) q.position = body.position;
+    s.questions.sort((a, b) => a.position - b.position);
+    s.updatedAt = new Date().toISOString();
+    return HttpResponse.json(enrichScreening(s));
+  }),
+  http.delete(url('/screenings/:id/questions/:questionId'), ({ params }) => {
+    const s = screeningsDb.find((x) => x.id === params.id);
+    if (!s) return new HttpResponse(null, { status: 404 });
+    const idx = s.questions.findIndex((x) => x.id === params.questionId);
+    if (idx === -1) return new HttpResponse(null, { status: 404 });
+    s.questions.splice(idx, 1);
+    s.questions.forEach((q, i) => {
+      q.position = i;
+    });
+    s.updatedAt = new Date().toISOString();
+    return HttpResponse.json(enrichScreening(s));
   }),
 ];
 

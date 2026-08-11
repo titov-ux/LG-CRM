@@ -5,6 +5,14 @@ import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/common/EmptyState';
 import { cn } from '@/lib/utils';
@@ -12,7 +20,7 @@ import { useCan } from '@/lib/permissions';
 import { useAuthStore } from '@/stores/auth';
 import { NewScreeningDialog } from '@/features/screening/NewScreeningDialog';
 import { useDeleteScreening, useScreenings } from '@/features/screening/hooks';
-import type { ScreeningStatus } from '@/api/screenings';
+import type { ScreeningSession, ScreeningStatus } from '@/api/screenings';
 
 /**
  * Раздел «Видеоинтервью» — список сессий AI-скрининга.
@@ -45,22 +53,28 @@ function fmtDuration(sec?: number | null): string | null {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-function confirmDeleteScreening(status: ScreeningStatus): boolean {
+function deleteCopy(status: ScreeningStatus): { title: string; description: string } {
   if (status === 'draft') {
-    return confirm('Удалить черновик скрининга?');
+    return {
+      title: 'Удалить черновик скрининга?',
+      description: 'Черновик будет удалён без возможности восстановления.',
+    };
   }
   if (status === 'live') {
-    return confirm(
-      'Удалить идущую встречу? Запись и данные будут удалены безвозвратно.',
-    );
+    return {
+      title: 'Удалить идущую встречу?',
+      description: 'Запись и данные будут удалены безвозвратно.',
+    };
   }
-  return confirm(
-    'Удалить интервью? Запись, транскрипт и отчёт будут удалены безвозвратно.',
-  );
+  return {
+    title: 'Удалить интервью?',
+    description: 'Запись, транскрипт и отчёт будут удалены безвозвратно.',
+  };
 }
 
 export function VideoInterviewsPage() {
   const [createOpen, setCreateOpen] = useState(false);
+  const [toDelete, setToDelete] = useState<ScreeningSession | null>(null);
   const canRun = useCan('screening:run');
   const canViewReport = useCan('screening:view_report');
   const canSeeList = canRun || canViewReport;
@@ -74,6 +88,21 @@ export function VideoInterviewsPage() {
   );
   const deleteSession = useDeleteScreening();
   const items = data?.items ?? [];
+  const deleteTexts = toDelete ? deleteCopy(toDelete.status) : null;
+
+  async function handleDeleteConfirm() {
+    if (!toDelete) return;
+    const status = toDelete.status;
+    try {
+      await deleteSession.mutateAsync(toDelete.id);
+      setToDelete(null);
+      toast.success(status === 'draft' ? 'Черновик удалён' : 'Интервью удалено');
+    } catch {
+      toast.error(
+        status === 'draft' ? 'Не удалось удалить черновик' : 'Не удалось удалить интервью',
+      );
+    }
+  }
 
   if (!canSeeList) {
     return (
@@ -190,22 +219,10 @@ export function VideoInterviewsPage() {
                   className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
                   title={s.status === 'draft' ? 'Удалить черновик' : 'Удалить интервью'}
                   disabled={deleteSession.isPending}
-                  onClick={async (e) => {
+                  onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    if (!confirmDeleteScreening(s.status)) return;
-                    try {
-                      await deleteSession.mutateAsync(s.id);
-                      toast.success(
-                        s.status === 'draft' ? 'Черновик удалён' : 'Интервью удалено',
-                      );
-                    } catch {
-                      toast.error(
-                        s.status === 'draft'
-                          ? 'Не удалось удалить черновик'
-                          : 'Не удалось удалить интервью',
-                      );
-                    }
+                    setToDelete(s);
                   }}
                 >
                   <Trash2 className="h-4 w-4" />
@@ -217,6 +234,35 @@ export function VideoInterviewsPage() {
       </div>
 
       {canRun && <NewScreeningDialog open={createOpen} onOpenChange={setCreateOpen} />}
+
+      <Dialog
+        open={!!toDelete}
+        onOpenChange={(o) => !deleteSession.isPending && !o && setToDelete(null)}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{deleteTexts?.title}</DialogTitle>
+            <DialogDescription>{deleteTexts?.description}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setToDelete(null)}
+              disabled={deleteSession.isPending}
+            >
+              Отмена
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => void handleDeleteConfirm()}
+              disabled={deleteSession.isPending}
+            >
+              <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+              {deleteSession.isPending ? 'Удаление…' : 'Удалить'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

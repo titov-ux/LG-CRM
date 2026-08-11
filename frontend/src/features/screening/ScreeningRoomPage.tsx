@@ -25,6 +25,14 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
@@ -366,6 +374,7 @@ export function ScreeningRoomPage() {
   const [telemostDraft, setTelemostDraft] = useState('');
   const [telemostEditing, setTelemostEditing] = useState(false);
   const [aiPulse, setAiPulse] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   /** Тик раз в секунду только для перерисовки часов. */
   const [nowTs, setNowTs] = useState(() => Date.now());
 
@@ -1091,36 +1100,10 @@ export function ScreeningRoomPage() {
                   size="sm"
                   className="w-full text-destructive hover:bg-destructive/10 hover:text-destructive"
                   disabled={deleteSession.isPending}
-                  onClick={async () => {
-                    const ok = isDraft
-                      ? confirm('Удалить черновик скрининга?')
-                      : isLive
-                        ? confirm(
-                            'Удалить идущую встречу? Запись и данные будут удалены безвозвратно.',
-                          )
-                        : confirm(
-                            'Удалить интервью? Запись, транскрипт и отчёт будут удалены безвозвратно.',
-                          );
-                    if (!ok) return;
-                    try {
-                      await deleteSession.mutateAsync(session.id);
-                      toast.success(isDraft ? 'Черновик удалён' : 'Интервью удалено');
-                      navigate({ to: '/video-interviews' });
-                    } catch {
-                      toast.error(
-                        isDraft
-                          ? 'Не удалось удалить черновик'
-                          : 'Не удалось удалить интервью',
-                      );
-                    }
-                  }}
+                  onClick={() => setDeleteOpen(true)}
                 >
                   <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-                  {deleteSession.isPending
-                    ? 'Удаляем…'
-                    : isDraft
-                      ? 'Удалить черновик'
-                      : 'Удалить интервью'}
+                  {isDraft ? 'Удалить черновик' : 'Удалить интервью'}
                 </Button>
               )}
             </CardContent>
@@ -1282,6 +1265,61 @@ export function ScreeningRoomPage() {
         )}
         </div>
       </div>
+
+      <Dialog
+        open={deleteOpen}
+        onOpenChange={(o) => !deleteSession.isPending && setDeleteOpen(o)}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {isDraft
+                ? 'Удалить черновик скрининга?'
+                : isLive
+                  ? 'Удалить идущую встречу?'
+                  : 'Удалить интервью?'}
+            </DialogTitle>
+            <DialogDescription>
+              {isDraft
+                ? 'Черновик будет удалён без возможности восстановления.'
+                : isLive
+                  ? 'Запись и данные будут удалены безвозвратно.'
+                  : 'Запись, транскрипт и отчёт будут удалены безвозвратно.'}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setDeleteOpen(false)}
+              disabled={deleteSession.isPending}
+            >
+              Отмена
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={deleteSession.isPending}
+              onClick={async () => {
+                if (!session) return;
+                try {
+                  await deleteSession.mutateAsync(session.id);
+                  setDeleteOpen(false);
+                  toast.success(isDraft ? 'Черновик удалён' : 'Интервью удалено');
+                  navigate({ to: '/video-interviews' });
+                } catch {
+                  toast.error(
+                    isDraft
+                      ? 'Не удалось удалить черновик'
+                      : 'Не удалось удалить интервью',
+                  );
+                }
+              }}
+            >
+              <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+              {deleteSession.isPending ? 'Удаление…' : 'Удалить'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

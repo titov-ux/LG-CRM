@@ -2241,6 +2241,19 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
 
   # ─────────────── SCREENINGS (AI-скрининг) ───────────────
+  /analytics/screening:
+    get:
+      tags: [analytics]
+      summary: Метрики AI-скрининга (только admin)
+      responses:
+        '200':
+          description: Снимок счётчиков процесса
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: { type: number }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /screenings:
     get:
       tags: [screenings]
@@ -2372,6 +2385,70 @@ paths:
                 type: array
                 items: { $ref: '#/components/schemas/ScreeningSegment' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /screenings/{id}/transcript:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    get:
+      tags: [screenings]
+      summary: Транскрипт сессии с курсором lastSeq (право screening:view_report)
+      responses:
+        '200':
+          description: Транскрипт
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScreeningTranscript' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /screenings/{id}/report:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    get:
+      tags: [screenings]
+      summary: Отчёт пост-анализа (право screening:view_report)
+      responses:
+        '200':
+          description: ScreeningReport
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScreeningReport' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Отчёт ещё не готов
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+  /screenings/{id}/regenerate-questions:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [screenings]
+      summary: Перегенерировать план вопросов через AI (только статус draft)
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegenerateQuestionsRequest' }
+      responses:
+        '200':
+          description: ScreeningSession с новым чек-листом
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScreeningSession' }
+        '409':
+          description: invalid_status — встреча уже началась
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '502':
+          description: ai_bad_request
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '503':
+          description: ai_unavailable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
   /screenings/{id}/audio:
     parameters:
       - $ref: '#/components/parameters/UuidPathId'
@@ -4132,6 +4209,19 @@ components:
         recommendation: { type: string, nullable: true }
         model:          { type: string, nullable: true }
         createdAt:      { type: string, format: date-time }
+    ScreeningTranscript:
+      type: object
+      required: [items, lastSeq]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ScreeningSegment' }
+        lastSeq: { type: integer }
+    RegenerateQuestionsRequest:
+      type: object
+      properties:
+        count:         { type: integer, nullable: true }
+        replaceManual: { type: boolean, default: false }
     ScreeningSession:
       type: object
       required: [id, candidateId, status, consentConfirmed, createdAt, updatedAt, questions]
@@ -4181,6 +4271,10 @@ components:
           type: array
           items: { type: string }
           default: []
+        generateQuestions:
+          type: boolean
+          default: true
+          description: Сгенерировать план вопросов через AI, если questions пуст
     UpdateScreeningRequest:
       type: object
       properties:

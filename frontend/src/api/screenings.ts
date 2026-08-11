@@ -84,6 +84,14 @@ export interface CreateScreeningPayload {
   matchId?: UUID;
   telemostUrl?: string;
   questions?: string[];
+  /** Сгенерировать план вопросов AI по резюме и вакансии (бэк: generate_questions). */
+  generateQuestions?: boolean;
+}
+
+/** Ответ `GET /screenings/{id}/transcript` — сегменты + курсор последнего seq. */
+export interface ScreeningTranscriptResponse {
+  items: ScreeningSegment[];
+  lastSeq: number;
 }
 
 export const screeningsApi = {
@@ -107,6 +115,10 @@ export const screeningsApi = {
   attachAudio: (id: UUID, fileId: UUID) =>
     api.post(`screenings/${id}/audio`, { json: { fileId } }).json<ScreeningSession>(),
   segments: (id: UUID) => api.get(`screenings/${id}/segments`).json<ScreeningSegment[]>(),
+  transcript: (id: UUID) =>
+    api.get(`screenings/${id}/transcript`).json<ScreeningTranscriptResponse>(),
+  regenerateQuestions: (id: UUID) =>
+    api.post(`screenings/${id}/regenerate-questions`).json<ScreeningSession>(),
   addQuestion: (id: UUID, payload: { text: string; goal?: string; position?: number }) =>
     api.post(`screenings/${id}/questions`, { json: payload }).json<ScreeningSession>(),
   updateQuestion: (

@@ -18,13 +18,17 @@
 """
 from __future__ import annotations
 
+import asyncio
+import difflib
 import logging
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from fastapi import status
 from sqlalchemy import func, or_, select
+from sqlalchemy import update as sa_update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -69,7 +73,10 @@ from app.modules.screening.schemas import (
     UpdateQuestionRequest,
     UpdateScreeningRequest,
 )
-from app.modules.screening.tasks import enqueue_screening_analysis
+from app.modules.screening.tasks import (
+    enqueue_screening_analysis,
+    wait_for_pending_analysis,
+)
 from app.modules.users.models import Role, User
 from app.modules.vacancies.models import Vacancy, VacancyRecruiter
 from app.realtime.events import publish_screening_report_ready
@@ -290,10 +297,28 @@ async def list_sessions(
     can_view = await permissions_service.user_has_action(
         db, user, ACTION_VIEW_REPORT
     )
+    reports: dict[uuid.UUID, ScreeningReport] = {}
+    if sessions:
+        rows = (
+            (
+                await db.execute(
+                    select(ScreeningReport).where(
+                        ScreeningReport.session_id.in_([s.id for s in sessions])
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        reports = {r.session_id: r for r in rows}
     items = []
     for s in sessions:
         dto = _to_dto(
-            s, cand_names=cand_names, vac_titles=vac_titles, rec_names=rec_names
+            s,
+            cand_names=cand_names,
+            vac_titles=vac_titles,
+            rec_names=rec_names,
+            report=reports.get(s.id),
         )
         if not can_view:
             dto = dto.model_copy(update={"report": None, "audio_file_id": None})
@@ -388,6 +413,15 @@ async def update(
     if payload.telemost_url is not None:
         session.telemost_url = payload.telemost_url
     if payload.consent_confirmed is not None:
+        if (
+            payload.consent_confirmed is False
+            and session.status != ScreeningStatus.draft
+        ):
+            raise ApiError(
+                status.HTTP_409_CONFLICT,
+                "invalid_status",
+                "Снять согласие можно только до начала встречи",
+            )
         session.consent_confirmed = payload.consent_confirmed
     await db.commit()
     session = await _load(db, session_id)
@@ -404,7 +438,7 @@ async def start(
         raise ApiError(
             status.HTTP_409_CONFLICT,
             "invalid_status",
-            "Стартовать можно только сессию в статусе draft",
+            "Стартовать можно только сессию в статусе draft или live",
         )
     if not session.consent_confirmed:
         raise ApiError(
@@ -451,6 +485,16 @@ async def finish(
         # После commit — Celery / in-process анализ (см. screening.tasks).
         enqueue_screening_analysis(db.sync_session, session.id)
         await db.commit()
+        # eager (dev/tests): дожидаемся анализа, иначе ответ ручки зависит от
+        # планировщика (processing или done). В проде задача уходит в Celery
+        # и ответ всегда processing.
+        await wait_for_pending_analysis()
+        # SessionLocal живёт с expire_on_commit=False: без явного сброса
+        # мы бы вернули свой устаревший объект (processing), хотя фоновая
+        # задача уже перевела сессию в done. Точечно, не expire_all():
+        # тот бы обнулил и текущего пользователя → ленивая подгрузка в
+        # async-контексте и MissingGreenlet.
+        db.expire(session)
         session = await _load(db, session_id)
     return await to_dto(db, session, user=user)
 
@@ -470,18 +514,50 @@ async def attach_audio(
             "file_entity_mismatch",
             "Файл не принадлежит этой сессии скрининга",
         )
+    mime = (getattr(file, "mime", None) or getattr(file, "mime_type", "") or "").lower()
+    if mime and not mime.startswith("audio/"):
+        raise ApiError(
+            status.HTTP_400_BAD_REQUEST,
+            "file_not_audio",
+            "К сессии скрининга можно привязать только аудиозапись",
+        )
     session.audio_file_id = file_id
     await db.commit()
     session = await _load(db, session_id)
     return await to_dto(db, session, user=user)
 
 
+async def _delete_audio_file(db: AsyncSession, file_id: uuid.UUID) -> bool:
+    """Удалить объект записи в S3 и строку files. Ошибка S3 не валит вызов."""
+    from app.integrations.s3 import get_s3_adapter
+
+    file = await db.get(File, file_id)
+    if file is None:
+        return False
+    if file.entity_type != FileEntityType.screening:
+        return False
+    try:
+        s3 = get_s3_adapter()
+        await asyncio.to_thread(s3.delete, file_key=file.file_key)
+    except Exception:
+        logger.exception("screening: S3 delete failed for %s", file.file_key)
+        return False
+    await db.delete(file)
+    await db.commit()
+    return True
+
+
 async def delete(db: AsyncSession, user: User, session_id: uuid.UUID) -> None:
     await _require_run(db, user)
     session = await _load(db, session_id)
     _ensure_can_edit(user, session)
+    audio_file_id = session.audio_file_id
     await db.delete(session)
     await db.commit()
+    # FK audio_file_id стоит SET NULL, поэтому файл пережил бы сессию и никогда
+    # не попал бы под retention — чистим руками.
+    if audio_file_id is not None:
+        await _delete_audio_file(db, audio_file_id)
 
 
 # --- questions -------------------------------------------------------------
@@ -620,21 +696,17 @@ async def regenerate_questions(
             for q in session.questions
             if q.source == ScreeningQuestionSource.manual
         ]
-    # SQLAlchemy orphan-delete: очищаем коллекцию и наполняем заново.
-    session.questions.clear()
+    # Ручные вопросы НЕ пересоздаём: на их id ссылаются фронт и агент, плюс в
+    # них может быть answer_summary. Удаляем только AI-вопросы (orphan-delete).
+    keep_ids = {q.id for q in keep}
+    for q in list(session.questions):
+        if q.id not in keep_ids:
+            session.questions.remove(q)
     await db.flush()
 
     position = 0
     for q in sorted(keep, key=lambda x: x.position):
-        session.questions.append(
-            ScreeningQuestion(
-                position=position,
-                text_=q.text_,
-                goal=q.goal,
-                source=ScreeningQuestionSource.manual,
-                status=q.status,
-            )
-        )
+        q.position = position
         position += 1
     for item in generated:
         session.questions.append(
@@ -666,6 +738,59 @@ def _segment_dto(seg: ScreeningSegment) -> ScreeningSegmentDTO:
     )
 
 
+_HALLUCINATION_PATTERNS = (
+    re.compile(r"^\s*(субтитры|редактор субтитров|корректор)\b", re.I),
+    re.compile(r"(dimatorzok|димасторжок|субтитры сделал)", re.I),
+    re.compile(r"^\s*продолжение следует\s*[.!…]*\s*$", re.I),
+    re.compile(r"^\s*(спасибо за просмотр|подписывайтесь на канал)", re.I),
+    re.compile(r"^[\s.,!?…\-–—*]+$"),
+)
+# Допуск при сравнении интервалов и порог похожести текста для дедупа эха.
+_DEDUP_WINDOW_MS = 2000
+_DEDUP_RATIO = 0.85
+_DEDUP_LOOKBACK = 6
+
+
+def _normalize_text(text: str) -> str:
+    return re.sub(r"[^\w\s]", " ", (text or "").casefold()).strip()
+
+
+def is_hallucination(text: str) -> bool:
+    """Типовые галлюцинации Whisper на тишине/музыке (риск из плана)."""
+    t = (text or "").strip()
+    if not t:
+        return True
+    if len(_normalize_text(t)) < 2:
+        return True
+    return any(p.search(t) for p in _HALLUCINATION_PATTERNS)
+
+
+def is_duplicate_segment(
+    text: str,
+    started_ms: int,
+    ended_ms: int,
+    recent: list[ScreeningSegment],
+) -> bool:
+    """Эхо: та же реплика пришла по второму каналу (рекрутер без наушников)
+    либо дубль после reconnect. Сравниваем по пересечению времени + похожести."""
+    norm = _normalize_text(text)
+    if not norm:
+        return True
+    for seg in recent:
+        if seg.started_ms - _DEDUP_WINDOW_MS > ended_ms:
+            continue
+        if seg.ended_ms + _DEDUP_WINDOW_MS < started_ms:
+            continue
+        other = _normalize_text(seg.text_ or "")
+        if not other:
+            continue
+        if other == norm:
+            return True
+        if difflib.SequenceMatcher(None, norm, other).ratio() >= _DEDUP_RATIO:
+            return True
+    return False
+
+
 async def next_seq(db: AsyncSession, session_id: uuid.UUID) -> int:
     """Следующий свободный seq (max+1). 1, если сегментов ещё нет."""
     current = (
@@ -686,8 +811,42 @@ async def append_segment(
     text: str,
     started_ms: int,
     ended_ms: int,
-) -> ScreeningSegment:
-    """Записать финальный сегмент. UNIQUE(session_id, seq) защищает от дублей."""
+) -> ScreeningSegment | None:
+    """Записать финальный сегмент транскрипта.
+
+    Возвращает None, если сегмент отброшен: сессия уже не live, текст похож на
+    галлюцинацию Whisper либо это эхо/дубль соседнего канала.
+    UNIQUE(session_id, seq) защищает от гонки двух писателей.
+    """
+    current_status = (
+        await db.execute(
+            select(ScreeningSession.status).where(ScreeningSession.id == session_id)
+        )
+    ).scalar_one_or_none()
+    if current_status != ScreeningStatus.live:
+        logger.info(
+            "screening.segment: skip for %s (status=%s)", session_id, current_status
+        )
+        return None
+    if is_hallucination(text):
+        screening_metrics.record_segment_dropped("hallucination")
+        return None
+    recent = list(
+        (
+            await db.execute(
+                select(ScreeningSegment)
+                .where(ScreeningSegment.session_id == session_id)
+                .order_by(ScreeningSegment.seq.desc())
+                .limit(_DEDUP_LOOKBACK)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if is_duplicate_segment(text, started_ms, ended_ms, recent):
+        screening_metrics.record_segment_dropped("duplicate")
+        return None
+
     last_error: Exception | None = None
     for _ in range(5):
         seq = await next_seq(db, session_id)
@@ -715,13 +874,10 @@ async def append_segment(
     ) from last_error
 
 
-async def list_transcript(
-    db: AsyncSession, user: User, session_id: uuid.UUID
-) -> TranscriptResponse:
-    await _require_view_report(db, user)
-    session = await _load(db, session_id)
-    await _ensure_can_see(db, user, session)
-    rows = list(
+async def _fetch_segments(
+    db: AsyncSession, session_id: uuid.UUID
+) -> list[ScreeningSegment]:
+    return list(
         (
             await db.execute(
                 select(ScreeningSegment)
@@ -732,11 +888,37 @@ async def list_transcript(
         .scalars()
         .all()
     )
+
+
+async def list_transcript(
+    db: AsyncSession, user: User, session_id: uuid.UUID
+) -> TranscriptResponse:
+    await _require_view_report(db, user)
+    session = await _load(db, session_id)
+    await _ensure_can_see(db, user, session)
+    rows = await _fetch_segments(db, session_id)
     last = rows[-1].seq if rows else 0
     return TranscriptResponse(
         items=[_segment_dto(s) for s in rows],
         last_seq=last,
     )
+
+
+async def list_segments(
+    db: AsyncSession, user: User, session_id: uuid.UUID
+) -> list[ScreeningSegmentDTO]:
+    """Плоский список сегментов — контракт GET /screenings/{id}/segments.
+
+    Ведущий рекрутер и админ читают транскрипт СВОЕЙ встречи без права
+    `view_report`: иначе у роли без этого права ломается дозагрузка
+    пропущенных сегментов после реконнекта WS прямо во время интервью.
+    Посторонним (кто видит сессию по вакансии) право по-прежнему нужно.
+    """
+    session = await _load(db, session_id)
+    await _ensure_can_see(db, user, session)
+    if not (user.role == Role.admin or session.recruiter_id == user.id):
+        await _require_view_report(db, user)
+    return [_segment_dto(x) for x in await _fetch_segments(db, session_id)]
 
 
 # --- report / post-analysis (Этап 5) ---------------------------------------
@@ -843,6 +1025,14 @@ async def run_post_analysis(session_id: uuid.UUID) -> None:
         answered = sum(
             1 for q in questions if q.status == ScreeningQuestionStatus.answered
         )
+        # Значения снимаем ДО любых commit: после коммита ORM-объекты
+        # инвалидируются (expire_on_commit) и ленивая подгрузка в async-контексте
+        # даёт MissingGreenlet прямо в обработчике ошибки.
+        cand_name = cand.full_name
+        recruiter_id = session.recruiter_id
+        candidate_id = session.candidate_id
+        vacancy_id = session.vacancy_id
+        sid = session.id
 
         try:
             raw = await screening_report.generate_screening_report(
@@ -868,20 +1058,20 @@ async def run_post_analysis(session_id: uuid.UUID) -> None:
             screening_metrics.record_ai_report_error()
             session.status = ScreeningStatus.error
             await db.commit()
-            if session.recruiter_id is not None:
+            if recruiter_id is not None:
                 try:
                     async with SessionLocal() as ndb:
                         await notify_service.notify(
                             ndb,
-                            recipient_id=session.recruiter_id,
+                            recipient_id=recruiter_id,
                             kind=NotificationKind.system,
                             text=(
                                 "Не удалось сформировать отчёт AI-скрининга по "
-                                f"«{cand.full_name}». Статус сессии: ошибка."
+                                f"«{cand_name}». Статус сессии: ошибка."
                             ),
                             entity_type=NotificationEntityType.candidate,
-                            entity_id=session.candidate_id,
-                            payload={"screeningId": str(session.id)},
+                            entity_id=candidate_id,
+                            payload={"screeningId": str(sid)},
                         )
                         await ndb.commit()
                 except Exception:
@@ -890,11 +1080,11 @@ async def run_post_analysis(session_id: uuid.UUID) -> None:
                         session_id,
                     )
             publish_screening_report_ready(
-                session_id=session.id,
-                candidate_id=session.candidate_id,
-                vacancy_id=session.vacancy_id,
+                session_id=sid,
+                candidate_id=candidate_id,
+                vacancy_id=vacancy_id,
                 status=ScreeningStatus.error.value,
-                actor_id=session.recruiter_id,
+                actor_id=recruiter_id,
             )
             return
 
@@ -927,7 +1117,7 @@ async def run_post_analysis(session_id: uuid.UUID) -> None:
 
         session.status = ScreeningStatus.done
         screening_metrics.record_ai_report_ok()
-        actor_id = session.recruiter_id
+        actor_id = recruiter_id
         verdict: ScreeningVerdict = raw["verdict"]
         verdict_label = _VERDICT_LABELS.get(verdict, verdict.value)
         vac_title = vac.title if vac is not None else None
@@ -939,7 +1129,7 @@ async def run_post_analysis(session_id: uuid.UUID) -> None:
             await audit_service.record_activity(
                 db,
                 entity_type=ActivityEntityType.candidate,
-                entity_id=session.candidate_id,
+                entity_id=candidate_id,
                 actor_id=actor_id,
                 kind=ActivityKind.note,
                 text=activity_text,
@@ -949,22 +1139,22 @@ async def run_post_analysis(session_id: uuid.UUID) -> None:
                 recipient_id=actor_id,
                 kind=NotificationKind.system,
                 text=(
-                    f"Отчёт AI-скрининга по «{cand.full_name}» готов: "
+                    f"Отчёт AI-скрининга по «{cand_name}» готов: "
                     f"«{verdict_label}»."
                 ),
                 entity_type=NotificationEntityType.candidate,
-                entity_id=session.candidate_id,
+                entity_id=candidate_id,
                 payload={
-                    "screeningId": str(session.id),
+                    "screeningId": str(sid),
                     "verdict": verdict.value,
                 },
             )
         await db.commit()
 
         publish_screening_report_ready(
-            session_id=session.id,
-            candidate_id=session.candidate_id,
-            vacancy_id=session.vacancy_id,
+            session_id=sid,
+            candidate_id=candidate_id,
+            vacancy_id=vacancy_id,
             status=ScreeningStatus.done.value,
             verdict=verdict.value,
             actor_id=actor_id,
@@ -1001,6 +1191,75 @@ async def finish_by_timeout(session_id: uuid.UUID) -> None:
     logger.warning("screening.finish_by_timeout: session %s", session_id)
 
 
+async def touch_session_activity(session_id: uuid.UUID) -> None:
+    """Отметить, что по сессии есть живой WS (для уборщика осиротевших live)."""
+    try:
+        async with SessionLocal() as db:
+            await db.execute(
+                sa_update(ScreeningSession)
+                .where(ScreeningSession.id == session_id)
+                .values(last_seen_at=datetime.now(UTC))
+            )
+            await db.commit()
+    except Exception:  # noqa: BLE001 — heartbeat не должен ронять встречу
+        logger.exception("screening.touch: failed for %s", session_id)
+
+
+async def close_stale_sessions() -> int:
+    """Закрыть «осиротевшие» live-сессии (Этап 6, беат раз в минуту).
+
+    Две причины:
+    1) превышен SCREENING_MAX_DURATION_MIN — hard-stop обязан отработать даже
+       если WS давно оборван (внутри WS-таска он умирает вместе с соединением);
+    2) от клиента нет активности дольше SCREENING_ORPHAN_GRACE_MIN — рекрутер
+       закрыл вкладку и не вернулся; иначе сессия висит live навсегда и отчёт
+       не строится.
+    """
+    settings = get_settings()
+    now = datetime.now(UTC)
+    grace_min = max(1, int(settings.screening_orphan_grace_min))
+    max_min = int(settings.screening_max_duration_min)
+
+    def _aware(dt: datetime | None) -> datetime | None:
+        if dt is None:
+            return None
+        return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+
+    stale_ids: list[uuid.UUID] = []
+    async with SessionLocal() as db:
+        rows = list(
+            (
+                await db.execute(
+                    select(ScreeningSession).where(
+                        ScreeningSession.status == ScreeningStatus.live
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for s in rows:
+            anchor = _aware(s.last_seen_at or s.started_at or s.created_at)
+            started = _aware(s.started_at or s.created_at)
+            stale = anchor is not None and (now - anchor) > timedelta(minutes=grace_min)
+            overlong = (
+                max_min > 0
+                and started is not None
+                and (now - started) > timedelta(minutes=max_min)
+            )
+            if stale or overlong:
+                stale_ids.append(s.id)
+
+    for sid in stale_ids:
+        try:
+            await finish_by_timeout(sid)
+        except Exception:
+            logger.exception("screening.sweeper: finish failed for %s", sid)
+    if stale_ids:
+        logger.warning("screening.sweeper: closed %d stale session(s)", len(stale_ids))
+    return len(stale_ids)
+
+
 async def purge_expired_audio(
     db: AsyncSession,
     s3: S3Adapter,
@@ -1032,15 +1291,32 @@ async def purge_expired_audio(
         .scalars()
         .all()
     )
+    file_ids = [s.audio_file_id for s in sessions if s.audio_file_id is not None]
+    files: dict[uuid.UUID, File] = {}
+    if file_ids:
+        rows = (
+            (await db.execute(select(File).where(File.id.in_(file_ids))))
+            .scalars()
+            .all()
+        )
+        files = {f.id: f for f in rows}
+
     purged = 0
     for session in sessions:
         file_id = session.audio_file_id
         if file_id is None:
             continue
-        file = await db.get(File, file_id)
+        file = files.get(file_id)
         if file is not None:
+            if file.entity_type != FileEntityType.screening:
+                logger.warning(
+                    "screening.retention: file %s is not a screening file — skip",
+                    file_id,
+                )
+                continue
             try:
-                s3.delete(file_key=file.file_key)
+                # s3.delete синхронный: в потоке, чтобы не блокировать loop.
+                await asyncio.to_thread(s3.delete, file_key=file.file_key)
             except Exception:
                 logger.exception(
                     "screening.retention: S3 delete failed for %s", file.file_key
@@ -1048,9 +1324,11 @@ async def purge_expired_audio(
                 continue
             await db.delete(file)
         session.audio_file_id = None
+        # Коммит на каждый файл: падение в середине батча не оставит
+        # удалённые в S3 объекты с живыми строками в БД.
+        await db.commit()
         purged += 1
     if purged:
-        await db.commit()
         screening_metrics.record_retention_purged(purged)
     return purged
 

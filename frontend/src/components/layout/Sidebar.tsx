@@ -24,6 +24,7 @@ import { Link, useRouterState } from '@tanstack/react-router';
 import { cn } from '@/lib/utils';
 import { useNotifications } from '@/features/notifications/hooks';
 import { useAuthStore } from '@/stores/auth';
+import { useCan } from '@/lib/permissions';
 import { useUIStore } from '@/stores/ui';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { AppInfoPopover } from './AppInfoPopover';
@@ -37,7 +38,12 @@ interface NavItem {
   tagHint?: string;
   /** Пункт виден только администраторам. */
   adminOnly?: boolean;
+  /** Пункт виден, если есть хотя бы одно из перечисленных прав. */
+  anyAction?: ScreeningNavAction[];
 }
+
+/** Действия матрицы доступов, которыми гейтятся пункты меню. */
+type ScreeningNavAction = 'screening:run' | 'screening:view_report';
 
 interface NavGroup {
   label?: string;
@@ -56,7 +62,12 @@ const GROUPS: NavGroup[] = [
       { to: '/contacts', label: 'Контакты', icon: ContactRound },
       { to: '/chat', label: 'Чат', icon: MessageSquare },
       { to: '/calendar', label: 'Календарь', icon: Calendar },
-      { to: '/video-interviews', label: 'Видеоинтервью', icon: Video },
+      {
+        to: '/video-interviews',
+        label: 'Видеоинтервью',
+        icon: Video,
+        anyAction: ['screening:run', 'screening:view_report'],
+      },
     ],
   },
   {
@@ -95,6 +106,12 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const { data: notifications } = useNotifications();
   const unreadCount = notifications?.filter((n) => !n.read).length ?? 0;
   const isAdmin = useAuthStore((s) => s.user?.role) === 'admin';
+  const canRunScreening = useCan('screening:run');
+  const canViewScreeningReport = useCan('screening:view_report');
+  const actionAllowed: Record<ScreeningNavAction, boolean> = {
+    'screening:run': canRunScreening,
+    'screening:view_report': canViewScreeningReport,
+  };
 
   return (
     <>
@@ -125,6 +142,10 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
             <ul className="space-y-px">
               {group.items
                 .filter((item) => !item.adminOnly || isAdmin)
+                .filter(
+                  (item) =>
+                    !item.anyAction || item.anyAction.some((a) => actionAllowed[a]),
+                )
                 .map((item) => {
                   const Icon = item.icon;
                   const active = pathname.startsWith(item.to);

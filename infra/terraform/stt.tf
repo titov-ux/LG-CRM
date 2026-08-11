@@ -16,7 +16,7 @@ variable "create_stt_vm" {
 variable "stt_vm_name" {
   type    = string
   default = ""
-  description = "Имя STT-VM; пусто = ${vm_name}-stt"
+  description = "Имя STT-VM; пусто = $${vm_name}-stt"
 }
 
 variable "stt_platform_id" {

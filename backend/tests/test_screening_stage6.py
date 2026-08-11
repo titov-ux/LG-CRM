@@ -139,6 +139,9 @@ def test_screening_metrics_counters() -> None:
     assert snap["ai_report_fallback"] == 1
     assert snap["retention_purged"] == 2
     assert snap["max_duration_stops"] == 1
+    prom = screening_metrics.SCREENING_METRICS.to_prometheus()
+    assert "screening_stt_finals_total 2" in prom
+    assert 'screening_ai_agent_total{result="ok"} 1' in prom
     screening_metrics.SCREENING_METRICS.reset()
 
 
@@ -197,3 +200,150 @@ async def test_purge_skips_when_retention_zero(db: AsyncSession) -> None:
     purged = await screening_service.purge_expired_audio(db, s3, retention_days=0)
     assert purged == 0
     s3.delete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_append_segment_drops_echo_and_non_live(
+    db: AsyncSession, recruiter_user, candidate
+) -> None:
+    """Сегменты пишем только у live-сессии и без эха/галлюцинаций."""
+    from app.modules.screening.models import ScreeningSpeaker
+
+    session = ScreeningSession(
+        candidate_id=candidate.id,
+        recruiter_id=recruiter_user.id,
+        status=ScreeningStatus.live,
+        started_at=datetime.now(UTC),
+    )
+    db.add(session)
+    await db.commit()
+
+    seg = await screening_service.append_segment(
+        db,
+        session.id,
+        speaker=ScreeningSpeaker.candidate,
+        text="Я работал с Kafka два года",
+        started_ms=1000,
+        ended_ms=4000,
+    )
+    assert seg is not None and seg.seq == 1
+
+    # Эхо того же текста по каналу рекрутера — отбрасываем.
+    echo = await screening_service.append_segment(
+        db,
+        session.id,
+        speaker=ScreeningSpeaker.recruiter,
+        text="я работал с kafka, два года",
+        started_ms=1100,
+        ended_ms=4100,
+    )
+    assert echo is None
+
+    # Галлюцинация Whisper на тишине.
+    junk = await screening_service.append_segment(
+        db,
+        session.id,
+        speaker=ScreeningSpeaker.candidate,
+        text="Продолжение следует...",
+        started_ms=9000,
+        ended_ms=9500,
+    )
+    assert junk is None
+
+    # После завершения встречи писать в транскрипт нельзя.
+    session.status = ScreeningStatus.processing
+    await db.commit()
+    late = await screening_service.append_segment(
+        db,
+        session.id,
+        speaker=ScreeningSpeaker.candidate,
+        text="Поздняя реплика",
+        started_ms=20000,
+        ended_ms=21000,
+    )
+    assert late is None
+
+
+@pytest.mark.asyncio
+async def test_close_stale_sessions_finishes_orphans(
+    db: AsyncSession, recruiter_user, candidate
+) -> None:
+    """Рекрутер закрыл вкладку — сессия не должна висеть live навсегда."""
+    stale = ScreeningSession(
+        candidate_id=candidate.id,
+        recruiter_id=recruiter_user.id,
+        status=ScreeningStatus.live,
+        started_at=datetime.now(UTC) - timedelta(hours=2),
+        last_seen_at=datetime.now(UTC) - timedelta(hours=1),
+    )
+    fresh = ScreeningSession(
+        candidate_id=candidate.id,
+        recruiter_id=recruiter_user.id,
+        status=ScreeningStatus.live,
+        started_at=datetime.now(UTC),
+        last_seen_at=datetime.now(UTC),
+    )
+    db.add_all([stale, fresh])
+    await db.commit()
+
+    closed = await screening_service.close_stale_sessions()
+    assert closed >= 1
+
+    await db.refresh(stale)
+    await db.refresh(fresh)
+    assert stale.status != ScreeningStatus.live
+    assert stale.ended_at is not None
+    assert fresh.status == ScreeningStatus.live
+
+
+@pytest.mark.asyncio
+async def test_regenerate_questions_keeps_manual_ids(
+    db: AsyncSession, recruiter_user, candidate, monkeypatch
+) -> None:
+    """Перегенерация не должна пересоздавать ручные вопросы (ломались id)."""
+    from app.modules.screening import ai as screening_ai
+    from app.modules.screening.models import (
+        ScreeningQuestion,
+        ScreeningQuestionSource,
+    )
+    from app.modules.screening.schemas import RegenerateQuestionsRequest
+
+    session = ScreeningSession(
+        candidate_id=candidate.id,
+        recruiter_id=recruiter_user.id,
+        status=ScreeningStatus.draft,
+    )
+    session.questions.append(
+        ScreeningQuestion(
+            position=0, text_="Ручной вопрос", source=ScreeningQuestionSource.manual
+        )
+    )
+    session.questions.append(
+        ScreeningQuestion(
+            position=1,
+            text_="Старый AI-вопрос",
+            source=ScreeningQuestionSource.pregenerated,
+        )
+    )
+    db.add(session)
+    await db.commit()
+    manual_id = str(
+        next(q.id for q in session.questions if q.source == ScreeningQuestionSource.manual)
+    )
+
+    async def _fake_generate(**kwargs):
+        return [{"text": "Новый AI-вопрос", "goal": "проверить стек"}]
+
+    monkeypatch.setattr(
+        screening_ai, "generate_screening_questions", _fake_generate
+    )
+
+    dto = await screening_service.regenerate_questions(
+        db, recruiter_user, session.id, RegenerateQuestionsRequest()
+    )
+    texts = [q.text for q in dto.questions]
+    assert "Ручной вопрос" in texts
+    assert "Старый AI-вопрос" not in texts
+    assert "Новый AI-вопрос" in texts
+    # id ручного вопроса сохранился — на него ссылаются фронт и агент.
+    assert manual_id in {str(q.id) for q in dto.questions}

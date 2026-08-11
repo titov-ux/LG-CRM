@@ -4876,6 +4876,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/analytics/screening": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Метрики AI-скрининга (только admin) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Снимок счётчиков процесса */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: number;
+                        };
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/screenings": {
         parameters: {
             query?: never;
@@ -5176,6 +5215,169 @@ export interface paths {
         };
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/screenings/{id}/transcript": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        /** Транскрипт сессии с курсором lastSeq (право screening:view_report) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Транскрипт */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ScreeningTranscript"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/screenings/{id}/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        /** Отчёт пост-анализа (право screening:view_report) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description ScreeningReport */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ScreeningReport"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+                /** @description Отчёт ещё не готов */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/screenings/{id}/regenerate-questions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Перегенерировать план вопросов через AI (только статус draft) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["RegenerateQuestionsRequest"];
+                };
+            };
+            responses: {
+                /** @description ScreeningSession с новым чек-листом */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ScreeningSession"];
+                    };
+                };
+                /** @description invalid_status — встреча уже началась */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description ai_bad_request */
+                502: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description ai_unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -6527,6 +6729,15 @@ export interface components {
             /** Format: date-time */
             createdAt: string;
         };
+        ScreeningTranscript: {
+            items: components["schemas"]["ScreeningSegment"][];
+            lastSeq: number;
+        };
+        RegenerateQuestionsRequest: {
+            count?: number | null;
+            /** @default false */
+            replaceManual: boolean;
+        };
         ScreeningSession: {
             id: components["schemas"]["UUID"];
             candidateId: components["schemas"]["UUID"];
@@ -6565,6 +6776,11 @@ export interface components {
             telemostUrl?: string | null;
             /** @default [] */
             questions: string[];
+            /**
+             * @description Сгенерировать план вопросов через AI, если questions пуст
+             * @default true
+             */
+            generateQuestions: boolean;
         };
         UpdateScreeningRequest: {
             telemostUrl?: string | null;

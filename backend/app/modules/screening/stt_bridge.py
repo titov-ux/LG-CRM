@@ -29,6 +29,10 @@ class SttBridge:
         self._reader: asyncio.Task | None = None
         self._closed = False
 
+    def set_handler(self, on_event: EmitFn) -> None:
+        """Перепривязать получателя событий (переиспользование при reconnect WS)."""
+        self._on_event = on_event
+
     @property
     def connected(self) -> bool:
         return self._ws is not None and not self._closed
@@ -102,4 +106,14 @@ class SttBridge:
         except Exception:
             if not self._closed:
                 logger.exception("stt bridge: pump ended")
+                # Помечаем мост мёртвым, иначе connected продолжает врать True
+                # и следующая send_pcm рвёт WS рекрутера целиком.
+                self._closed = True
+                self._ws = None
                 await self._on_event({"type": "stt.error", "error": "stt_disconnected"})
+        else:
+            # Штатное закрытие со стороны STT — тоже конец жизни моста.
+            if not self._closed:
+                self._closed = True
+                self._ws = None
+                await self._on_event({"type": "stt.error", "error": "stt_closed"})

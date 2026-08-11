@@ -204,6 +204,33 @@ class ChannelTranscriber:
             }
         )
 
+    async def flush(self) -> None:
+        """Дожать остаток буфера (control `stop` / закрытие соединения).
+
+        В `tick` открытый VAD-регион ждёт MIN_SILENCE_MS тишины. Если встречу
+        завершили сразу после реплики, этой тишины не будет и последняя фраза
+        кандидата потеряется — здесь финализируем её принудительно.
+        """
+        if len(self.buf) == 0:
+            return
+        vad = _silero_vad(self.buf) if self.use_silero else _energy_vad(self.buf)
+        cut = len(self.buf)
+        for region in vad:
+            await self._finalize(region)
+        # Буфер отдан целиком (в т.ч. если VAD не нашёл речи — там тишина).
+        self.buf = self.buf[cut:]
+        self.buf_start_ms += cut / SAMPLE_RATE * 1000
+
+    def cancel_tasks(self) -> None:
+        """Снять незавершённые задачи транскрибации канала.
+
+        Без этого после disconnect partial-таски продолжают занимать воркеры
+        ThreadPoolExecutor и тормозят соседние сессии.
+        """
+        if self._partial_task is not None and not self._partial_task.done():
+            self._partial_task.cancel()
+        self._partial_task = None
+
     async def _partial(self, seg) -> None:
         if len(seg) / SAMPLE_RATE < 1.0:
             return
@@ -294,30 +321,74 @@ async def handle(ws, model, executor, *, use_silero: bool, max_sessions: int) ->
     task = asyncio.create_task(ticker())
     peer = getattr(ws, "remote_address", None)
     logger.info("client connected %s (active=%d/%d)", peer, active_now, max_sessions)
+    bad_frames = 0
+    unknown_channel_frames = 0
     try:
         async for msg in ws:
-            if isinstance(msg, bytes):
-                if len(msg) < 2:
-                    continue
-                ch = msg[0]
-                if ch in channels:
-                    channels[ch].feed(msg[1:])
-            else:
-                try:
-                    data = json.loads(msg)
-                except (ValueError, TypeError):
-                    continue
-                if data.get("type") == "stop":
-                    for c in channels.values():
-                        await c.tick()
-                    stats = [s for c in channels.values() if (s := c.stats())]
-                    await emit({"type": "stats", "channels": stats})
+            # Любая ошибка на одном сообщении не должна ронять весь коннект:
+            # он общий для обоих каналов (рекрутер + кандидат).
+            try:
+                if isinstance(msg, bytes):
+                    if len(msg) < 2:
+                        continue
+                    ch = msg[0]
+                    if ch not in channels:
+                        unknown_channel_frames += 1
+                        if unknown_channel_frames <= 3:
+                            logger.warning(
+                                "stt: неизвестный канал %s (%d байт) — фрейм пропущен",
+                                ch,
+                                len(msg),
+                            )
+                        continue
+                    payload = msg[1:]
+                    # PCM16LE: нечётная длина = битый/обрезанный фрейм,
+                    # np.frombuffer(..., int16) на нём бросает ValueError.
+                    if len(payload) % 2:
+                        raise ValueError(
+                            f"нечётная длина PCM-фрейма: {len(payload)} байт"
+                        )
+                    channels[ch].feed(payload)
+                else:
+                    try:
+                        data = json.loads(msg)
+                    except (ValueError, TypeError):
+                        continue
+                    if data.get("type") == "stop":
+                        for c in channels.values():
+                            await c.tick()
+                            # Дожимаем открытый сегмент: тишины после
+                            # последней реплики могло и не быть.
+                            await c.flush()
+                        stats = [s for c in channels.values() if (s := c.stats())]
+                        await emit({"type": "stats", "channels": stats})
+            except Exception as exc:  # noqa: BLE001 — коннект не рвём
+                bad_frames += 1
+                if bad_frames <= 3:
+                    logger.warning("stt: битый фрейм пропущен (%s)", exc)
+                elif bad_frames % 100 == 0:
+                    logger.warning("stt: битых фреймов уже %d", bad_frames)
     finally:
         task.cancel()
         try:
             await task
         except (asyncio.CancelledError, Exception):
             pass
+        # Клиент мог отвалиться без control `stop` — снимаем висящие задачи
+        # транскрибации и дожимаем то, что осталось в буферах.
+        for c in channels.values():
+            c.cancel_tasks()
+        for c in channels.values():
+            try:
+                await c.flush()
+            except Exception:
+                logger.exception("stt flush failed for %s", c.speaker)
+        if bad_frames or unknown_channel_frames:
+            logger.warning(
+                "stt: пропущено фреймов — битых %d, с неизвестным каналом %d",
+                bad_frames,
+                unknown_channel_frames,
+            )
         async with lock:
             _active_sessions = max(0, _active_sessions - 1)
             left = _active_sessions

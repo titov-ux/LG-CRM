@@ -25,6 +25,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -123,6 +124,11 @@ class ScreeningSession(Base, TimestampsMixin):
         DateTime(timezone=True), nullable=True
     )
     duration_sec: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Последняя активность живого WS. По нему уборщик (Этап 6) закрывает
+    # сессии, у которых рекрутер закрыл вкладку и не вернулся.
+    last_seen_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     audio_file_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("files.id", ondelete="SET NULL"),
@@ -191,6 +197,8 @@ class ScreeningSegment(Base):
     __tablename__ = "screening_segments"
     __table_args__ = (
         UniqueConstraint("session_id", "seq", name="uq_screening_segment_seq"),
+        # Дедуп эха ищет пересекающиеся по времени сегменты (миграция 0035).
+        Index("ix_screening_segments_session_started", "session_id", "started_ms"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(

@@ -43,13 +43,18 @@ from app.modules.screening.schemas import ScreeningQuestionDTO
 logger = logging.getLogger(__name__)
 
 PROMPT_VERSION = "screening_agent_v1"
+# Потолок ответа модели на один тик (входной промпт режется по
+# YANDEX_AI_MAX_INPUT_CHARS). Учитывается в бюджете токенов сессии.
+_TICK_MAX_TOKENS = 1200
 
 _ALLOWED_STATUSES = frozenset({"asked", "answered", "skipped"})
+# Ранги статусов: answered — самый «высокий», чтобы модель не могла пометить
+# уже отвеченный вопрос как skipped (правило промпта кодом не удержать).
 _STATUS_RANK = {
     ScreeningQuestionStatus.pending: 0,
     ScreeningQuestionStatus.asked: 1,
-    ScreeningQuestionStatus.answered: 2,
     ScreeningQuestionStatus.skipped: 2,
+    ScreeningQuestionStatus.answered: 3,
 }
 
 EmitFn = Callable[[dict[str, Any]], Awaitable[None]]
@@ -301,7 +306,7 @@ async def run_agent_tick(
         user=user_msg,
         schema_name="screening_agent_tick",
         schema=AGENT_TICK_SCHEMA,
-        max_tokens=1200,
+        max_tokens=_TICK_MAX_TOKENS,
         temperature=0.2,
     )
     return coerce_agent_tick(raw, known_ids=known, max_followups=max_followups)
@@ -322,8 +327,12 @@ async def apply_agent_tick(
     result: AgentTickResult,
     *,
     max_followups_remaining: int,
-) -> list[ScreeningQuestionDTO]:
-    """Применить тик к БД. Возвращает актуальный чек-лист."""
+) -> tuple[list[ScreeningQuestionDTO], int]:
+    """Применить тик к БД.
+
+    Возвращает (актуальный чек-лист, сколько follow-up реально добавлено) —
+    бюджет follow-up нельзя списывать, пока вставка не произошла.
+    """
     session = (
         await db.execute(
             select(ScreeningSession)
@@ -332,7 +341,7 @@ async def apply_agent_tick(
         )
     ).scalar_one_or_none()
     if session is None or session.status != ScreeningStatus.live:
-        return []
+        return [], 0
 
     by_id = {q.id: q for q in session.questions}
     changed = False
@@ -355,6 +364,7 @@ async def apply_agent_tick(
             changed = True
 
     followups = result.followups[: max(0, max_followups_remaining)]
+    added_followups = 0
     if followups:
         positions = {q.id: q.position for q in session.questions}
         # Если несколько follow-up с одним insert_after_id — вставляем цепочкой.
@@ -387,6 +397,7 @@ async def apply_agent_tick(
             positions[nq.id] = new_pos
             if fu.insert_after_id is not None:
                 chain_tail[fu.insert_after_id] = nq.id
+            added_followups += 1
             changed = True
 
     if changed:
@@ -398,7 +409,10 @@ async def apply_agent_tick(
                 .options(selectinload(ScreeningSession.questions))
             )
         ).scalar_one()
-    return [_question_dto(q) for q in sorted(session.questions, key=lambda x: x.position)]
+    dtos = [
+        _question_dto(q) for q in sorted(session.questions, key=lambda x: x.position)
+    ]
+    return dtos, added_followups
 
 
 class ScreeningRealtimeAgent:
@@ -411,6 +425,8 @@ class ScreeningRealtimeAgent:
         self._busy = False
         self._closed = False
         self._calls = 0
+        self._failed_calls = 0
+        self._tokens_spent = 0
         self._followups_added = 0
         self._last_call_mono = 0.0
         self._last_processed_seq = 0
@@ -448,27 +464,50 @@ class ScreeningRealtimeAgent:
             return
         await self._tick()
 
+    def _reschedule(self, delay: float, suffix: str) -> None:
+        """Перепланировать тик (агент занят / рано по min_interval)."""
+        if self._closed:
+            return
+        if self._debounce_task and not self._debounce_task.done():
+            self._debounce_task.cancel()
+        self._debounce_task = asyncio.create_task(
+            self._debounced_tick(max(0.5, delay)),
+            name=f"screening-agent-{suffix}-{self.session_id}",
+        )
+
     async def _tick(self) -> None:
-        if self._busy or self._closed:
+        if self._closed:
             return
         settings = get_settings()
+        if self._busy:
+            # Предыдущий вызов LLM ещё в полёте: раньше тик просто терялся и
+            # кусок транскрипта агент не видел никогда.
+            self._reschedule(
+                max(1.0, float(settings.screening_ai_min_interval_sec)), "busy"
+            )
+            return
         if not settings.screening_ai_enabled:
             return
-        if self._calls >= settings.screening_ai_max_calls_per_session:
+        if (self._calls + self._failed_calls) >= settings.screening_ai_max_calls_per_session:
             logger.info(
-                "screening.agent: call cap reached for %s (%d)",
+                "screening.agent: call cap reached for %s (ok=%d, failed=%d)",
                 self.session_id,
                 self._calls,
+                self._failed_calls,
+            )
+            return
+        budget = int(getattr(settings, "screening_ai_token_budget", 0) or 0)
+        if budget and self._tokens_spent >= budget:
+            logger.info(
+                "screening.agent: token budget spent for %s (~%d)",
+                self.session_id,
+                self._tokens_spent,
             )
             return
         now = time.monotonic()
         min_interval = max(0.0, float(settings.screening_ai_min_interval_sec))
         if self._last_call_mono and (now - self._last_call_mono) < min_interval:
-            wait = min_interval - (now - self._last_call_mono)
-            self._debounce_task = asyncio.create_task(
-                self._debounced_tick(wait),
-                name=f"screening-agent-retry-{self.session_id}",
-            )
+            self._reschedule(min_interval - (now - self._last_call_mono), "retry")
             return
         if self._newest_seq <= self._last_processed_seq:
             return
@@ -532,22 +571,29 @@ class ScreeningRealtimeAgent:
                     logger.warning(
                         "screening.agent unavailable for %s: %s", self.session_id, exc
                     )
+                    # Неудачные вызовы тоже жгут лимит: иначе при постоянных
+                    # ошибках AI дёргается до конца встречи.
+                    self._failed_calls += 1
+                    self._last_call_mono = time.monotonic()
                     screening_metrics.record_ai_agent_unavailable()
                     return
                 except AiBadRequestError as exc:
                     logger.error(
                         "screening.agent bad request for %s: %s", self.session_id, exc
                     )
+                    self._failed_calls += 1
+                    self._last_call_mono = time.monotonic()
                     screening_metrics.record_ai_agent_bad_request()
                     return
 
                 self._calls += 1
                 self._last_call_mono = time.monotonic()
                 self._last_processed_seq = max(s.seq for s in segs)
+                # Грубая оценка расхода: вход ≈ chars/4 + потолок ответа.
+                self._tokens_spent += len(_format_segments(segs)) // 4 + _TICK_MAX_TOKENS
                 screening_metrics.record_ai_agent_ok()
 
-                applied_followups = min(len(result.followups), fu_budget)
-                dtos = await apply_agent_tick(
+                dtos, applied_followups = await apply_agent_tick(
                     db,
                     self.session_id,
                     result,
@@ -570,6 +616,10 @@ class ScreeningRealtimeAgent:
                 await self._emit({"type": "hint", "text": emit_hint})
         except Exception:
             logger.exception("screening.agent tick failed for %s", self.session_id)
+            # Голые Exception тоже жгут лимит вызовов — иначе при постоянных
+            # сбоях (БД, сериализация) агент крутится до конца встречи.
+            self._failed_calls += 1
+            self._last_call_mono = time.monotonic()
             screening_metrics.record_ai_agent_error()
         finally:
             self._busy = False

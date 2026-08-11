@@ -14,6 +14,27 @@ from app.core.config import get_settings
 logger = logging.getLogger(__name__)
 
 _OUTBOX_KEY = "screening_analysis_outbox"
+# asyncio держит на задачи только слабые ссылки: без этого множества задачу
+# пост-анализа может собрать GC, и сессия навсегда зависнет в processing.
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
+
+
+def _spawn(loop: asyncio.AbstractEventLoop, sid: str) -> asyncio.Task:
+    task = loop.create_task(_run_analysis(sid), name=f"screening-analysis-{sid}")
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
+    return task
+
+
+async def wait_for_pending_analysis(timeout: float = 30.0) -> None:
+    """Дождаться незавершённых in-process анализов (eager-режим dev/tests)."""
+    pending = [t for t in _BACKGROUND_TASKS if not t.done()]
+    if not pending:
+        return
+    try:
+        await asyncio.wait(pending, timeout=timeout)
+    except Exception:  # noqa: BLE001
+        logger.exception("screening.analysis: wait_for_pending failed")
 
 
 def enqueue_screening_analysis(session, session_id: uuid.UUID) -> None:
@@ -52,7 +73,7 @@ def _dispatch(session_id: uuid.UUID) -> None:
             )
             asyncio.run(_run_analysis(sid))
             return
-        loop.create_task(_run_analysis(sid), name=f"screening-analysis-{sid}")
+        _spawn(loop, sid)
         return
     try:
         analyze_screening_session.delay(sid)
@@ -63,7 +84,7 @@ def _dispatch(session_id: uuid.UUID) -> None:
         )
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(_run_analysis(sid), name=f"screening-analysis-{sid}")
+            _spawn(loop, sid)
         except RuntimeError:
             asyncio.run(_run_analysis(sid))
 
@@ -113,8 +134,26 @@ def purge_expired_audio_task() -> int:
     return purged
 
 
+async def _run_sweeper() -> int:
+    from app.modules.screening import service as screening_service
+
+    return await screening_service.close_stale_sessions()
+
+
+@celery_app.task(name="screening.close_stale_sessions")
+def close_stale_sessions_task() -> int:
+    """Закрыть live-сессии, у которых оборвался WS или вышло время (Этап 6)."""
+    try:
+        return asyncio.run(_run_sweeper())
+    except Exception:
+        logger.exception("screening.close_stale_sessions failed")
+        raise
+
+
 __all__ = [
     "analyze_screening_session",
+    "close_stale_sessions_task",
     "enqueue_screening_analysis",
     "purge_expired_audio_task",
+    "wait_for_pending_analysis",
 ]

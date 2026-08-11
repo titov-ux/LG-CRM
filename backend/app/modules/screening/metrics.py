@@ -1,8 +1,9 @@
 """Лёгкие in-process метрики AI-скрининга (Этап 6).
 
 Паттерн как у matching/metrics: структурные логи + счётчики в памяти.
-Алерты (p95 STT > 5 с, всплеск ai_unavailable) — в docs/sentry-setup.md
-и docs/runbook.md.
+Снимок: `GET /api/v1/analytics/screening` (admin) и Prometheus-текст
+`GET /metrics`. Алерты (p95 STT > 5 с, всплеск ai_unavailable) —
+в docs/sentry-setup.md и docs/runbook.md.
 """
 from __future__ import annotations
 
@@ -27,6 +28,9 @@ class ScreeningMetrics:
     ai_report_errors: int = 0
     retention_purged: int = 0
     max_duration_stops: int = 0
+    active_sessions: int = 0
+    segments_dropped_duplicate: int = 0
+    segments_dropped_hallucination: int = 0
     # Скользящее окно последних латентностей для грубого p95 в snapshot.
     _latency_window: list[float] = field(default_factory=list)
 
@@ -54,7 +58,54 @@ class ScreeningMetrics:
             "ai_report_errors": self.ai_report_errors,
             "retention_purged": self.retention_purged,
             "max_duration_stops": self.max_duration_stops,
+            "active_sessions": self.active_sessions,
+            "segments_dropped_duplicate": self.segments_dropped_duplicate,
+            "segments_dropped_hallucination": self.segments_dropped_hallucination,
         }
+
+    def to_prometheus(self) -> str:
+        """Текст exposition format для scrape `/metrics` (без внешних зависимостей)."""
+        snap = self.snapshot()
+        lines = [
+            "# HELP screening_stt_finals_total Final STT segments persisted",
+            "# TYPE screening_stt_finals_total counter",
+            f"screening_stt_finals_total {int(snap['stt_finals'])}",
+            "# HELP screening_stt_latency_ms STT final latency",
+            "# TYPE screening_stt_latency_ms summary",
+            f'screening_stt_latency_ms{{quantile="0.95"}} {snap["stt_p95_latency_ms"]}',
+            f'screening_stt_latency_ms{{quantile="1"}} {snap["stt_max_latency_ms"]}',
+            f"screening_stt_latency_ms_sum {round(self.stt_latency_ms_total, 1)}",
+            f"screening_stt_latency_ms_count {int(snap['stt_finals'])}",
+            "# HELP screening_stt_errors_total STT bridge / decode errors",
+            "# TYPE screening_stt_errors_total counter",
+            f"screening_stt_errors_total {int(snap['stt_errors'])}",
+            "# HELP screening_ai_agent_total Realtime agent tick outcomes",
+            "# TYPE screening_ai_agent_total counter",
+            f'screening_ai_agent_total{{result="ok"}} {int(snap["ai_agent_ok"])}',
+            f'screening_ai_agent_total{{result="unavailable"}} {int(snap["ai_agent_unavailable"])}',
+            f'screening_ai_agent_total{{result="bad_request"}} {int(snap["ai_agent_bad_request"])}',
+            f'screening_ai_agent_total{{result="error"}} {int(snap["ai_agent_errors"])}',
+            "# HELP screening_ai_report_total Post-analysis report outcomes",
+            "# TYPE screening_ai_report_total counter",
+            f'screening_ai_report_total{{result="ok"}} {int(snap["ai_report_ok"])}',
+            f'screening_ai_report_total{{result="fallback"}} {int(snap["ai_report_fallback"])}',
+            f'screening_ai_report_total{{result="error"}} {int(snap["ai_report_errors"])}',
+            "# HELP screening_retention_purged_total Audio files purged by retention",
+            "# TYPE screening_retention_purged_total counter",
+            f"screening_retention_purged_total {int(snap['retention_purged'])}",
+            "# HELP screening_max_duration_stops_total Sessions stopped by max duration",
+            "# TYPE screening_max_duration_stops_total counter",
+            f"screening_max_duration_stops_total {int(snap['max_duration_stops'])}",
+            "# HELP screening_active_sessions Open screening WS connections",
+            "# TYPE screening_active_sessions gauge",
+            f"screening_active_sessions {int(snap['active_sessions'])}",
+            "# HELP screening_segments_dropped_total Segments dropped by filters",
+            "# TYPE screening_segments_dropped_total counter",
+            f'screening_segments_dropped_total{{reason="duplicate"}} {int(snap["segments_dropped_duplicate"])}',
+            f'screening_segments_dropped_total{{reason="hallucination"}} {int(snap["segments_dropped_hallucination"])}',
+            "",
+        ]
+        return "\n".join(lines)
 
     def reset(self) -> None:
         self.stt_finals = 0
@@ -70,6 +121,9 @@ class ScreeningMetrics:
         self.ai_report_errors = 0
         self.retention_purged = 0
         self.max_duration_stops = 0
+        self.segments_dropped_duplicate = 0
+        self.segments_dropped_hallucination = 0
+        # active_sessions — гейдж, не сбрасываем: его ведут открытые WS.
         self._latency_window.clear()
 
 
@@ -172,8 +226,48 @@ def record_max_duration_stop() -> None:
     )
 
 
+def record_segment_dropped(reason: str) -> None:
+    """Сегмент отброшен: дубль/эхо или галлюцинация Whisper."""
+    if reason == "duplicate":
+        SCREENING_METRICS.segments_dropped_duplicate += 1
+    else:
+        SCREENING_METRICS.segments_dropped_hallucination += 1
+    logger.info(
+        "screening.segment_dropped reason=%s",
+        reason,
+        extra={"screening_event": "segment_dropped", "reason": reason},
+    )
+
+
+def session_opened() -> None:
+    SCREENING_METRICS.active_sessions += 1
+    logger.info(
+        "screening.session_opened active=%d",
+        SCREENING_METRICS.active_sessions,
+        extra={
+            "screening_event": "session_opened",
+            "active": SCREENING_METRICS.active_sessions,
+        },
+    )
+
+
+def session_closed() -> None:
+    SCREENING_METRICS.active_sessions = max(0, SCREENING_METRICS.active_sessions - 1)
+    logger.info(
+        "screening.session_closed active=%d",
+        SCREENING_METRICS.active_sessions,
+        extra={
+            "screening_event": "session_closed",
+            "active": SCREENING_METRICS.active_sessions,
+        },
+    )
+
+
 __all__ = [
     "SCREENING_METRICS",
+    "record_segment_dropped",
+    "session_closed",
+    "session_opened",
     "ScreeningMetrics",
     "record_ai_agent_bad_request",
     "record_ai_agent_error",

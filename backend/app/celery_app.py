@@ -39,6 +39,12 @@ celery_app.conf.update(
             "task": "screening.purge_expired_audio",
             "schedule": crontab(hour=3, minute=15),
         },
+        # Раз в минуту: добиваем live-сессии с оборванным WS и вышедшие за
+        # SCREENING_MAX_DURATION_MIN (иначе висят live вечно, без отчёта).
+        "screening-close-stale-sessions": {
+            "task": "screening.close_stale_sessions",
+            "schedule": crontab(minute="*"),
+        },
     },
 )
 

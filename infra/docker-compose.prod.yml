@@ -6,7 +6,15 @@
 #   2. cp infra/nginx.example.conf infra/nginx.conf и обновить server_name + сертификаты.
 #   3. Положить TLS-сертификаты в infra/certs/ (fullchain.pem, privkey.pem).
 #   4. Сбилдить фронт: cd frontend && pnpm build → frontend/dist (его монтируем в nginx).
-#   5. docker compose -f infra/docker-compose.prod.yml --env-file .env.prod up -d
+#   5. docker compose -f infra/docker-compose.prod.yml --env-file .env.prod \
+#        --profile celery up -d
+#
+# ВАЖНО: флаг `--profile celery` в деплое ОБЯЗАТЕЛЕН (и в up, и в ps/logs/down).
+# Без него celery-worker и celery-beat не поднимаются, а значит:
+#   * при SCREENING_ANALYSIS_EAGER=false отчёты скрининга навсегда зависают
+#     в статусе `processing` (задача `screening.analyze_session` никем не берётся);
+#   * не выполняется retention аудио (beat `screening.purge_expired_audio`) —
+#     записи копятся в S3 дольше SCREENING_AUDIO_RETENTION_DAYS (риск по 152-ФЗ).
 #
 # Миграции: docker compose ... exec backend alembic upgrade head
 # Seed admin/permissions: docker compose ... exec backend make seed
@@ -57,7 +65,9 @@ services:
   backend:
     <<: *backend-base
     container_name: crm-lg-backend
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--proxy-headers", "--forwarded-allow-ips=*"]
+    # --ws-max-size 4194304 — лимит размера WS-фрейма 4 МБ (дефолт uvicorn 16 МБ);
+    # ровно этот лимит задокументирован в infra/nginx.example.conf.
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--proxy-headers", "--forwarded-allow-ips=*", "--ws-max-size", "4194304"]
     expose:
       - "8000"
 
@@ -65,8 +75,10 @@ services:
     <<: *backend-base
     container_name: crm-lg-celery-worker
     command: ["celery", "-A", "app.celery_app", "worker", "--loglevel=info"]
-    # На этапе 8 у нас ещё нет celery_app — этот сервис стартует только когда
-    # будет AI/ClamAV (этап 9). Закомментировать, если запускаешь раньше.
+    # app.celery_app существует; сервис обязателен на проде — он выполняет
+    # пост-анализ скрининга (`screening.analyze_session`). Профиль оставлен,
+    # чтобы можно было поднять стек без Celery локально; в деплое всегда
+    # добавляем `--profile celery` (см. шапку файла).
     profiles: ["celery"]
 
   celery-beat:
@@ -87,13 +99,25 @@ services:
     container_name: crm-lg-stt
     restart: unless-stopped
     environment:
-      STT_FAKE: "${STT_FAKE:-1}"
+      # Дефолт 0: с STT_FAKE=1 в БД пишутся заглушечные расшифровки «[fake N.Ns]».
+      STT_FAKE: "${STT_FAKE:-0}"
       STT_MODEL: "${STT_MODEL:-small}"
       STT_DEVICE: "${STT_DEVICE:-cpu}"
       STT_COMPUTE_TYPE: "${STT_COMPUTE_TYPE:-int8}"
       STT_CPU_THREADS: "${STT_CPU_THREADS:-4}"
       STT_MAX_SESSIONS: "${STT_MAX_SESSIONS:-8}"
       STT_PORT: "8765"
+      # Кеш весов HuggingFace/faster-whisper внутри именованного тома —
+      # иначе модель (small ≈500МБ, large-v3 ≈3ГБ) качается заново
+      # при каждом пересоздании контейнера.
+      HF_HOME: "/root/.cache/huggingface"
+    volumes:
+      - stt_models:/root/.cache/huggingface
+    # Ресурсные лимиты (compose v2, не swarm): на VM всего 2 vCPU и 4 ГБ,
+    # без потолка whisper выедает CPU/RAM и роняет backend с postgres.
+    # Под GPU/большую модель поднимать через .env.prod, а не правкой файла.
+    mem_limit: "${STT_MEM_LIMIT:-1500m}"
+    cpus: "${STT_CPUS:-1.0}"
     expose:
       - "8765"
 
@@ -120,3 +144,5 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  # Кеш моделей faster-whisper/HuggingFace для сервиса stt.
+  stt_models:

@@ -16,9 +16,12 @@ from app.modules.screening.schemas import (
     AttachAudioRequest,
     CreateScreeningRequest,
     FinishScreeningRequest,
+    RegenerateQuestionsRequest,
     ScreeningListResponse,
+    ScreeningReportDTO,
     ScreeningSegmentDTO,
     ScreeningSessionResponse,
+    TranscriptResponse,
     UpdateQuestionRequest,
     UpdateScreeningRequest,
 )
@@ -139,6 +142,46 @@ async def list_segments(
     db: AsyncSession = Depends(get_db),
 ) -> list[ScreeningSegmentDTO]:
     return await service.list_segments(db, user, session_id)
+
+
+@router.get(
+    "/{session_id}/transcript",
+    response_model=TranscriptResponse,
+    summary="Транскрипт сессии с курсором lastSeq",
+)
+async def get_transcript(
+    session_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> TranscriptResponse:
+    return await service.list_transcript(db, user, session_id)
+
+
+@router.get(
+    "/{session_id}/report",
+    response_model=ScreeningReportDTO,
+    summary="Отчёт пост-анализа (404, пока не готов)",
+)
+async def get_report(
+    session_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ScreeningReportDTO:
+    return await service.get_report(db, user, session_id)
+
+
+@router.post(
+    "/{session_id}/regenerate-questions",
+    response_model=ScreeningSessionResponse,
+    summary="Перегенерировать план вопросов (AI, только до начала встречи)",
+)
+async def regenerate_questions(
+    session_id: uuid.UUID,
+    payload: RegenerateQuestionsRequest | None = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ScreeningSessionResponse:
+    return await service.regenerate_questions(db, user, session_id, payload)
 
 
 @router.post(

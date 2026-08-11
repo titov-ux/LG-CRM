@@ -214,7 +214,8 @@ docker compose -f infra/docker-compose.prod.yml --profile celery ps
 2. `busy` (1013) → очередь полна: поднять `STT_MAX_SESSIONS` или вынести STT
    на GPU-VM (`create_stt_vm` в tofu, см. `infra/terraform/README.md`).
 3. p95 STT > 5 с в логах `screening.stt_final` → снизить модель / включить GPU /
-   уменьшить параллелизм.
+   уменьшить параллелизм. Снимок счётчиков: `GET /metrics` (Prometheus) или
+   `GET /api/v1/analytics/screening` (admin JSON).
 4. Отчёт не появляется → worker жив? `SCREENING_ANALYSIS_EAGER=false` на prod
    требует celery-worker; смотреть задачу `screening.analyze_session`.
 5. Аудио «пропало» через N дней — норма: `SCREENING_AUDIO_RETENTION_DAYS`
@@ -224,6 +225,107 @@ docker compose -f infra/docker-compose.prod.yml --profile celery ps
 (транскрипт/отчёт/аудио). Без права API отдаёт 403.
 
 **Эскалация:** owner screening / infra, если простой >30 минут в рабочее время.
+
+### 8.1. YandexGPT недоступен / не задан ключ
+
+**Симптомы.** Кнопка «Сгенерировать вопросы» отдаёт 503 `ai_unavailable`
+(и 502 `ai_bad_request`, если модель вернула мусор); во время встречи агент
+молчит — новых follow-up вопросов в чек-листе не появляется; после finish
+отчёт всё равно приходит, но это fallback-текст без выводов модели
+(в `screening_reports` поле model = `fallback`). В логах / Sentry:
+`screening.ai_agent_unavailable`, `screening.ai_report_fallback`,
+`Yandex AI Studio is not configured (YANDEX_API_KEY / YANDEX_FOLDER_ID)`.
+
+**Быстрая проверка:**
+
+```bash
+# 1. Ключ и folder вообще доехали до контейнера?
+docker compose -f infra/docker-compose.prod.yml exec backend \
+  python -c "from app.core.config import get_settings as g; s=g(); \
+print('key:', bool(s.yandex_api_key), 'folder:', s.yandex_folder_id or '—', \
+'model:', s.yandex_ai_model, 'ai_enabled:', s.screening_ai_enabled)"
+
+# 2. Что именно отвечает Yandex (401/403 = ключ/роль, 429 = квота, 5xx = их сторона)
+docker compose -f infra/docker-compose.prod.yml logs backend --tail=300 \
+  | grep -Ei "yandex|ai_unavailable|ai_agent_|ai_report_"
+```
+
+**Действие:**
+
+1. Пусто в `key`/`folder` → в `.env.prod` не заполнены `YANDEX_API_KEY` /
+   `YANDEX_FOLDER_ID` (шаблон — в `.env.prod.example`). Дописать и
+   перезапустить backend + celery-worker (`up -d backend celery-worker`),
+   переменные читаются только на старте процесса.
+2. 401/403 от Yandex → ключ отозван или у сервисного аккаунта нет роли
+   `ai.languageModels.user` в нужном каталоге; перевыпустить в AI Studio →
+   Settings → API keys.
+3. 429 / таймауты → упёрлись в квоту AI Studio: поднять квоту в консоли YC
+   либо снизить нагрузку агента (`SCREENING_AI_MIN_INTERVAL_SEC` вверх,
+   `SCREENING_AI_MAX_CALLS_PER_SESSION` вниз).
+4. Модель `yandexgpt/rc` отвечает нестабильно (`ai_bad_request`) → временно
+   переключить `YANDEX_AI_MODEL=yandexgpt/latest`.
+5. Встреча уже идёт, а чинить некогда → работать по ручному чек-листу:
+   вопросы добавляются руками, транскрипт и запись от YandexGPT не зависят.
+   Совсем выключить вызовы LLM во время встречи — `SCREENING_AI_ENABLED=false`.
+
+**Важно.** Отчёт-fallback перезаписывается нормальным только повторным
+прогоном пост-анализа — см. 8.2.
+
+### 8.2. Сессия висит в `processing` / ручной перезапуск пост-анализа
+
+После finish сессия переходит в `processing`, и задача Celery
+`screening.analyze_session` (`backend/app/modules/screening/tasks.py`,
+внутри — `service.run_post_analysis`) собирает отчёт и переводит статус в
+`done` (или `error`). Висит `processing` = задачу никто не выполнил.
+
+**Быстрая проверка:**
+
+```bash
+# 1. Какие сессии застряли
+docker compose -f infra/docker-compose.prod.yml exec postgres \
+  psql -U crm -d crm_lg -c "select id, status, ended_at from screening_sessions \
+where status in ('processing','error') order by ended_at desc limit 20;"
+
+# 2. Жив ли worker и не копится ли очередь (--profile celery обязателен!)
+docker compose -f infra/docker-compose.prod.yml --profile celery ps
+docker compose -f infra/docker-compose.prod.yml --profile celery \
+  logs celery-worker --tail=200 | grep -i screening
+docker compose -f infra/docker-compose.prod.yml exec redis redis-cli llen celery
+```
+
+**Действие:**
+
+1. Нет контейнеров celery-worker/celery-beat → стек подняли без
+   `--profile celery`. Поднять: `... --profile celery up -d` (см. шапку
+   `infra/docker-compose.prod.yml`); накопившиеся сессии дожать шагом 3.
+2. Worker жив, очередь пустая, задача потерялась (рестарт до ack) →
+   поставить заново:
+
+   ```bash
+   docker compose -f infra/docker-compose.prod.yml exec backend python -c "
+   from app.modules.screening.tasks import analyze_screening_session as t
+   print(t.delay('<session_uuid>').id)"
+   ```
+
+3. Worker поднять нельзя (или нужен результат прямо сейчас) → выполнить
+   анализ синхронно в контейнере backend:
+
+   ```bash
+   docker compose -f infra/docker-compose.prod.yml exec backend python -c "
+   import asyncio, uuid
+   from app.modules.screening.service import run_post_analysis
+   asyncio.run(run_post_analysis(uuid.UUID('<session_uuid>')))"
+   ```
+
+   `run_post_analysis` идемпотентен: если отчёт уже готов и статус `done` —
+   ничего не делает; статусы `processing` / `error` / `done`-без-отчёта
+   пересчитываются, поэтому им же перегенерируется и fallback-отчёт из 8.1.
+4. Сессия ушла в `error` → смотреть traceback в логах backend/worker по
+   `screening.analysis: failed for <id>`; после устранения причины —
+   шаг 2 или 3.
+5. Массово застряло много сессий (был долгий простой worker'а) → тот же
+   вызов в цикле по списку id из шага 1; каждый прогон — один вызов LLM,
+   поэтому учитывайте квоту AI Studio.
 
 ---
 

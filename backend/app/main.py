@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.v1 import api_router
@@ -183,6 +184,21 @@ def create_app() -> FastAPI:
     @app.get("/healthz", tags=["meta"])
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/metrics", tags=["meta"], summary="Prometheus metrics (screening)")
+    async def metrics() -> PlainTextResponse:
+        """In-process счётчики AI-скрининга в Prometheus exposition format.
+
+        При нескольких uvicorn-воркерах scrape увидит только воркер, который
+        ответил — для алертов по-прежнему ориентируемся на структурные логи
+        (docs/sentry-setup.md).
+        """
+        from app.modules.screening.metrics import SCREENING_METRICS
+
+        return PlainTextResponse(
+            SCREENING_METRICS.to_prometheus(),
+            media_type="text/plain; version=0.0.4; charset=utf-8",
+        )
 
     return app
 

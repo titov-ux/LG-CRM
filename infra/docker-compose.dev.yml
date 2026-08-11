@@ -52,13 +52,16 @@ services:
   #   docker compose -f infra/docker-compose.dev.yml --profile stt up -d
   stt:
     build:
-      context: ../stt-service
+      context: ../services/stt
     container_name: crm-lg-stt
     restart: unless-stopped
     profiles: ["stt"]
     environment:
       STT_MODEL: ${STT_MODEL:-small}
+      STT_DEVICE: ${STT_DEVICE:-cpu}
+      STT_COMPUTE_TYPE: ${STT_COMPUTE_TYPE:-int8}
       STT_CPU_THREADS: ${STT_CPU_THREADS:-4}
+      STT_MAX_SESSIONS: ${STT_MAX_SESSIONS:-8}
       STT_FAKE: ${STT_FAKE:-0}
     ports:
       - "8765:8765"

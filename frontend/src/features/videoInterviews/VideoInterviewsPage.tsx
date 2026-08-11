@@ -1,12 +1,15 @@
 import { useState } from 'react';
 import { Link } from '@tanstack/react-router';
-import { Mic, Plus, Trash2, Video } from 'lucide-react';
+import { AlertTriangle, Mic, Plus, RotateCw, Trash2, Video } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/common/EmptyState';
+import { cn } from '@/lib/utils';
+import { useCan } from '@/lib/permissions';
+import { useAuthStore } from '@/stores/auth';
 import { NewScreeningDialog } from '@/features/screening/NewScreeningDialog';
 import { useDeleteScreening, useScreenings } from '@/features/screening/hooks';
 import type { ScreeningStatus } from '@/api/screenings';
@@ -44,9 +47,35 @@ function fmtDuration(sec?: number | null): string | null {
 
 export function VideoInterviewsPage() {
   const [createOpen, setCreateOpen] = useState(false);
-  const { data, isLoading } = useScreenings({ pageSize: 50 });
+  const canRun = useCan('screening:run');
+  const canViewReport = useCan('screening:view_report');
+  const canSeeList = canRun || canViewReport;
+  const me = useAuthStore((s) => s.user);
+  /** Бэк даёт менять сессию только ведущему рекрутеру и админу (иначе 403). */
+  const isOwner = (recruiterId?: string | null) =>
+    recruiterId === me?.id || me?.role === 'admin';
+  const { data, isLoading, isError, refetch, isRefetching } = useScreenings(
+    { pageSize: 50 },
+    { pollProcessing: canSeeList },
+  );
   const deleteSession = useDeleteScreening();
   const items = data?.items ?? [];
+
+  if (!canSeeList) {
+    return (
+      <div className="flex-1 space-y-4 overflow-auto px-6 pb-8 pt-5">
+        <Card>
+          <CardContent className="p-4">
+            <EmptyState
+              icon={Video}
+              title="Раздел недоступен"
+              description="У вашей роли нет доступа к AI-скринингу. Обратитесь к администратору, если он нужен для работы."
+            />
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="flex-1 space-y-4 overflow-auto px-6 pb-8 pt-5">
@@ -60,9 +89,11 @@ export function VideoInterviewsPage() {
             Интервью в Яндекс Телемосте с записью, чек-листом вопросов и AI-разбором.
           </p>
         </div>
-        <Button size="sm" onClick={() => setCreateOpen(true)}>
-          <Plus className="mr-1.5 h-4 w-4" /> Новый скрининг
-        </Button>
+        {canRun && (
+          <Button size="sm" onClick={() => setCreateOpen(true)}>
+            <Plus className="mr-1.5 h-4 w-4" /> Новый скрининг
+          </Button>
+        )}
       </div>
 
       {isLoading && (
@@ -73,7 +104,28 @@ export function VideoInterviewsPage() {
         </div>
       )}
 
-      {!isLoading && items.length === 0 && (
+      {!isLoading && isError && (
+        <Card>
+          <CardContent className="space-y-3 p-6 text-center">
+            <AlertTriangle className="mx-auto h-7 w-7 text-muted-foreground/60" />
+            <div className="text-[13px] font-medium">Не удалось загрузить список скринингов</div>
+            <p className="text-[12px] text-muted-foreground">
+              Проверьте соединение и попробуйте ещё раз.
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void refetch()}
+              disabled={isRefetching}
+            >
+              <RotateCw className={cn('mr-1.5 h-3.5 w-3.5', isRefetching && 'animate-spin')} />
+              Повторить
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {!isLoading && !isError && items.length === 0 && (
         <Card>
           <CardContent className="p-4">
             <EmptyState
@@ -86,7 +138,8 @@ export function VideoInterviewsPage() {
       )}
 
       <div className="space-y-2">
-        {items.map((s) => {
+        {!isError &&
+          items.map((s) => {
           const st = STATUS_LABELS[s.status];
           const dur = fmtDuration(s.durationSec);
           return (
@@ -115,7 +168,7 @@ export function VideoInterviewsPage() {
                   {s.questions.length ? ` · вопросов: ${s.questions.length}` : ''}
                 </div>
               </Link>
-              {s.status === 'draft' && (
+              {s.status === 'draft' && canRun && isOwner(s.recruiterId) && (
                 <Button
                   type="button"
                   variant="ghost"
@@ -143,7 +196,7 @@ export function VideoInterviewsPage() {
         })}
       </div>
 
-      <NewScreeningDialog open={createOpen} onOpenChange={setCreateOpen} />
+      {canRun && <NewScreeningDialog open={createOpen} onOpenChange={setCreateOpen} />}
     </div>
   );
 }

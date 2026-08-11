@@ -3,7 +3,9 @@ import {
   screeningsApi,
   type CreateScreeningPayload,
   type ScreeningQuestionStatus,
+  type ScreeningSession,
   type ScreeningsListParams,
+  type ScreeningsListResponse,
 } from '@/api/screenings';
 import type { UUID } from '@/api/types';
 import { QUERY_DEFAULTS } from '@/lib/constants';
@@ -24,11 +26,31 @@ export function useScreeningSegments(id: UUID | undefined, enabled = true) {
   });
 }
 
-export function useScreenings(params: ScreeningsListParams = {}) {
+export interface UseScreeningsOptions {
+  /**
+   * Пока в списке есть сессия в статусе `processing` (AI готовит отчёт) —
+   * опрашиваем список раз в 5 секунд, иначе поллинг выключен.
+   */
+  pollProcessing?: boolean;
+}
+
+const PROCESSING_POLL_MS = 5_000;
+
+export function useScreenings(
+  params: ScreeningsListParams = {},
+  options: UseScreeningsOptions = {},
+) {
   return useQuery({
     queryKey: screeningKeys.list(params),
     queryFn: () => screeningsApi.list(params),
     ...QUERY_DEFAULTS,
+    refetchInterval: options.pollProcessing
+      ? (query) => {
+          const data = query.state.data as ScreeningsListResponse | undefined;
+          const hasProcessing = (data?.items ?? []).some((s) => s.status === 'processing');
+          return hasProcessing ? PROCESSING_POLL_MS : false;
+        }
+      : undefined,
   });
 }
 
@@ -38,11 +60,17 @@ export function useScreening(id: UUID | undefined) {
     queryFn: () => screeningsApi.byId(id as UUID),
     enabled: !!id,
     ...QUERY_DEFAULTS,
+    // Пока идёт пост-анализ, статус меняет воркер — без поллинга в комнате
+    // вечно висело бы «AI готовит отчёт…».
+    refetchInterval: (query) =>
+      (query.state.data as ScreeningSession | undefined)?.status === 'processing'
+        ? PROCESSING_POLL_MS
+        : false,
   });
 }
 
 /** Общий onSuccess: сессия приходит целиком в ответе каждой мутации. */
-function useSessionMutation<TVars>(fn: (vars: TVars) => Promise<import('@/api/screenings').ScreeningSession>) {
+function useSessionMutation<TVars>(fn: (vars: TVars) => Promise<ScreeningSession>) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: fn,
@@ -105,18 +133,66 @@ export function useAddQuestion() {
   );
 }
 
+interface UpdateQuestionVars {
+  id: UUID;
+  questionId: UUID;
+  payload: { text?: string; goal?: string; status?: ScreeningQuestionStatus; position?: number };
+}
+
+/**
+ * Правка вопроса с оптимистичным обновлением: во время встречи рекрутер кликает
+ * по статусам быстро, ждать round-trip нельзя.
+ *
+ * Откат при ошибке — ТОЧЕЧНЫЙ (только правленый вопрос): полный снимок затирал
+ * бы `questions.updated`, прилетевшие от агента по WS, пока запрос был в пути.
+ */
 export function useUpdateQuestion() {
-  return useSessionMutation(
-    ({
-      id,
-      questionId,
-      payload,
-    }: {
-      id: UUID;
-      questionId: UUID;
-      payload: { text?: string; status?: ScreeningQuestionStatus; position?: number };
-    }) => screeningsApi.updateQuestion(id, questionId, payload),
-  );
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, questionId, payload }: UpdateQuestionVars) =>
+      screeningsApi.updateQuestion(id, questionId, payload),
+    onMutate: async ({ id, questionId, payload }) => {
+      const key = screeningKeys.byId(id);
+      await queryClient.cancelQueries({ queryKey: key });
+      const previous = queryClient.getQueryData<ScreeningSession>(key);
+      const previousQuestion = previous?.questions.find((q) => q.id === questionId) ?? null;
+      if (previous) {
+        queryClient.setQueryData<ScreeningSession>(key, {
+          ...previous,
+          questions: previous.questions.map((q) =>
+            q.id === questionId ? { ...q, ...payload } : q,
+          ),
+        });
+      }
+      return { previousQuestion, key, questionId };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (!ctx?.previousQuestion) return;
+      const restored = ctx.previousQuestion;
+      queryClient.setQueryData<ScreeningSession>(ctx.key, (current) =>
+        current
+          ? {
+              ...current,
+              questions: current.questions.map((q) =>
+                q.id === ctx.questionId ? restored : q,
+              ),
+            }
+          : current,
+      );
+    },
+    onSuccess: (session) => {
+      queryClient.setQueryData(screeningKeys.byId(session.id), session);
+    },
+    // Сервер — источник правды по чек-листу (агент правит его параллельно).
+    onSettled: (_data, _err, vars) => {
+      void queryClient.invalidateQueries({ queryKey: screeningKeys.byId(vars.id) });
+    },
+  });
+}
+
+/** Перегенерация плана вопросов AI (бэк: POST /screenings/{id}/regenerate-questions). */
+export function useRegenerateQuestions() {
+  return useSessionMutation((id: UUID) => screeningsApi.regenerateQuestions(id));
 }
 
 export function useRemoveQuestion() {

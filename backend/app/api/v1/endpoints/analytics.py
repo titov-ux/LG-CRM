@@ -34,6 +34,7 @@ from app.modules.analytics.worklog_schemas import (
     WorklogUserSummary,
 )
 from app.modules.chat.analytics import chat_stats
+from app.modules.screening.metrics import SCREENING_METRICS
 from app.modules.auth.dependencies import get_current_user
 from app.modules.users.models import Role, User
 
@@ -221,6 +222,26 @@ async def chat_metrics(
 ) -> ChatStats:
     data = await chat_stats(db)
     return ChatStats.model_validate(data)
+
+
+@router.get(
+    "/screening",
+    summary="Метрики AI-скрининга: латентность STT, ошибки AI, активные сессии",
+)
+async def screening_metrics_snapshot(
+    current: User = Depends(get_current_user),
+) -> dict[str, float | int]:
+    """Снимок in-process счётчиков (Этап 6).
+
+    Счётчики живут в процессе: при нескольких uvicorn-воркерах ручка вернёт
+    показания того воркера, который обслужил запрос. Для алертов ориентируемся
+    на структурные логи `screening.*` (см. docs/runbook.md).
+    """
+    if current.role != Role.admin:
+        raise ApiError(
+            403, "forbidden", "Метрики скрининга доступны только администраторам"
+        )
+    return SCREENING_METRICS.snapshot()
 
 
 # === Учёт времени сотрудников (work_sessions) — только администраторы =======

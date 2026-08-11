@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { Check, ChevronsUpDown, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
@@ -138,10 +138,17 @@ export function NewScreeningDialog({
   const [candidateId, setCandidateId] = useState('');
   const [vacancyId, setVacancyId] = useState(NONE);
   const [telemostUrl, setTelemostUrl] = useState('');
+  /**
+   * Автоподстановка вакансии срабатывает один раз за открытие. Раньше эффект
+   * зависел от `vacancyId` и возвращал первую прикреплённую вакансию сразу
+   * после того, как пользователь выбрал «Без вакансии».
+   */
+  const autoPickedRef = useRef(false);
 
   // При каждом открытии — чистая форма (иначе остаются поля с прошлого раза).
   useEffect(() => {
     if (!open) return;
+    autoPickedRef.current = false;
     setCandidateId(defaultCandidateId ?? '');
     setVacancyId(defaultVacancyId ?? NONE);
     setTelemostUrl('');
@@ -150,11 +157,13 @@ export function NewScreeningDialog({
   // С карточки кандидата: если вакансию не передали — берём первую прикреплённую.
   useEffect(() => {
     if (!open || !defaultCandidateId || defaultVacancyId) return;
-    if (vacancyId !== NONE) return;
+    if (autoPickedRef.current) return;
     const cand = (candidates ?? []).find((c) => c.id === defaultCandidateId);
     const linked = cand?.vacancyIds ?? [];
-    if (linked.length > 0) setVacancyId(linked[0]);
-  }, [open, defaultCandidateId, defaultVacancyId, candidates, vacancyId]);
+    if (linked.length === 0) return;
+    autoPickedRef.current = true;
+    setVacancyId(linked[0]);
+  }, [open, defaultCandidateId, defaultVacancyId, candidates]);
 
   const selectedCandidate = useMemo(
     () => (candidates ?? []).find((c) => c.id === candidateId),
@@ -217,13 +226,20 @@ export function NewScreeningDialog({
     setVacancyId(linked[0]);
   };
 
+  const trimmedUrl = telemostUrl.trim();
+  const urlInvalid = trimmedUrl.length > 0 && !/^https?:\/\/\S+$/i.test(trimmedUrl);
+
   const submit = async () => {
     if (!candidateId) return;
+    if (urlInvalid) {
+      toast.error('Ссылка на Телемост должна начинаться с http:// или https://');
+      return;
+    }
     try {
       const session = await create.mutateAsync({
         candidateId,
         vacancyId: vacancyId === NONE ? undefined : vacancyId,
-        telemostUrl: telemostUrl.trim() || undefined,
+        telemostUrl: trimmedUrl || undefined,
         generateQuestions: true,
       });
       onOpenChange(false);
@@ -271,8 +287,15 @@ export function NewScreeningDialog({
             <Input
               placeholder="https://telemost.yandex.ru/j/…"
               value={telemostUrl}
+              aria-invalid={urlInvalid}
+              className={cn(urlInvalid && 'border-destructive focus-visible:ring-destructive')}
               onChange={(e) => setTelemostUrl(e.target.value)}
             />
+            {urlInvalid && (
+              <p className="text-[11px] text-destructive">
+                Нужна полная ссылка, например https://telemost.yandex.ru/j/12345
+              </p>
+            )}
           </div>
           <p className="rounded-md border bg-muted/40 px-3 py-2 text-[12px] leading-snug text-muted-foreground">
             <Sparkles className="mr-1.5 inline h-3.5 w-3.5 text-amber-600" />
@@ -285,7 +308,7 @@ export function NewScreeningDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Отмена
           </Button>
-          <Button onClick={submit} disabled={!candidateId || create.isPending}>
+          <Button onClick={submit} disabled={!candidateId || urlInvalid || create.isPending}>
             {create.isPending ? 'Готовим план…' : 'Создать'}
           </Button>
         </DialogFooter>

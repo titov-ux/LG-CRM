@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import { FileDown, Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import type { ScreeningReport, ScreeningSession, ScreeningVerdict } from '@/api/screenings';
@@ -27,15 +29,32 @@ const SCORE_LABELS: Record<string, string> = {
   culture_fit: 'Культурный fit',
 };
 
+/**
+ * Скачивание DOCX. Ссылку обязательно добавляем в DOM (вне Chrome click() по
+ * detached-элементу игнорируется), а revoke откладываем — иначе Safari/Firefox
+ * успевают отменить загрузку.
+ */
 async function downloadReport(session: ScreeningSession, report: ScreeningReport) {
   const blob = await generateScreeningReportDocxBlob(session, report);
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = screeningReportFileName(session);
-  a.click();
-  URL.revokeObjectURL(url);
+  try {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = screeningReportFileName(session);
+    a.rel = 'noopener';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } finally {
+    window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+  }
 }
+
+const STATUS_HINT: Partial<Record<ScreeningSession['status'], string>> = {
+  draft: 'Встреча ещё не начиналась — отчёт появится после её завершения.',
+  live: 'Встреча идёт — AI-отчёт будет готов после завершения.',
+};
 
 export function ScreeningReportPanel({
   session,
@@ -44,6 +63,24 @@ export function ScreeningReportPanel({
   session: ScreeningSession;
   compact?: boolean;
 }) {
+  const [downloading, setDownloading] = useState(false);
+
+  const handleDownload = async (report: ScreeningReport) => {
+    setDownloading(true);
+    try {
+      await downloadReport(session, report);
+    } catch {
+      toast.error('Не удалось сформировать DOCX-отчёт');
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const statusHint = STATUS_HINT[session.status];
+  if (statusHint) {
+    return <div className="text-[12px] text-muted-foreground">{statusHint}</div>;
+  }
+
   if (session.status === 'processing') {
     return (
       <div className="flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50/60 px-3 py-2.5 text-[12px] text-amber-900">
@@ -64,7 +101,6 @@ export function ScreeningReportPanel({
 
   const report = session.report;
   if (!report) {
-    if (session.status !== 'done') return null;
     return (
       <div className="text-[12px] text-muted-foreground">Отчёт пока недоступен.</div>
     );
@@ -87,10 +123,16 @@ export function ScreeningReportPanel({
           variant="outline"
           size="sm"
           className="ml-auto h-7 gap-1 px-2 text-[11px]"
-          onClick={() => void downloadReport(session, report)}
+          onClick={() => void handleDownload(report)}
+          disabled={downloading}
+          aria-label="Скачать отчёт в формате DOCX"
         >
-          <FileDown className="h-3.5 w-3.5" />
-          DOCX
+          {downloading ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <FileDown className="h-3.5 w-3.5" />
+          )}
+          {downloading ? 'Готовим…' : 'DOCX'}
         </Button>
       </div>
 
@@ -121,8 +163,8 @@ export function ScreeningReportPanel({
             Красные флаги
           </div>
           <ul className="list-inside list-disc space-y-0.5 text-[12px] text-red-800/90">
-            {report.redFlags.map((f) => (
-              <li key={f}>{f}</li>
+            {report.redFlags.map((f, i) => (
+              <li key={i}>{f}</li>
             ))}
           </ul>
         </div>

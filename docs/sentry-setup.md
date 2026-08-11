@@ -53,6 +53,10 @@ sentry-cli releases finalize "$VERSION"
 | Screening STT slow | message:`screening.stt_final` AND `latency_ms:>5000` — >10 за 5 мин | Telegram |
 | Screening AI down | message:`screening.ai_agent_unavailable` OR `ai_report_fallback` — >5 за 10 мин | Telegram |
 
+Дополнительно: scrape `GET /metrics` (Prometheus exposition, in-process счётчики
+скрининга; при нескольких uvicorn-воркерах — показания одного воркера).
+JSON-снимок для админа: `GET /api/v1/analytics/screening`.
+
 ### P3 — информационные (только в Sentry)
 
 | Имя | Условие | Channel |

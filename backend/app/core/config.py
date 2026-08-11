@@ -146,8 +146,12 @@ class Settings(BaseSettings):
     # Hard-stop live-сессии по WS (мин): сервер шлёт session.state max_duration
     # и закрывает поток; клиент обновляет UI.
     screening_max_duration_min: int = 90
-    # Сколько секунд после обрыва WS сессия остаётся live (reconnect-окно).
+    # Сколько секунд после обрыва WS сессия остаётся live (reconnect-окно):
+    # столько ждём переподключения клиента, прежде чем закрыть STT-мост.
     screening_ws_hold_sec: int = 60
+    # Через сколько минут БЕЗ активности клиента уборщик закрывает live-сессию
+    # (рекрутер закрыл вкладку и не вернулся). 0 = не закрывать.
+    screening_orphan_grace_min: int = 15
     # Retention аудиозаписей скрининга в S3 (дни). Celery beat
     # `screening.purge_expired_audio` чистит старше порога (152-ФЗ).
     # 0 = не чистить автоматически.
@@ -167,6 +171,9 @@ class Settings(BaseSettings):
     screening_ai_max_followups_per_session: int = 8
     # Сколько последних сегментов отдаём в промпт как контекст (дельта + хвост).
     screening_ai_transcript_tail: int = 24
+    # Грубый бюджет токенов на сессию (вход≈chars/4 + max_tokens ответа).
+    # По исчерпании агент замолкает до конца встречи. 0 = без ограничения.
+    screening_ai_token_budget: int = 60000
 
     # ── AI-скрининг / пост-анализ отчёта (Этап 5) ────────────
     # true (dev/tests): анализ после finish в том же процессе (asyncio.create_task).

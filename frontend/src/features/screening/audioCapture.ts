@@ -113,12 +113,29 @@ registerProcessor('pcm-worklet', PCMWorklet);
 const TAB_SILENCE_MS = 15_000;
 const RECORDER_STOP_TIMEOUT_MS = 10_000;
 
+/**
+ * MediaRecorder + timeslice пишет WebM без Duration/Cues — нативный
+ * `<audio controls>` рисует ползунок в конце, seek ломается. Вшиваем
+ * длительность в EBML перед выгрузкой.
+ */
+async function withWebmDuration(blob: Blob, durationMs: number): Promise<Blob> {
+  if (durationMs <= 0 || !blob.type.includes('webm')) return blob;
+  try {
+    const { default: fixWebmDuration } = await import('fix-webm-duration');
+    return await fixWebmDuration(blob, durationMs, { logger: false });
+  } catch {
+    return blob;
+  }
+}
+
 export class ScreeningCapture {
   private micStream: MediaStream | null = null;
   private tabStream: MediaStream | null = null;
   private ctx: AudioContext | null = null;
   private recorder: MediaRecorder | null = null;
   private chunks: Blob[] = [];
+  /** Date.now() в момент recorder.start — для фикса Duration в WebM. */
+  private recordingStartedAt: number | null = null;
   private levelTimer: number | null = null;
   /** Момент последнего звука со вкладки (Date.now()); null — ещё не считаем. */
   private tabLastSoundAt: number | null = null;
@@ -281,6 +298,7 @@ export class ScreeningCapture {
         if (e.data.size > 0) this.chunks.push(e.data);
       };
       this.recorder.start(5_000); // чанк каждые 5с — запись переживает краш вкладки
+      this.recordingStartedAt = Date.now();
 
       this.tabLastSoundAt = Date.now();
       this.tabSilenceFlag = false;
@@ -359,6 +377,7 @@ export class ScreeningCapture {
     }
     const recorder = this.recorder;
     this.recorder = null;
+    this.recordingStartedAt = null;
     if (recorder && recorder.state !== 'inactive') {
       recorder.ondataavailable = null;
       try {
@@ -429,6 +448,8 @@ export class ScreeningCapture {
       this.levelTimer = null;
     }
     const recorder = this.recorder;
+    const startedAt = this.recordingStartedAt;
+    this.recordingStartedAt = null;
     let blob: Blob | null = null;
     if (recorder && recorder.state !== 'inactive') {
       // onstop может не прийти вовсе (баг браузера, отвал дорожки) — тогда
@@ -465,6 +486,9 @@ export class ScreeningCapture {
     this.micStream = null;
     this.tabStream = null;
     await this.disposeGraph();
+    if (blob && startedAt) {
+      blob = await withWebmDuration(blob, Date.now() - startedAt);
+    }
     return blob;
   }
 }

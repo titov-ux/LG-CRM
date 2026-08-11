@@ -37,6 +37,7 @@ import type {
   ScreeningSpeaker,
 } from '@/api/screenings';
 import { ScreeningCapture, captureSupportIssue, describeCaptureError } from './audioCapture';
+import { ScreeningAudioPlayer } from './ScreeningAudioPlayer';
 import { ScreeningReportPanel } from './ScreeningReportPanel';
 import {
   screeningKeys,
@@ -1048,7 +1049,11 @@ export function ScreeningRoomPage() {
                   {canViewReport ? (
                     session.audioFileId ? (
                       audioUrl ? (
-                        <audio controls src={audioUrl} className="w-full" />
+                        <ScreeningAudioPlayer
+                          src={audioUrl}
+                          durationSec={session.durationSec}
+                          className="w-full"
+                        />
                       ) : (
                         <Button variant="outline" size="sm" onClick={openAudio}>
                           Прослушать запись

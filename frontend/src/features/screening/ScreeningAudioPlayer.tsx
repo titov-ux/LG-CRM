@@ -130,7 +130,10 @@ export function ScreeningAudioPlayer({
         value={Math.round(progress * 1000)}
         disabled={duration <= 0}
         aria-label="Позиция в записи"
-        className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-muted accent-foreground disabled:opacity-50 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-foreground"
+        style={{
+          background: `linear-gradient(to right, hsl(var(--foreground)) ${progress * 100}%, hsl(var(--muted)) ${progress * 100}%)`,
+        }}
+        className="h-1.5 w-full cursor-pointer appearance-none rounded-full disabled:opacity-50 [&::-webkit-slider-runnable-track]:h-1.5 [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:bg-transparent [&::-moz-range-track]:h-1.5 [&::-moz-range-track]:rounded-full [&::-moz-range-track]:bg-transparent [&::-moz-range-progress]:h-1.5 [&::-moz-range-progress]:rounded-full [&::-moz-range-progress]:bg-foreground [&::-webkit-slider-thumb]:relative [&::-webkit-slider-thumb]:-mt-0.5 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-foreground [&::-moz-range-thumb]:h-3 [&::-moz-range-thumb]:w-3 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-foreground"
         onPointerDown={() => {
           scrubbing.current = true;
         }}

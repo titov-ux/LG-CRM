@@ -541,10 +541,13 @@ async def maybe_start_offline_transcription(
     `force=True` — явное действие (attach / кнопка «Распознать запись»).
 
     Важно: GET поллит сессию раз в ~5с пока status=processing. Авто-повтор
-    при уже готовом отчёте превращался в шторм уведомлений («отчёт готов»
-    на каждый цикл). Поэтому без `force` не трогаем сессию, у которой отчёт
-    уже есть; зависший processing без отчёта — только после cooldown, с
-    bump `updated_at`, чтобы не ставить задачу на каждый poll.
+    при уже готовом LLM-отчёте превращался в шторм уведомлений. Поэтому без
+    `force` не трогаем сессию с «живым» отчётом.
+
+    Исключение: `model=fallback` при пустом транскрипте (запись есть, сегментов
+    нет) — типичный зависший кейс после сбоя офлайн-STT. Такой отчёт не
+    блокирует авто-повтор, но только после cooldown (иначе poll раз в 5с
+    снова заливает очередь).
 
     `force=True` при processing тоже ставит задачу снова: иначе attach во
     время processing сохранял файл, но офлайн-STT не запускался, а кнопка
@@ -563,14 +566,15 @@ async def maybe_start_offline_transcription(
         )
     ).scalar_one_or_none()
 
-    # Отчёт уже есть: авто-GET не перезапускает пайплайн (иначе spam notify).
-    # Явная кнопка / attach — можно.
+    # LLM-отчёт уже есть → авто не перезапускаем. Fallback при пустом
+    # транскрипте — ещё шанс вытянуть текст из записи (с cooldown ниже).
     if report is not None and not force:
-        logger.info(
-            "screening.offline: skip auto for %s — report already exists",
-            session.id,
-        )
-        return False
+        if (report.model or "") != "fallback":
+            logger.info(
+                "screening.offline: skip auto for %s — report already exists",
+                session.id,
+            )
+            return False
 
     if session.status == ScreeningStatus.processing:
         if not force:
@@ -596,6 +600,31 @@ async def maybe_start_offline_transcription(
 
     if session.status not in (ScreeningStatus.done, ScreeningStatus.error):
         return False
+
+    # done/error + fallback + нет сегментов: не крутить на каждом открытии
+    # карточки — только после cooldown (force с кнопки — сразу).
+    # Без отчёта cooldown не нужен: это первый запуск офлайн-STT.
+    if (
+        not force
+        and report is not None
+        and (report.model or "") == "fallback"
+    ):
+        anchor = (
+            session.updated_at
+            or report.created_at
+            or session.ended_at
+            or session.created_at
+        )
+        if anchor is None:
+            return False
+        if anchor.tzinfo is None:
+            anchor = anchor.replace(tzinfo=UTC)
+        if datetime.now(UTC) - anchor < _OFFLINE_RETRY_COOLDOWN:
+            logger.info(
+                "screening.offline: skip auto for %s — fallback cooldown",
+                session.id,
+            )
+            return False
 
     session.status = ScreeningStatus.processing
     session.updated_at = datetime.now(UTC)

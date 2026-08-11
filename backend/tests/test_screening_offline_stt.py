@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
@@ -338,7 +338,7 @@ async def test_run_offline_transcription_downloads_and_transcribes(
 async def test_maybe_start_skips_when_report_exists(
     db: AsyncSession, recruiter_user, candidate, monkeypatch
 ) -> None:
-    """Авто-GET не перезапускает офлайн-STT, если отчёт уже есть (анти-spam)."""
+    """Авто-GET не перезапускает офлайн-STT, если LLM-отчёт уже есть (анти-spam)."""
     queued: list[uuid.UUID] = []
 
     def _capture(session, sid: uuid.UUID) -> None:
@@ -376,6 +376,7 @@ async def test_maybe_start_skips_when_report_exists(
             session_id=session.id,
             summary="Готово",
             verdict=ScreeningVerdict.partial_fit,
+            model="yandexgpt",
         )
     )
     await db.commit()
@@ -394,6 +395,122 @@ async def test_maybe_start_skips_when_report_exists(
     ) is True
     assert queued == [session.id]
     assert session.status == ScreeningStatus.processing
+
+
+@pytest.mark.asyncio
+async def test_maybe_start_retries_fallback_report_after_cooldown(
+    db: AsyncSession, recruiter_user, candidate, monkeypatch
+) -> None:
+    """Fallback-отчёт при пустом транскрипте не блокирует авто-офлайн навсегда."""
+    queued: list[uuid.UUID] = []
+
+    def _capture(session, sid: uuid.UUID) -> None:
+        queued.append(sid)
+
+    monkeypatch.setattr(
+        "app.modules.screening.service.enqueue_screening_offline_transcribe",
+        _capture,
+    )
+
+    old = datetime.now(UTC) - timedelta(minutes=20)
+    session = ScreeningSession(
+        candidate_id=candidate.id,
+        recruiter_id=recruiter_user.id,
+        status=ScreeningStatus.done,
+        started_at=old,
+        ended_at=old,
+        updated_at=old,
+    )
+    db.add(session)
+    await db.flush()
+    file = File(
+        id=uuid.uuid4(),
+        file_key=f"screening/{session.id}/rec.webm",
+        original_name="rec.webm",
+        mime="audio/webm",
+        size=100,
+        entity_type=FileEntityType.screening,
+        entity_id=session.id,
+        owner_user_id=recruiter_user.id,
+        scan_status=ScanStatus.clean,
+    )
+    db.add(file)
+    session.audio_file_id = file.id
+    db.add(
+        ScreeningReport(
+            session_id=session.id,
+            summary="На встрече почти нет зафиксированных ответов",
+            verdict=ScreeningVerdict.partial_fit,
+            model="fallback",
+        )
+    )
+    await db.commit()
+
+    assert (
+        await screening_service.maybe_start_offline_transcription(db, session)
+    ) is True
+    assert queued == [session.id]
+    assert session.status == ScreeningStatus.processing
+
+
+@pytest.mark.asyncio
+async def test_maybe_start_fallback_respects_cooldown(
+    db: AsyncSession, recruiter_user, candidate, monkeypatch
+) -> None:
+    """Свежий fallback не должен штормить очередь на каждом GET."""
+    queued: list[uuid.UUID] = []
+
+    def _capture(session, sid: uuid.UUID) -> None:
+        queued.append(sid)
+
+    monkeypatch.setattr(
+        "app.modules.screening.service.enqueue_screening_offline_transcribe",
+        _capture,
+    )
+
+    session = ScreeningSession(
+        candidate_id=candidate.id,
+        recruiter_id=recruiter_user.id,
+        status=ScreeningStatus.done,
+        started_at=datetime.now(UTC),
+        ended_at=datetime.now(UTC),
+    )
+    db.add(session)
+    await db.flush()
+    file = File(
+        id=uuid.uuid4(),
+        file_key=f"screening/{session.id}/rec.webm",
+        original_name="rec.webm",
+        mime="audio/webm",
+        size=100,
+        entity_type=FileEntityType.screening,
+        entity_id=session.id,
+        owner_user_id=recruiter_user.id,
+        scan_status=ScanStatus.clean,
+    )
+    db.add(file)
+    session.audio_file_id = file.id
+    db.add(
+        ScreeningReport(
+            session_id=session.id,
+            summary="заглушка",
+            verdict=ScreeningVerdict.partial_fit,
+            model="fallback",
+        )
+    )
+    await db.commit()
+
+    assert (
+        await screening_service.maybe_start_offline_transcription(db, session)
+    ) is False
+    assert queued == []
+
+    assert (
+        await screening_service.maybe_start_offline_transcription(
+            db, session, force=True
+        )
+    ) is True
+    assert queued == [session.id]
 
 
 @pytest.mark.asyncio

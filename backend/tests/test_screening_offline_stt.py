@@ -10,13 +10,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.files.models import File, FileEntityType, ScanStatus
+from app.modules.notifications.models import Notification
 from app.modules.screening import report as screening_report
 from app.modules.screening import service as screening_service
 from app.modules.screening.models import (
+    ScreeningReport,
     ScreeningSegment,
     ScreeningSession,
     ScreeningSpeaker,
     ScreeningStatus,
+    ScreeningVerdict,
 )
 from tests.test_screening_analysis_ws import _patch_session_local
 
@@ -65,12 +68,19 @@ async def test_maybe_start_offline_on_get_when_audio_without_transcript(
     assert session.status == ScreeningStatus.processing
     assert queued == [session.id]
 
-    # Пока processing — не дублируем.
+    # Пока processing и cooldown не истёк — авто не дублируем.
     started_again = await screening_service.maybe_start_offline_transcription(
         db, session
     )
     assert started_again is False
     assert len(queued) == 1
+
+    # Явный force (кнопка / attach) — перезапускаем даже в processing.
+    started_force = await screening_service.maybe_start_offline_transcription(
+        db, session, force=True
+    )
+    assert started_force is True
+    assert len(queued) == 2
 
 
 @pytest.mark.asyncio
@@ -322,3 +332,126 @@ async def test_run_offline_transcription_downloads_and_transcribes(
     ).scalar_one()
     assert row.text_ == "Офлайн фраза"
     assert row.speaker == ScreeningSpeaker.candidate
+
+
+@pytest.mark.asyncio
+async def test_maybe_start_skips_when_report_exists(
+    db: AsyncSession, recruiter_user, candidate, monkeypatch
+) -> None:
+    """Авто-GET не перезапускает офлайн-STT, если отчёт уже есть (анти-spam)."""
+    queued: list[uuid.UUID] = []
+
+    def _capture(session, sid: uuid.UUID) -> None:
+        queued.append(sid)
+
+    monkeypatch.setattr(
+        "app.modules.screening.service.enqueue_screening_offline_transcribe",
+        _capture,
+    )
+
+    session = ScreeningSession(
+        candidate_id=candidate.id,
+        recruiter_id=recruiter_user.id,
+        status=ScreeningStatus.done,
+        started_at=datetime.now(UTC),
+        ended_at=datetime.now(UTC),
+    )
+    db.add(session)
+    await db.flush()
+    file = File(
+        id=uuid.uuid4(),
+        file_key=f"screening/{session.id}/rec.webm",
+        original_name="rec.webm",
+        mime="audio/webm",
+        size=100,
+        entity_type=FileEntityType.screening,
+        entity_id=session.id,
+        owner_user_id=recruiter_user.id,
+        scan_status=ScanStatus.clean,
+    )
+    db.add(file)
+    session.audio_file_id = file.id
+    db.add(
+        ScreeningReport(
+            session_id=session.id,
+            summary="Готово",
+            verdict=ScreeningVerdict.partial_fit,
+        )
+    )
+    await db.commit()
+
+    assert (
+        await screening_service.maybe_start_offline_transcription(db, session)
+    ) is False
+    assert queued == []
+    assert session.status == ScreeningStatus.done
+
+    # Явная кнопка — можно.
+    assert (
+        await screening_service.maybe_start_offline_transcription(
+            db, session, force=True
+        )
+    ) is True
+    assert queued == [session.id]
+    assert session.status == ScreeningStatus.processing
+
+
+@pytest.mark.asyncio
+async def test_replace_report_does_not_spam_notifications(
+    db: AsyncSession, recruiter_user, candidate, monkeypatch
+) -> None:
+    """Повторный анализ с replace_report не плодит колокольчики."""
+    _patch_session_local(monkeypatch, db)
+    session = ScreeningSession(
+        candidate_id=candidate.id,
+        recruiter_id=recruiter_user.id,
+        status=ScreeningStatus.processing,
+        started_at=datetime.now(UTC),
+        ended_at=datetime.now(UTC),
+    )
+    db.add(session)
+    await db.flush()
+    db.add(
+        ScreeningSegment(
+            session_id=session.id,
+            seq=1,
+            speaker=ScreeningSpeaker.candidate,
+            text_="Достаточно длинный ответ кандидата про опыт и стек, чтобы пройти порог.",
+            started_ms=0,
+            ended_ms=4000,
+        )
+    )
+    await db.commit()
+
+    async def _gen(**_kwargs):
+        return {
+            "summary": "Ок",
+            "verdict": ScreeningVerdict.partial_fit,
+            "scores": {"communication": {"score": 3, "note": "норм"}},
+            "red_flags": [],
+            "recommendation": "Созвон",
+            "model": "test",
+            "prompt_version": "test",
+        }
+
+    monkeypatch.setattr(screening_report, "generate_screening_report", _gen)
+
+    await screening_service.run_post_analysis(session.id)
+    await screening_service.run_post_analysis(session.id, replace_report=True)
+    await screening_service.run_post_analysis(session.id, replace_report=True)
+
+    notes = list(
+        (
+            await db.execute(
+                select(Notification).where(Notification.user_id == recruiter_user.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    screening_notes = [
+        n
+        for n in notes
+        if (n.payload or {}).get("screeningId") == str(session.id)
+    ]
+    assert len(screening_notes) == 1, [n.text_ for n in screening_notes]

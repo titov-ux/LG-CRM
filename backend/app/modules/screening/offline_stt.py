@@ -77,6 +77,12 @@ def webm_to_pcm16(audio: bytes) -> bytes:
     return pcm
 
 
+def _offline_stt_budget_sec(pcm_len: int) -> float:
+    """Верхняя граница: ~2× realtime + запас на connect/flush (не меньше 3 мин)."""
+    audio_sec = pcm_len / (SAMPLE_RATE * 2)
+    return max(180.0, audio_sec * 2.0 + 120.0)
+
+
 async def transcribe_pcm_via_stt(pcm: bytes, stt_url: str) -> list[dict[str, Any]]:
     """Прогнать PCM через stt-service, вернуть финальные сегменты."""
     if not stt_url.strip():
@@ -103,31 +109,36 @@ async def transcribe_pcm_via_stt(pcm: bytes, stt_url: str) -> list[dict[str, Any
             logger.warning("offline_stt: stt error %s", msg.get("error"))
             done.set()
 
-    bridge = SttBridge(stt_url, on_event)
-    try:
-        await bridge.connect()
-        for i in range(0, len(pcm), _CHUNK_BYTES):
-            chunk = pcm[i : i + _CHUNK_BYTES]
-            if len(chunk) % 2:
-                chunk = chunk[:-1]
-            if not chunk:
-                continue
-            await bridge.send_pcm(bytes([_CHANNEL_CANDIDATE]) + chunk)
-            # Не забиваем event loop на длинных файлах.
-            if i and i % (_CHUNK_BYTES * 50) == 0:
-                await asyncio.sleep(0)
-        await bridge.send_control({"type": "stop"})
+    async def _run() -> list[dict[str, Any]]:
+        bridge = SttBridge(stt_url, on_event)
         try:
-            await asyncio.wait_for(done.wait(), timeout=120.0)
-        except asyncio.TimeoutError:
-            # Финалы могли уже прийти до stats — не падаем, если текст есть.
-            if not finals:
-                raise OfflineSttError("таймаут ожидания ответа STT") from None
-        await asyncio.sleep(0.3)
-    finally:
-        await bridge.close()
+            await bridge.connect()
+            for i in range(0, len(pcm), _CHUNK_BYTES):
+                chunk = pcm[i : i + _CHUNK_BYTES]
+                if len(chunk) % 2:
+                    chunk = chunk[:-1]
+                if not chunk:
+                    continue
+                await bridge.send_pcm(bytes([_CHANNEL_CANDIDATE]) + chunk)
+                # Не забиваем event loop на длинных файлах.
+                if i and i % (_CHUNK_BYTES * 50) == 0:
+                    await asyncio.sleep(0)
+            await bridge.send_control({"type": "stop"})
+            try:
+                await asyncio.wait_for(done.wait(), timeout=120.0)
+            except asyncio.TimeoutError:
+                # Финалы могли уже прийти до stats — не падаем, если текст есть.
+                if not finals:
+                    raise OfflineSttError("таймаут ожидания ответа STT") from None
+            await asyncio.sleep(0.3)
+        finally:
+            await bridge.close()
+        return finals
 
-    return finals
+    try:
+        return await asyncio.wait_for(_run(), timeout=_offline_stt_budget_sec(len(pcm)))
+    except asyncio.TimeoutError as exc:
+        raise OfflineSttError("таймаут офлайн-STT (стрим или ответ завис)") from exc
 
 
 async def transcribe_audio_bytes(audio: bytes, stt_url: str) -> list[dict[str, Any]]:

@@ -59,13 +59,21 @@ def enqueue_screening_offline_transcribe(session, session_id: uuid.UUID) -> None
 def _flush_analysis_after_commit(session: Session) -> None:
     offline = session.info.pop(_OUTBOX_OFFLINE_KEY, None) or []
     pending = session.info.pop(_OUTBOX_KEY, None) or []
-    # Офлайн уже включает анализ — не дублируем.
-    offline_set = {str(x) for x in offline}
+    # Офлайн уже включает анализ — не дублируем. Дедуп по id: один commit
+    # мог несколько раз вызвать enqueue (GET+finish) и породить N задач.
+    seen_offline: set[str] = set()
     for session_id in offline:
-        _dispatch(session_id, offline=True)
-    for session_id in pending:
-        if str(session_id) in offline_set:
+        key = str(session_id)
+        if key in seen_offline:
             continue
+        seen_offline.add(key)
+        _dispatch(session_id, offline=True)
+    seen_pending: set[str] = set()
+    for session_id in pending:
+        key = str(session_id)
+        if key in seen_offline or key in seen_pending:
+            continue
+        seen_pending.add(key)
         _dispatch(session_id, offline=False)
 
 
@@ -126,12 +134,17 @@ async def _run_offline_then_analysis(session_id: str) -> None:
     from app.modules.screening import service as screening_service
 
     sid = uuid.UUID(session_id)
+    wrote = 0
     try:
-        await screening_service.run_offline_transcription(sid)
+        wrote = await screening_service.run_offline_transcription(sid)
     except Exception:  # noqa: BLE001
         logger.exception("screening.offline: failed for %s", session_id)
     try:
-        await screening_service.run_post_analysis(sid, replace_report=True)
+        # Новые сегменты → пересобрать отчёт. Иначе обычный идемпотентный
+        # анализ (без повторного notify, если отчёт уже был).
+        await screening_service.run_post_analysis(
+            sid, replace_report=bool(wrote and wrote > 0)
+        )
     except Exception:  # noqa: BLE001
         logger.exception("screening.analysis: failed after offline for %s", session_id)
 

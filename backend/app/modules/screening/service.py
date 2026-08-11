@@ -538,9 +538,17 @@ async def maybe_start_offline_transcription(
     """Если есть запись и нет транскрипта — поставить офлайн-STT в очередь.
 
     Возвращает True, если задача поставлена (нужен commit вызывающим).
-    `force=True` — явное действие (attach / кнопка), без cooldown по отчёту.
-    Пока статус `processing` и прошло меньше cooldown — не дублируем; после
-    cooldown считаем задачу зависшей и ставим снова.
+    `force=True` — явное действие (attach / кнопка «Распознать запись»).
+
+    Важно: GET поллит сессию раз в ~5с пока status=processing. Авто-повтор
+    при уже готовом отчёте превращался в шторм уведомлений («отчёт готов»
+    на каждый цикл). Поэтому без `force` не трогаем сессию, у которой отчёт
+    уже есть; зависший processing без отчёта — только после cooldown, с
+    bump `updated_at`, чтобы не ставить задачу на каждый poll.
+
+    `force=True` при processing тоже ставит задачу снова: иначе attach во
+    время processing сохранял файл, но офлайн-STT не запускался, а кнопка
+    «Распознать» была скрыта — сессия зависала навсегда.
     """
     if session.audio_file_id is None:
         return False
@@ -549,43 +557,48 @@ async def maybe_start_offline_transcription(
     if await _segment_count(db, session.id) > 0:
         return False
 
+    report = (
+        await db.execute(
+            select(ScreeningReport).where(ScreeningReport.session_id == session.id)
+        )
+    ).scalar_one_or_none()
+
+    # Отчёт уже есть: авто-GET не перезапускает пайплайн (иначе spam notify).
+    # Явная кнопка / attach — можно.
+    if report is not None and not force:
+        logger.info(
+            "screening.offline: skip auto for %s — report already exists",
+            session.id,
+        )
+        return False
+
     if session.status == ScreeningStatus.processing:
-        if force:
-            return False
-        anchor = session.updated_at or session.ended_at or session.created_at
-        if anchor is None:
-            return False
-        if anchor.tzinfo is None:
-            anchor = anchor.replace(tzinfo=UTC)
-        if datetime.now(UTC) - anchor < _OFFLINE_RETRY_COOLDOWN:
-            return False
-        # Зависли в processing без сегментов — повторить офлайн-STT.
+        if not force:
+            anchor = session.updated_at or session.ended_at or session.created_at
+            if anchor is None:
+                return False
+            if anchor.tzinfo is None:
+                anchor = anchor.replace(tzinfo=UTC)
+            if datetime.now(UTC) - anchor < _OFFLINE_RETRY_COOLDOWN:
+                return False
+        # Зависли без сегментов / явный force (attach или «Распознать запись»).
+        # Раньше force=True при processing возвращал False — и attach во время
+        # processing молча сохранял файл, но офлайн-STT не ставил в очередь.
+        # bump updated_at, иначе каждый следующий GET снова пройдёт cooldown.
+        session.updated_at = datetime.now(UTC)
         enqueue_screening_offline_transcribe(db.sync_session, session.id)
-        logger.info("screening.offline: re-queued stuck processing %s", session.id)
+        logger.info(
+            "screening.offline: re-queued processing %s (force=%s)",
+            session.id,
+            force,
+        )
         return True
 
     if session.status not in (ScreeningStatus.done, ScreeningStatus.error):
         return False
 
-    if not force:
-        report = (
-            await db.execute(
-                select(ScreeningReport).where(ScreeningReport.session_id == session.id)
-            )
-        ).scalar_one_or_none()
-        if report is not None and report.created_at is not None:
-            created = report.created_at
-            if created.tzinfo is None:
-                created = created.replace(tzinfo=UTC)
-            if datetime.now(UTC) - created < _OFFLINE_RETRY_COOLDOWN:
-                logger.info(
-                    "screening.offline: skip auto for %s — recent report (%s)",
-                    session.id,
-                    created.isoformat(),
-                )
-                return False
-
     session.status = ScreeningStatus.processing
+    session.updated_at = datetime.now(UTC)
     enqueue_screening_offline_transcribe(db.sync_session, session.id)
     logger.info(
         "screening.offline: queued for %s (force=%s)", session.id, force
@@ -1155,8 +1168,9 @@ async def run_post_analysis(
 ) -> None:
     """Собрать отчёт по сессии (вызывается из Celery / eager-task).
 
-    Идемпотентно: если отчёт уже есть и статус done — no-op
-    (кроме `replace_report=True` после офлайн-STT).
+    Идемпотентно: если отчёт уже есть — no-op (кроме `replace_report=True`
+    после офлайн-STT с новыми сегментами). Уведомление — только при первом
+    появлении отчёта, иначе поллинг/повтор задачи заливает inbox.
     При сбое AI пишет fallback-отчёт; при неожиданной ошибке — status=error.
     """
     async with SessionLocal() as db:
@@ -1170,16 +1184,22 @@ async def run_post_analysis(
         if session is None:
             logger.warning("screening.analysis: session %s not found", session_id)
             return
-        if session.status == ScreeningStatus.done and not replace_report:
-            existing = (
-                await db.execute(
-                    select(ScreeningReport).where(
-                        ScreeningReport.session_id == session_id
-                    )
-                )
-            ).scalar_one_or_none()
-            if existing is not None:
-                return
+
+        existing = (
+            await db.execute(
+                select(ScreeningReport).where(ScreeningReport.session_id == session_id)
+            )
+        ).scalar_one_or_none()
+        had_report = existing is not None
+
+        # Дубликат задачи (поллинг / повторный enqueue): отчёт есть и менять
+        # не просили — добиваем status=done и выходим без notify.
+        if had_report and not replace_report:
+            if session.status != ScreeningStatus.done:
+                session.status = ScreeningStatus.done
+                await db.commit()
+            return
+
         if session.status not in (
             ScreeningStatus.processing,
             ScreeningStatus.done,
@@ -1300,11 +1320,6 @@ async def run_post_analysis(
             )
             return
 
-        existing = (
-            await db.execute(
-                select(ScreeningReport).where(ScreeningReport.session_id == session_id)
-            )
-        ).scalar_one_or_none()
         if existing is None:
             db.add(
                 ScreeningReport(
@@ -1337,7 +1352,9 @@ async def run_post_analysis(
             f"AI-скрининг завершён: вердикт «{verdict_label}»"
             + (f" ({vac_title})" if vac_title else "")
         )
-        if actor_id is not None:
+        # Activity + notify только при первом отчёте: replace после офлайн-STT
+        # обновляет карточку через WS, без второго (десятого) колокольчика.
+        if actor_id is not None and not had_report:
             await audit_service.record_activity(
                 db,
                 entity_type=ActivityEntityType.candidate,

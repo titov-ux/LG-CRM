@@ -5,7 +5,6 @@ import {
   AlertTriangle,
   ArrowLeft,
   Check,
-  CircleDot,
   Download,
   ExternalLink,
   Lightbulb,
@@ -237,21 +236,29 @@ function HintsPane({
 
 const Q_STATUS_ORDER: ScreeningQuestionStatus[] = ['pending', 'asked', 'answered', 'skipped'];
 const Q_STATUS_LABEL: Record<ScreeningQuestionStatus, string> = {
-  pending: 'не задан',
-  asked: 'задан',
-  answered: 'отвечен',
-  skipped: 'пропущен',
+  pending: 'Ждёт',
+  asked: 'Задан',
+  answered: 'Отвечен',
+  skipped: 'Пропущен',
+};
+const Q_STATUS_STYLE: Record<ScreeningQuestionStatus, string> = {
+  pending: 'border-muted-foreground/25 bg-muted/40 text-muted-foreground',
+  asked: 'border-sky-300 bg-sky-50 text-sky-800',
+  answered: 'border-emerald-400 bg-emerald-50 text-emerald-800',
+  skipped: 'border-muted-foreground/20 bg-muted/30 text-muted-foreground line-through',
 };
 
 function QuestionRow({
   q,
   disabled,
+  live,
   onCycle,
   onRemove,
   onSaveText,
 }: {
   q: ScreeningQuestion;
   disabled: boolean;
+  live: boolean;
   onCycle: () => void;
   onRemove: () => void;
   onSaveText: (text: string) => void;
@@ -271,29 +278,38 @@ function QuestionRow({
     onSaveText(text);
   };
 
+  const nextLabel =
+    Q_STATUS_LABEL[
+      Q_STATUS_ORDER[(Q_STATUS_ORDER.indexOf(q.status) + 1) % Q_STATUS_ORDER.length]!
+    ];
+
   return (
     <div
       className={cn(
         'group flex items-start gap-2.5 rounded-md border px-3 py-2',
         q.status === 'answered' && 'border-emerald-200 bg-emerald-50/50',
-        q.status === 'skipped' && 'opacity-50',
+        q.status === 'asked' && 'border-sky-200 bg-sky-50/40',
+        q.status === 'skipped' && 'opacity-60',
       )}
     >
       <button
         type="button"
         disabled={disabled}
         onClick={onCycle}
-        title={`Статус: ${Q_STATUS_LABEL[q.status]} (клик — следующий)`}
-        aria-label={`Вопрос «${q.text}» · статус: ${Q_STATUS_LABEL[q.status]}. Нажмите, чтобы поставить следующий статус`}
+        title={
+          disabled
+            ? `Статус: ${Q_STATUS_LABEL[q.status]}`
+            : `Статус: ${Q_STATUS_LABEL[q.status]}. Клик — «${nextLabel}»`
+        }
+        aria-label={`Вопрос «${q.text}» · статус: ${Q_STATUS_LABEL[q.status]}. Нажмите, чтобы поставить «${nextLabel}»`}
         className={cn(
-          'mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] focus:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-          q.status === 'answered'
-            ? 'border-emerald-500 bg-emerald-500 text-white'
-            : 'border-muted-foreground/40 text-muted-foreground hover:border-foreground',
+          'mt-0.5 inline-flex h-5 shrink-0 items-center gap-1 rounded-md border px-1.5 text-[10px] font-medium leading-none focus:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default',
+          Q_STATUS_STYLE[q.status],
+          !disabled && 'hover:brightness-[0.97]',
         )}
       >
-        {q.status === 'answered' && <Check className="h-3 w-3" />}
-        {q.status === 'asked' && <CircleDot className="h-3 w-3" />}
+        {q.status === 'answered' && <Check className="h-3 w-3" aria-hidden />}
+        {Q_STATUS_LABEL[q.status]}
       </button>
       <div className="min-w-0 flex-1">
         {editing ? (
@@ -317,11 +333,27 @@ function QuestionRow({
           </div>
         )}
         {q.goal && <div className="text-[11px] text-muted-foreground">{q.goal}</div>}
-        {q.source !== 'manual' && (
-          <Badge variant="secondary" className="mt-1 text-[10px]">
-            {q.source === 'pregenerated' ? 'AI · до встречи' : 'AI · follow-up'}
-          </Badge>
+        {q.answerSummary && (
+          <div className="mt-1 rounded-md bg-emerald-50/80 px-2 py-1 text-[11.5px] leading-snug text-emerald-900">
+            <span className="font-medium">Ответ: </span>
+            {q.answerSummary}
+          </div>
         )}
+        <div className="mt-1 flex flex-wrap items-center gap-1">
+          {q.source === 'followup' && (
+            <Badge variant="secondary" className="text-[10px]">
+              AI · уточнение
+            </Badge>
+          )}
+          {q.source === 'pregenerated' && (
+            <Badge variant="secondary" className="text-[10px]">
+              AI · до встречи
+            </Badge>
+          )}
+          {live && q.status === 'pending' && (
+            <span className="text-[10.5px] text-muted-foreground">AI отметит по разговору</span>
+          )}
+        </div>
       </div>
       {!editing && (
         <button
@@ -580,6 +612,33 @@ export function ScreeningRoomPage() {
     disabled: !shouldWarnOnLeave,
   });
 
+  // Плеер сразу: пресайнд URL подгружаем сами, без кнопки «Прослушать».
+  // Хук выше early return — иначе loading→data даёт React error #310.
+  useEffect(() => {
+    if (!isDone || !canViewReport || !session?.audioFileId) {
+      setAudioUrl(null);
+      setAudioLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setAudioLoading(true);
+    setAudioUrl(null);
+    void filesApi
+      .download(session.audioFileId)
+      .then(({ url }) => {
+        if (!cancelled) setAudioUrl(url);
+      })
+      .catch(() => {
+        if (!cancelled) toast.error('Не удалось получить запись');
+      })
+      .finally(() => {
+        if (!cancelled) setAudioLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isDone, canViewReport, session?.audioFileId]);
+
   if (isError) {
     return (
       <div className="flex-1 space-y-3 px-6 pt-5">
@@ -755,32 +814,6 @@ export function ScreeningRoomPage() {
       setUploading(false);
     }
   };
-
-  // Плеер сразу: пресайнд URL подгружаем сами, без кнопки «Прослушать».
-  useEffect(() => {
-    if (!isDone || !canViewReport || !session?.audioFileId) {
-      setAudioUrl(null);
-      setAudioLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setAudioLoading(true);
-    setAudioUrl(null);
-    void filesApi
-      .download(session.audioFileId)
-      .then(({ url }) => {
-        if (!cancelled) setAudioUrl(url);
-      })
-      .catch(() => {
-        if (!cancelled) toast.error('Не удалось получить запись');
-      })
-      .finally(() => {
-        if (!cancelled) setAudioLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [isDone, canViewReport, session?.audioFileId]);
 
   const cycleStatus = (q: ScreeningQuestion) => {
     const next =
@@ -1158,9 +1191,7 @@ export function ScreeningRoomPage() {
                         ) : (
                           <div>Не удалось загрузить запись</div>
                         )}
-                        {canControl &&
-                          session.status !== 'processing' &&
-                          (storedSegments?.length ?? 0) === 0 && (
+                        {canControl && (storedSegments?.length ?? 0) === 0 && (
                             <Button
                               size="sm"
                               variant="outline"
@@ -1173,7 +1204,9 @@ export function ScreeningRoomPage() {
                                   uploading && 'animate-spin',
                                 )}
                               />
-                              Распознать запись
+                              {session.status === 'processing'
+                                ? 'Повторить распознавание'
+                                : 'Распознать запись'}
                             </Button>
                           )}
                       </div>
@@ -1220,15 +1253,22 @@ export function ScreeningRoomPage() {
             </CardContent>
           </Card>
 
-          {/* Подсказки realtime-агента */}
-          {isLive && canControl && socket.hints.length > 0 && (
+          {/* Подсказки realtime-агента — всегда видны на live, чтобы было ясно, что AI слушает */}
+          {isLive && canControl && (
             <Card>
               <CardContent className="space-y-2 p-4">
                 <div className="flex items-center gap-1.5 text-[13px] font-medium">
                   <Lightbulb className="h-3.5 w-3.5 text-amber-600" />
                   Подсказки AI
                 </div>
-                <HintsPane hints={socket.hints} onDismiss={socket.dismissHint} />
+                {socket.hints.length > 0 ? (
+                  <HintsPane hints={socket.hints} onDismiss={socket.dismissHint} />
+                ) : (
+                  <p className="text-[12px] leading-snug text-muted-foreground">
+                    Слушает разговор и подскажет, что уточнить, когда появится риск или пробел в
+                    ответе.
+                  </p>
+                )}
               </CardContent>
             </Card>
           )}
@@ -1270,9 +1310,17 @@ export function ScreeningRoomPage() {
               )}
             </div>
 
+            {isLive && canControl && session.questions.length > 0 && (
+              <p className="text-[11.5px] leading-snug text-muted-foreground">
+                AI сам отмечает вопросы по транскрипту и добавляет уточнения. Статус можно поправить
+                вручную кликом по бейджу.
+              </p>
+            )}
             {session.questions.length === 0 && (
               <p className="py-4 text-center text-[12px] text-muted-foreground">
-                Добавьте вопросы — во время встречи отмечайте их кликом по кружку.
+                {isLive
+                  ? 'Нет вопросов в плане — AI не к чему привязать статусы и уточнения.'
+                  : 'Добавьте вопросы или перегенерируйте план. Во время встречи AI отметит их сам.'}
               </p>
             )}
             <div className={cn('space-y-1.5 transition-colors', aiPulse && 'rounded-md ring-1 ring-amber-300')}>
@@ -1281,6 +1329,7 @@ export function ScreeningRoomPage() {
                   key={q.id}
                   q={q}
                   disabled={!editable}
+                  live={!!isLive}
                   onCycle={() => cycleStatus(q)}
                   onRemove={() => {
                     removeQuestion.mutate(

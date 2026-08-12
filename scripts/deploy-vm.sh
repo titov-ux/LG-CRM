@@ -21,7 +21,14 @@ set -euo pipefail
 
 cd "$(cd "$(dirname "$0")/.." && pwd)"
 
-COMPOSE="docker compose -f infra/docker-compose.prod.yml --env-file .env.prod"
+# --profile celery обязателен: celery-worker/beat объявлены под профилем,
+# без него офлайн-STT записи и пост-анализ скрининга просто копятся в Redis.
+COMPOSE="docker compose -f infra/docker-compose.prod.yml --env-file .env.prod --profile celery"
+# Сервисы, которые деплой пересобирает/перезапускает. celery-worker крутит
+# тот же образ, что backend, — если его не пересоздать, воркер остаётся на
+# старом коде. stt-service выкатывается вместе с backend (маркер `flushed`
+# в протоколе WS).
+SERVICES="postgres redis backend celery-worker celery-beat stt nginx"
 LOCK_FILE="/tmp/crm-lg-deploy.lock"
 BRANCH="main"
 SKIP_FRONTEND=0
@@ -99,7 +106,7 @@ else
 fi
 
 step "rebuilding and restarting services"
-$COMPOSE up -d --build postgres redis backend nginx
+$COMPOSE up -d --build $SERVICES
 
 if [[ "$SKIP_MIGRATE" -eq 0 ]]; then
   step "running migrations"

@@ -22,7 +22,10 @@ from app.modules.screening.models import (
     ScreeningStatus,
     ScreeningVerdict,
 )
-from tests.test_screening_analysis_ws import _patch_session_local
+from tests.test_screening_analysis_ws import (  # noqa: F401
+    _patch_session_local,
+    candidate,  # fixture: pytest ищет её по имени в этом модуле
+)
 
 
 @pytest.mark.asyncio
@@ -757,3 +760,129 @@ async def test_replace_report_does_not_spam_notifications(
         if (n.payload or {}).get("screeningId") == str(session.id)
     ]
     assert len(screening_notes) == 1, [n.text_ for n in screening_notes]
+
+
+@pytest.mark.asyncio
+async def test_insert_offline_segments_keeps_roles_and_order(
+    db: AsyncSession, recruiter_user, candidate
+) -> None:
+    """Стерео-запись: роли берутся из дорожек, порядок — по времени.
+
+    Сегменты двух дорожек приходят вперемешку (каждая распознаётся своим
+    окном), поэтому seq обязан считаться уже после сортировки — иначе в UI
+    ответ кандидата встанет раньше вопроса рекрутёра.
+    """
+    session = ScreeningSession(
+        candidate_id=candidate.id,
+        recruiter_id=recruiter_user.id,
+        status=ScreeningStatus.processing,
+    )
+    db.add(session)
+    await db.commit()
+
+    n = await screening_service.insert_offline_segments(
+        db,
+        session.id,
+        [
+            {
+                "text": "Я работал с Python пять лет",
+                "speaker": "candidate",
+                "startedMs": 2000,
+                "endedMs": 5000,
+            },
+            {
+                "text": "Расскажите о своём опыте",
+                "speaker": "recruiter",
+                "startedMs": 100,
+                "endedMs": 1800,
+            },
+            {
+                "text": "Понятно, спасибо",
+                "speaker": "неизвестно",
+                "startedMs": 6000,
+                "endedMs": 7000,
+            },
+        ],
+    )
+    assert n == 3
+    rows = list(
+        (
+            await db.execute(
+                select(ScreeningSegment)
+                .where(ScreeningSegment.session_id == session.id)
+                .order_by(ScreeningSegment.seq.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert [r.speaker for r in rows] == [
+        ScreeningSpeaker.recruiter,
+        ScreeningSpeaker.candidate,
+        # Мусорная роль не должна ронять вставку — падаем на дефолт.
+        ScreeningSpeaker.candidate,
+    ]
+    assert [r.started_ms for r in rows] == [100, 2000, 6000]
+
+
+@pytest.mark.asyncio
+async def test_transcribe_tracks_requests_batch_mode(monkeypatch) -> None:
+    """Офлайн идёт в stt-service батчем и сохраняет роль каждой дорожки."""
+    from app.modules.screening import offline_stt
+
+    sent_controls: list[dict] = []
+    sent_channels: list[int] = []
+
+    class _FakeBridge:
+        def __init__(self, url: str, on_event) -> None:
+            self.on_event = on_event
+
+        async def connect(self) -> None:
+            return None
+
+        async def send_pcm(self, data: bytes) -> None:
+            sent_channels.append(data[0])
+
+        async def send_control(self, msg: dict) -> None:
+            sent_controls.append(msg)
+            if msg.get("type") == "mode":
+                await self.on_event({"type": "mode", "mode": msg.get("mode")})
+            elif msg.get("type") == "stop":
+                await self.on_event(
+                    {
+                        "type": "transcript.final",
+                        "speaker": "recruiter",
+                        "text": "Расскажите о себе",
+                        "startedMs": 0,
+                        "endedMs": 1500,
+                    }
+                )
+                await self.on_event(
+                    {
+                        "type": "transcript.final",
+                        "speaker": "candidate",
+                        "text": "Я дата-инженер",
+                        "startedMs": 1600,
+                        "endedMs": 4000,
+                    }
+                )
+                await self.on_event({"type": "stats", "channels": []})
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(offline_stt, "SttBridge", _FakeBridge)
+
+    silence = b"\x00\x00" * offline_stt.SAMPLE_RATE  # 1 с
+    items = await offline_stt.transcribe_tracks_via_stt(
+        {0: silence, 1: silence}, "ws://stt:8765"
+    )
+
+    assert sent_controls[0] == {"type": "mode", "mode": "batch"}
+    assert sent_controls[-1] == {"type": "stop"}
+    # Обе дорожки уехали в свой канал stt-service.
+    assert set(sent_channels) == {0, 1}
+    assert [(i["speaker"], i["text"]) for i in items] == [
+        ("recruiter", "Расскажите о себе"),
+        ("candidate", "Я дата-инженер"),
+    ]

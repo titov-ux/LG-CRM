@@ -211,11 +211,30 @@ async def _run_offline_then_analysis(
             raise
 
 
+async def _dispose_engine_after(coro):
+    """Прогнать корутину и отдать пул asyncpg ДО закрытия event loop.
+
+    Celery зовёт `asyncio.run()` на каждую задачу — каждый раз новый loop, а
+    движок в `app.db.session` закеширован на процесс (`lru_cache`). Соединения
+    в пуле остаются привязанными к предыдущему loop, и следующая задача в том
+    же форк-воркере падает с `got Future attached to a different loop`
+    (плюс `coroutine 'Connection._cancel' was never awaited`). Лечение —
+    закрывать пул на выходе из задачи: переподключение раз в задачу дешевле,
+    чем случайные падения уборщика и пост-анализа.
+    """
+    from app.db.session import get_engine
+
+    try:
+        return await coro
+    finally:
+        await get_engine().dispose()
+
+
 @celery_app.task(name="screening.analyze_session", bind=True, max_retries=2)
 def analyze_screening_session(self, session_id: str) -> str:
     """Celery-обёртка: async пост-анализ в отдельном event loop воркера."""
     try:
-        asyncio.run(_run_analysis(session_id, raise_errors=True))
+        asyncio.run(_dispose_engine_after(_run_analysis(session_id, raise_errors=True)))
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "screening.analyze_session task failed: %s — retry", session_id
@@ -228,7 +247,11 @@ def analyze_screening_session(self, session_id: str) -> str:
 def offline_transcribe_screening(self, session_id: str) -> str:
     """Офлайн-STT из S3-записи, затем пост-анализ отчёта."""
     try:
-        asyncio.run(_run_offline_then_analysis(session_id, raise_errors=True))
+        asyncio.run(
+            _dispose_engine_after(
+                _run_offline_then_analysis(session_id, raise_errors=True)
+            )
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "screening.offline_transcribe task failed: %s — retry", session_id
@@ -254,7 +277,7 @@ def purge_expired_audio_task() -> int:
         logger.info("screening.retention: disabled (SCREENING_AUDIO_RETENTION_DAYS=0)")
         return 0
     try:
-        purged = asyncio.run(_run_purge())
+        purged = asyncio.run(_dispose_engine_after(_run_purge()))
     except Exception:
         logger.exception("screening.purge_expired_audio failed")
         raise
@@ -272,7 +295,7 @@ async def _run_sweeper() -> int:
 def close_stale_sessions_task() -> int:
     """Закрыть live-сессии, у которых оборвался WS или вышло время (Этап 6)."""
     try:
-        return asyncio.run(_run_sweeper())
+        return asyncio.run(_dispose_engine_after(_run_sweeper()))
     except Exception:
         logger.exception("screening.close_stale_sessions failed")
         raise

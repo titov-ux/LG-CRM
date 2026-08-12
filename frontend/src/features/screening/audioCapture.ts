@@ -1,7 +1,8 @@
 /**
  * Захват звука скрининга: микрофон рекрутера + звук вкладки Телемоста.
  *
- * Этап 1 — только локальная запись (MediaRecorder на смикшированном потоке)
+ * Этап 1 — только локальная запись (MediaRecorder на стерео-потоке: канал 0
+ * микрофон, канал 1 вкладка)
  * с последующей выгрузкой в S3. На Этапе 2 сюда добавится AudioWorklet с
  * PCM16-стримом по WebSocket (см. spikes/screening/capture_prototype.html).
  *
@@ -218,6 +219,8 @@ export class ScreeningCapture {
   private workletUrl: string | null = null;
   /** Узлы аудиографа — нужны, чтобы пересобрать канал вкладки на ходу. */
   private dest: MediaStreamAudioDestinationNode | null = null;
+  /** Сведение в стерео: вход 0 — микрофон, вход 1 — вкладка (см. start()). */
+  private merger: ChannelMergerNode | null = null;
   private sources: { mic?: MediaStreamAudioSourceNode; tab?: MediaStreamAudioSourceNode } = {};
   private worklets: { mic?: AudioWorkletNode; tab?: AudioWorkletNode } = {};
   /** Модуль pcm-worklet уже добавлен в текущий AudioContext. */
@@ -327,8 +330,16 @@ export class ScreeningCapture {
       const tabSrc = ctx.createMediaStreamSource(this.tabStream);
       this.sources.mic = micSrc;
       this.sources.tab = tabSrc;
-      micSrc.connect(dest);
-      tabSrc.connect(dest);
+      // Пишем СТЕРЕО, а не микс: канал 0 — микрофон рекрутёра, канал 1 —
+      // звук вкладки. Живой транскрипт роли и так знает (два PCM-стрима), но
+      // распознавание уже загруженной записи раньше видело моно и метило все
+      // реплики кандидатом. С раздельными дорожками роли берутся из записи
+      // без всякой диаризации — см. backend/.../offline_stt.py::decode_tracks.
+      const merger = ctx.createChannelMerger(2);
+      this.merger = merger;
+      micSrc.connect(merger, 0, 0);
+      tabSrc.connect(merger, 0, 1);
+      merger.connect(dest);
       // ВАЖНО: к ctx.destination НЕ подключаем — иначе звук вкладки пойдёт в
       // колонки вторым потоком (эхо).
 
@@ -400,7 +411,10 @@ export class ScreeningCapture {
     this.disconnectTab();
     const src = ctx.createMediaStreamSource(stream);
     this.sources.tab = src;
-    src.connect(this.dest);
+    // Вкладка всегда во второй канал стерео — иначе после пересборки роли
+    // в записи поменялись бы местами прямо посреди встречи.
+    if (this.merger) src.connect(this.merger, 0, 1);
+    else src.connect(this.dest);
     const analyser = ctx.createAnalyser();
     analyser.fftSize = 512;
     this.analysers.tab = analyser;
@@ -478,6 +492,12 @@ export class ScreeningCapture {
     }
     this.sources.mic = undefined;
     this.analysers.mic = undefined;
+    try {
+      this.merger?.disconnect();
+    } catch {
+      /* ignore */
+    }
+    this.merger = null;
     this.dest = null;
     this.workletReady = false;
     if (this.workletUrl) {

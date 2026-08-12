@@ -1191,13 +1191,24 @@ async def insert_offline_segments(
     """Записать сегменты офлайн-STT (сессия уже не live).
 
     Не трогает существующий live-транскрипт: если сегменты уже есть — no-op.
-    Спикер всегда `candidate`: запись — микс, диаризации нет.
+    Роль берётся из дорожки записи (стерео: микрофон = рекрутёр, вкладка =
+    кандидат). У старых моно-записей дорожка одна — там всё уйдёт как
+    `speaker` (по умолчанию кандидат), как и было до Этапа 7.
     """
     if await _segment_count(db, session_id) > 0:
         return 0
     written = 0
     seq = 0
-    for item in items:
+    # Сегменты двух дорожек приходят вперемешку — раскладываем по времени,
+    # иначе seq (а значит и порядок в UI) не совпадёт с ходом разговора.
+    ordered = sorted(
+        items,
+        key=lambda x: (
+            int(x.get("startedMs") or x.get("started_ms") or 0),
+            int(x.get("endedMs") or x.get("ended_ms") or 0),
+        ),
+    )
+    for item in ordered:
         text = (item.get("text") or "").strip()
         if not text or is_hallucination(text):
             continue
@@ -1206,11 +1217,16 @@ async def insert_offline_segments(
         ended = int(item.get("endedMs") or item.get("ended_ms") or started)
         if ended < started:
             ended = started
+        raw_speaker = str(item.get("speaker") or "").strip().lower()
+        try:
+            item_speaker = ScreeningSpeaker(raw_speaker) if raw_speaker else speaker
+        except ValueError:
+            item_speaker = speaker
         db.add(
             ScreeningSegment(
                 session_id=session_id,
                 seq=seq,
-                speaker=speaker,
+                speaker=item_speaker,
                 text_=text,
                 started_ms=started,
                 ended_ms=ended,
@@ -1830,6 +1846,19 @@ async def close_stale_sessions() -> int:
     touched = len(stale_ids)
     processing_timeout = int(settings.screening_processing_timeout_min)
     if processing_timeout > 0:
+        # Терпение уборщика обязано перекрывать хард-лимит celery: иначе он
+        # ставит вторую задачу поверх ещё живого офлайн-STT (повторный Whisper
+        # и повторный LLM за те же деньги), а потом метит рабочую сессию как
+        # error. В .env это значение правят руками, так что не доверяем ему.
+        floor = int(settings.screening_task_time_limit_min) + 10
+        if processing_timeout < floor:
+            logger.warning(
+                "screening.sweeper: SCREENING_PROCESSING_TIMEOUT_MIN=%d меньше "
+                "хард-лимита задачи — поднимаю до %d",
+                processing_timeout,
+                floor,
+            )
+            processing_timeout = floor
         touched += await _sweep_stuck_processing(now, processing_timeout)
     return touched
 

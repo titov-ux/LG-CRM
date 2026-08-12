@@ -39,14 +39,15 @@ celery_app.conf.update(
     # Задачи длинные и неравномерные (офлайн-STT минуты); без этого воркер
     # разбирает пачку задач себе в буфер, и они ждут за самой долгой.
     worker_prefetch_multiplier=1,
-    # Офлайн-STT целого часового интервью — единицы минут, но на холодной
-    # модели/большой записи доходит до получаса. soft бросает
-    # SoftTimeLimitExceeded (задача успеет упасть штатно и уйти в retry),
-    # hard — страховка от зависшего сокета к STT/S3.
+    # Офлайн-STT записи на CPU идёт примерно в реальном времени, да ещё по
+    # дорожке на спикера, поэтому лимиты вынесены в конфиг и по умолчанию
+    # заметно больше часа: с прежними 30/35 минутами длинная встреча гибла
+    # на середине и оставляла пустой транскрипт.
     # SCREENING_PROCESSING_TIMEOUT_MIN обязан быть больше hard-лимита, иначе
-    # уборщик залипших processing начнёт дублировать ещё живые задачи.
-    task_soft_time_limit=30 * 60,
-    task_time_limit=35 * 60,
+    # уборщик залипших processing начнёт дублировать ещё живые задачи
+    # (close_stale_sessions поднимает его сам, если в .env забыли).
+    task_soft_time_limit=_settings.screening_task_soft_time_limit_min * 60,
+    task_time_limit=_settings.screening_task_time_limit_min * 60,
     # В тестах/dev без worker можно включить eager через settings
     # (см. enqueue в screening.tasks) — здесь флаг Celery не дублируем.
     beat_schedule={

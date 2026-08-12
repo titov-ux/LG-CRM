@@ -34,7 +34,14 @@ from app.realtime.bus import EventBus, set_bus_for_tests
 from app.realtime.presence import set_presence_store_for_tests
 
 
-# pytest-asyncio: один event loop на сессию (нужно для async-фикстур-сессий)
+# pytest-asyncio: один event loop на сессию (нужно для async-фикстур-сессий).
+#
+# ВНИМАНИЕ: в pytest-asyncio ≥0.24 (а именно такой минимум стоит в
+# pyproject/CI) переопределять `event_loop` больше нельзя — плагин её
+# игнорирует, session-scoped `engine` остаётся привязан к чужому loop, и
+# ЛЮБОЙ тест с фикстурой `db` падает на "got Future attached to a different
+# loop" в asyncpg. Лечится не одной строкой: session-scope для фикстур чинит
+# движок, но ломает тесты с TestClient. Нужен отдельный проход по харнессу.
 @pytest.fixture(scope="session")
 def event_loop() -> Iterator[asyncio.AbstractEventLoop]:
     loop = asyncio.new_event_loop()
@@ -68,12 +75,15 @@ async def engine() -> AsyncIterator:
     eng = create_async_engine(str(settings.database_url), pool_pre_ping=True)
     # Создаём схему один раз на сессию (для CI). В прод-окружении не запускается.
     async with eng.begin() as conn:
-        await conn.execute(
-            __import__("sqlalchemy").text(
-                'CREATE EXTENSION IF NOT EXISTS "uuid-ossp"; '
-                "CREATE EXTENSION IF NOT EXISTS citext;"
-            )
-        )
+        # По одной команде на execute: asyncpg гоняет запросы как prepared
+        # statements и на двух командах в одном text() падает с
+        # "cannot insert multiple commands into a prepared statement".
+        text = __import__("sqlalchemy").text
+        for stmt in (
+            'CREATE EXTENSION IF NOT EXISTS "uuid-ossp"',
+            "CREATE EXTENSION IF NOT EXISTS citext",
+        ):
+            await conn.execute(text(stmt))
         await conn.run_sync(Base.metadata.create_all)
     yield eng
     async with eng.begin() as conn:

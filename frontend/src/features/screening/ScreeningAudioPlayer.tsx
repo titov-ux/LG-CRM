@@ -53,6 +53,51 @@ export function ScreeningAudioPlayer({
     setMediaDuration(0);
   }, [src]);
 
+  /**
+   * Сводим запись в моно на выходе плеера.
+   *
+   * Архив пишется в стерео не ради стерео-звука, а чтобы разложить роли: канал
+   * 0 — микрофон рекрутёра, канал 1 — вкладка кандидата (см. audioCapture.ts).
+   * В наушниках это звучало бы как «я слева, кандидат справа». Гейн с
+   * `channelCount = 1` и `channelCountMode = 'explicit'` даунмиксит поток в
+   * моно, а дальше он снова растекается на оба уха.
+   *
+   * Источник из <audio> можно создать ровно один раз на элемент, поэтому
+   * контекст живёт всю жизнь компонента и не пересоздаётся на смену src.
+   */
+  useEffect(() => {
+    const el = audioRef.current;
+    const Ctor =
+      typeof window !== 'undefined'
+        ? window.AudioContext ??
+          (window as unknown as { webkitAudioContext?: typeof AudioContext })
+            .webkitAudioContext
+        : undefined;
+    if (!el || !Ctor) return;
+    let ctx: AudioContext;
+    try {
+      ctx = new Ctor();
+      const source = ctx.createMediaElementSource(el);
+      const mono = ctx.createGain();
+      mono.channelCount = 1;
+      mono.channelCountMode = 'explicit';
+      mono.channelInterpretation = 'speakers';
+      source.connect(mono);
+      mono.connect(ctx.destination);
+    } catch {
+      // WebAudio недоступен (или источник уже привязан) — играем как есть,
+      // это всего лишь стерео-разнос, а не потеря звука.
+      return;
+    }
+    const resume = () => void ctx.resume().catch(() => undefined);
+    el.addEventListener('play', resume);
+    return () => {
+      el.removeEventListener('play', resume);
+      void ctx.close().catch(() => undefined);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- ровно один раз на элемент
+  }, []);
+
   useEffect(() => {
     const el = audioRef.current;
     if (!el) return;

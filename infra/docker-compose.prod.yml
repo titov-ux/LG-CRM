@@ -145,6 +145,10 @@ services:
       STT_COMPUTE_TYPE: "${STT_COMPUTE_TYPE:-int8}"
       STT_CPU_THREADS: "${STT_CPU_THREADS:-4}"
       STT_MAX_SESSIONS: "${STT_MAX_SESSIONS:-8}"
+      # Батч-режим — распознавание загруженной записи (см. server.py).
+      STT_BATCH_WINDOW_S: "${STT_BATCH_WINDOW_S:-120}"
+      STT_BATCH_BEAM: "${STT_BATCH_BEAM:-5}"
+      STT_BATCH_PROMPT: "${STT_BATCH_PROMPT:-}"
       STT_PORT: "8765"
       # Кеш весов HuggingFace/faster-whisper внутри именованного тома —
       # иначе модель (small ≈500МБ, large-v3 ≈3ГБ) качается заново

@@ -418,7 +418,9 @@ async def apply_agent_tick(
 class ScreeningRealtimeAgent:
     """Дебаунс + лимиты + тик LLM на финальных сегментах одной WS-сессии."""
 
-    def __init__(self, session_id: uuid.UUID, emit: EmitFn) -> None:
+    def __init__(
+        self, session_id: uuid.UUID, emit: EmitFn, *, start_seq: int = 0
+    ) -> None:
         self.session_id = session_id
         self._emit = emit
         self._debounce_task: asyncio.Task[None] | None = None
@@ -429,8 +431,16 @@ class ScreeningRealtimeAgent:
         self._tokens_spent = 0
         self._followups_added = 0
         self._last_call_mono = 0.0
-        self._last_processed_seq = 0
-        self._newest_seq = 0
+        # Агент живёт на одно WS-соединение, а встреча переживает reconnect
+        # (F5 у рекрутера). Стартуем с уже разобранного seq, иначе после
+        # каждого переподключения агент перечитывает встречу с нуля и жжёт
+        # лимит вызовов.
+        start = max(0, int(start_seq))
+        self._last_processed_seq = start
+        self._newest_seq = start
+        # Финалы, приехавшие пока тик был в полёте: тик их не увидит,
+        # поэтому после его завершения планируем следующий.
+        self._pending_final = False
 
     def notify_final(self, seq: int) -> None:
         if self._closed:
@@ -439,19 +449,29 @@ class ScreeningRealtimeAgent:
         settings = get_settings()
         if not settings.screening_ai_enabled:
             return
-        if self._debounce_task and not self._debounce_task.done():
-            self._debounce_task.cancel()
+        if self._busy:
+            # Тик исполняется ВНУТРИ _debounce_task: отменять её сейчас —
+            # значит оборвать вызов LLM, за который уже списаны _calls,
+            # _last_processed_seq и токены. Просто помечаем новые финалы,
+            # следующий тик запланирует сам _tick в finally.
+            self._pending_final = True
+            return
         delay = max(1.0, float(settings.screening_ai_debounce_sec))
+        self._cancel_debounce()
         self._debounce_task = asyncio.create_task(
             self._debounced_tick(delay), name=f"screening-agent-{self.session_id}"
         )
 
     async def close(self) -> None:
         self._closed = True
-        if self._debounce_task and not self._debounce_task.done():
-            self._debounce_task.cancel()
+        self._pending_final = False
+        task = self._debounce_task
+        # Здесь отменяем безусловно (в т.ч. тик в полёте): встреча закончилась,
+        # ждать ответ LLM больше некому.
+        if task and not task.done():
+            task.cancel()
             try:
-                await self._debounce_task
+                await task
             except (asyncio.CancelledError, Exception):
                 pass
 
@@ -464,12 +484,24 @@ class ScreeningRealtimeAgent:
             return
         await self._tick()
 
+    def _cancel_debounce(self) -> None:
+        """Снять задачу дебаунса — только пока она безопасно спит.
+
+        Нельзя отменять её, если внутри уже крутится _tick (вызов LLM) или
+        если это текущая задача (_reschedule вызывается из самого _tick).
+        """
+        task = self._debounce_task
+        if task is None or task.done():
+            return
+        if self._busy or task is asyncio.current_task():
+            return
+        task.cancel()
+
     def _reschedule(self, delay: float, suffix: str) -> None:
         """Перепланировать тик (агент занят / рано по min_interval)."""
         if self._closed:
             return
-        if self._debounce_task and not self._debounce_task.done():
-            self._debounce_task.cancel()
+        self._cancel_debounce()
         self._debounce_task = asyncio.create_task(
             self._debounced_tick(max(0.5, delay)),
             name=f"screening-agent-{suffix}-{self.session_id}",
@@ -623,6 +655,19 @@ class ScreeningRealtimeAgent:
             screening_metrics.record_ai_agent_error()
         finally:
             self._busy = False
+            if self._pending_final and not self._closed:
+                self._pending_final = False
+                # Пока шёл вызов LLM, приехали новые финалы: планируем
+                # следующий тик, но не раньше min_interval после этого вызова.
+                min_interval = max(
+                    0.0, float(get_settings().screening_ai_min_interval_sec)
+                )
+                since = (
+                    time.monotonic() - self._last_call_mono
+                    if self._last_call_mono
+                    else min_interval
+                )
+                self._reschedule(min_interval - since, "pending")
 
 
 __all__ = [

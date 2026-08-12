@@ -21,11 +21,17 @@ export function ScreeningAudioPlayer({
   src,
   durationSec,
   className,
+  onError,
 }: {
   src: string;
   /** Длительность встречи с бэка — fallback, пока браузер не знает Duration. */
   durationSec?: number | null;
   className?: string;
+  /**
+   * Не удалось загрузить/проиграть файл (чаще всего протух presigned-URL).
+   * Родитель по этому колбэку предлагает перезапросить ссылку.
+   */
+  onError?: () => void;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
@@ -89,8 +95,12 @@ export function ScreeningAudioPlayer({
     try {
       if (el.paused) await el.play();
       else el.pause();
-    } catch {
-      /* autoplay / abort — игнорируем */
+    } catch (e) {
+      // AbortError/NotAllowedError — гонка с seek или политика автоплея, это не
+      // повод показывать ошибку. Всё остальное (протухшая ссылка, битый файл)
+      // раньше глоталось молча: Play просто ничего не делал.
+      const name = (e as { name?: string } | null)?.name ?? '';
+      if (name !== 'AbortError' && name !== 'NotAllowedError') onError?.();
     }
   };
 
@@ -108,7 +118,14 @@ export function ScreeningAudioPlayer({
 
   return (
     <div className={cn('flex items-center gap-2 rounded-md border bg-muted/40 px-2 py-1.5', className)}>
-      <audio ref={audioRef} src={src} preload="metadata" className="hidden" />
+      <audio
+        ref={audioRef}
+        src={src}
+        preload="metadata"
+        className="hidden"
+        // Без обработчика протухший presigned-URL выглядел как «Play не работает».
+        onError={() => onError?.()}
+      />
       <Button
         type="button"
         variant="outline"

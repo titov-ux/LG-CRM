@@ -1,6 +1,8 @@
 """Пост-анализ, attach_audio и WS-путь скрининга (дыры из ревью Этапа 6)."""
 from __future__ import annotations
 
+import asyncio
+import json
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -384,3 +386,61 @@ def test_metrics_prometheus_endpoint() -> None:
     assert "screening_stt_latency_ms" in body
     screening_metrics.session_closed()
     screening_metrics.SCREENING_METRICS.reset()
+
+
+class _FakeSttWs:
+    """Минимальный ClientConnection для SttBridge: send/close без сети."""
+
+    def __init__(self) -> None:
+        self.sent: list[str] = []
+        self.closed = False
+
+    async def send(self, data: Any) -> None:
+        self.sent.append(data)
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+def _fake_bridge() -> tuple[Any, _FakeSttWs]:
+    from app.modules.screening.stt_bridge import SttBridge
+
+    async def _sink(_msg: dict[str, Any]) -> None:
+        return None
+
+    bridge = SttBridge("ws://stt.invalid", _sink)
+    ws = _FakeSttWs()
+    bridge._ws = ws
+    return bridge, ws
+
+
+@pytest.mark.asyncio
+async def test_stt_bridge_stop_waits_for_flush_marker() -> None:
+    """После stop мост ждёт {"type":"flushed"}, а не фиксированные 0.8 с.
+
+    На CPU-small flush() в stt-service занимает секунды, и хвост финалов
+    терялся вместе с разорванным соединением.
+    """
+    bridge, ws = _fake_bridge()
+    task = asyncio.create_task(bridge.stop())
+    await asyncio.sleep(0.1)
+    assert not task.done()
+    assert json.loads(ws.sent[0])["type"] == "stop"
+
+    bridge._flushed.set()  # маркер от stt-service
+    await asyncio.wait_for(task, 2.0)
+    assert ws.closed is True
+
+
+@pytest.mark.asyncio
+async def test_stt_bridge_stop_falls_back_on_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Старый образ STT маркера не шлёт — отваливаемся по таймауту, как раньше."""
+    from app.modules.screening import stt_bridge as bridge_mod
+
+    monkeypatch.setattr(bridge_mod, "STOP_FLUSH_TIMEOUT_SEC", 0.05)
+    bridge, ws = _fake_bridge()
+    await asyncio.wait_for(bridge.stop(), 2.0)
+    assert ws.closed is True
+    assert bridge.connected is False

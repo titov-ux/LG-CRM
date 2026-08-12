@@ -43,7 +43,12 @@ import type {
   ScreeningQuestionStatus,
   ScreeningSpeaker,
 } from '@/api/screenings';
-import { ScreeningCapture, captureSupportIssue, describeCaptureError } from './audioCapture';
+import {
+  ScreeningCapture,
+  captureSupportIssue,
+  describeCaptureError,
+  type CaptureLevels,
+} from './audioCapture';
 import { ScreeningAudioPlayer } from './ScreeningAudioPlayer';
 import { ScreeningReportPanel } from './ScreeningReportPanel';
 import {
@@ -77,6 +82,30 @@ import {
 function recordingMime(raw?: string | null): string {
   const base = (raw || 'audio/webm').split(';', 1)[0]!.trim().toLowerCase();
   return base.startsWith('audio/') ? base : 'audio/webm';
+}
+
+/**
+ * Разбор ошибки ky: бэк отдаёт `{detail:{code,message}}` (ApiError). Без этого
+ * все ошибки выглядели одинаково — «что-то пошло не так».
+ */
+async function apiErrorDetail(
+  e: unknown,
+): Promise<{ status?: number; code?: string; message?: string }> {
+  const res = (e as { response?: Response } | null)?.response;
+  if (!res) return {};
+  let body: { detail?: { code?: string; message?: string } } | null = null;
+  try {
+    // clone(): тело может понадобиться ещё кому-то (и повторный json() бросает).
+    body = (await res.clone().json()) as { detail?: { code?: string; message?: string } };
+  } catch {
+    body = null;
+  }
+  return { status: res.status, code: body?.detail?.code, message: body?.detail?.message };
+}
+
+function fmtBytes(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} КБ`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
 }
 
 function LevelBar({ level, label, active }: { level: number; label: string; active: boolean }) {
@@ -385,7 +414,14 @@ export function ScreeningRoomPage() {
   const { id } = useParams({ from: '/_authed/video-interviews_/$id' });
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { data: session, isLoading, isError, refetch, isRefetching } = useScreening(id);
+  const {
+    data: session,
+    isLoading,
+    isError,
+    error: loadError,
+    refetch,
+    isRefetching,
+  } = useScreening(id);
 
   const canRun = useCan('screening:run');
   const canViewReport = useCan('screening:view_report');
@@ -409,9 +445,15 @@ export function ScreeningRoomPage() {
   /** Захват реально работает в этой вкладке (после F5 — false). */
   const [captureActive, setCaptureActive] = useState(false);
   const [uploading, setUploading] = useState(false);
+  /** Размер выгружаемой записи — чтобы «Сохраняем запись…» не был немым. */
+  const [uploadingBytes, setUploadingBytes] = useState<number | null>(null);
   const [newQuestion, setNewQuestion] = useState('');
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [audioLoading, setAudioLoading] = useState(false);
+  /** Пресайнд-ссылка не открылась/протухла — предлагаем перезапросить. */
+  const [audioFailed, setAudioFailed] = useState(false);
+  /** Счётчик ручных перезапросов ссылки на запись. */
+  const [audioReloadTick, setAudioReloadTick] = useState(0);
   /** Записанный блоб, который не удалось выгрузить — даём повторить/скачать. */
   const [pendingBlob, setPendingBlob] = useState<Blob | null>(null);
   const [telemostDraft, setTelemostDraft] = useState('');
@@ -437,13 +479,20 @@ export function ScreeningRoomPage() {
     !!session && (session.recruiterId === me?.id || me?.role === 'admin');
   const canControl = canRun && isOwner;
   const editable = (isDraft || isLive) && canControl;
+  /**
+   * Транскрипт и запись бэк отдаёт владельцу сессии и без `view_report`
+   * (`GET /segments`, presigned-ссылка на аудио) — прятать их от того, кто эту
+   * встречу и провёл, бессмысленно. Под `view_report` остаётся только AI-отчёт:
+   * его бэк маскирует сам.
+   */
+  const canViewTranscript = isOwner || canViewReport;
   const supportIssue = captureSupportIssue();
 
   // Realtime-транскрипция + агент: сокет живёт, пока сессия live.
   const socket = useScreeningSocket(id, !!isLive && canControl);
   const sendFrameRef = useRef(socket.sendFrame);
   sendFrameRef.current = socket.sendFrame;
-  const { data: storedSegments } = useScreeningSegments(id, !!isDone && canViewReport, {
+  const { data: storedSegments } = useScreeningSegments(id, !!isDone && canViewTranscript, {
     pollWhileProcessing: session?.status === 'processing',
   });
 
@@ -479,21 +528,48 @@ export function ScreeningRoomPage() {
   }, [socket.questionsUpdatedAt]);
 
   /**
+   * Уже выгруженный в S3 файл этой записи: если `uploadFile` прошёл, а
+   * `finishSession`/`attachAudio` упали, повторная попытка не должна лить тот же
+   * блоб второй раз — первый файл остался бы сиротой в бакете.
+   */
+  const uploadedFileIdRef = useRef<string | null>(null);
+
+  /**
+   * Выгрузка записи в S3 + привязка к сессии. Бросает при ошибке.
+   *
    * MediaRecorder отдаёт `audio/webm;codecs=opus`, а /files/presign сверяет
    * MIME по точному совпадению с белым списком (`audio/webm`) — без нормализации
    * выгрузка всегда падает.
    */
-  /** Выгрузка записи в S3 + привязка к сессии. Бросает при ошибке. */
   const uploadRecording = useCallback(
     async (blob: Blob) => {
-      const file = new File([blob], `screening-${id.slice(0, 8)}.webm`, {
-        type: recordingMime(blob.type),
-      });
-      const rec = await uploadFile({ entityType: 'screening', entityId: id, file });
-      await attachAudio.mutateAsync({ id, fileId: rec.id });
+      let fileId = uploadedFileIdRef.current;
+      if (!fileId) {
+        const file = new File([blob], `screening-${id.slice(0, 8)}.webm`, {
+          type: recordingMime(blob.type),
+        });
+        // TODO: отмена выгрузки требует прокинуть AbortSignal в uploadFile
+        // (frontend/src/api/files.ts) — этот файл вне зоны текущей правки.
+        const rec = await uploadFile({ entityType: 'screening', entityId: id, file });
+        fileId = rec.id;
+        uploadedFileIdRef.current = fileId;
+      }
+      await attachAudio.mutateAsync({ id, fileId });
     },
     [id, attachAudio],
   );
+
+  /**
+   * Уровни приходят 5 раз в секунду. Индикатор — полоска, ему хватает грубой
+   * шкалы: квантуем и не трогаем state, если видимое значение не изменилось,
+   * иначе каждый тик перерисовывал всю комнату.
+   */
+  const handleLevels = useCallback((next: CaptureLevels) => {
+    const q = (v: number) => Math.round(Math.min(1, Math.max(0, v)) * 100) / 100;
+    const mic = q(next.mic);
+    const tab = q(next.tab);
+    setLevels((prev) => (prev.mic === mic && prev.tab === tab ? prev : { mic, tab }));
+  }, []);
 
   const downloadBlobLocally = (blob: Blob) => {
     const url = URL.createObjectURL(blob);
@@ -509,6 +585,7 @@ export function ScreeningRoomPage() {
   const retryUpload = async () => {
     if (!pendingBlob) return;
     setUploading(true);
+    setUploadingBytes(pendingBlob.size);
     try {
       await uploadRecording(pendingBlob);
       setPendingBlob(null);
@@ -519,6 +596,7 @@ export function ScreeningRoomPage() {
       toast.error('Снова не удалось выгрузить запись — попробуйте позже или скачайте локально');
     } finally {
       setUploading(false);
+      setUploadingBytes(null);
     }
   };
 
@@ -526,6 +604,7 @@ export function ScreeningRoomPage() {
     const picked = fileList?.[0];
     if (!picked) return;
     setUploading(true);
+    setUploadingBytes(picked.size);
     try {
       const normalized = new File([picked], picked.name || `screening-${id.slice(0, 8)}.webm`, {
         type: recordingMime(picked.type),
@@ -536,10 +615,18 @@ export function ScreeningRoomPage() {
       toast.success('Запись сохранена — запускаем распознавание');
       await queryClient.invalidateQueries({ queryKey: screeningKeys.byId(id) });
       await queryClient.invalidateQueries({ queryKey: screeningKeys.segments(id) });
-    } catch {
-      toast.error('Не удалось прикрепить файл — проверьте, что это аудио (.webm) и сеть в порядке');
+    } catch (e) {
+      const { code, message } = await apiErrorDetail(e);
+      // /files/presign сверяет MIME по точному совпадению — принимается только
+      // запись встречи (audio/webm), mp3/wav отклоняются ещё до выгрузки.
+      toast.error(
+        code === 'unsupported_mime'
+          ? (message ?? 'Такой формат файла не поддерживается — нужен .webm (audio/webm)')
+          : 'Не удалось прикрепить файл — нужен .webm (audio/webm); проверьте формат и сеть',
+      );
     } finally {
       setUploading(false);
+      setUploadingBytes(null);
     }
   };
 
@@ -584,6 +671,7 @@ export function ScreeningRoomPage() {
       setMicReady(false);
       setTabReady(false);
       if (blob && blob.size > 0) {
+        setUploadingBytes(blob.size);
         try {
           await uploadRecording(blob);
           toast.success('Запись сохранена');
@@ -593,6 +681,7 @@ export function ScreeningRoomPage() {
         }
       }
       setUploading(false);
+      setUploadingBytes(null);
       await queryClient.invalidateQueries({ queryKey: screeningKeys.byId(id) });
       toast.warning('Достигнут лимит длительности встречи — сессия завершена');
     })();
@@ -615,21 +704,25 @@ export function ScreeningRoomPage() {
   // Плеер сразу: пресайнд URL подгружаем сами, без кнопки «Прослушать».
   // Хук выше early return — иначе loading→data даёт React error #310.
   useEffect(() => {
-    if (!isDone || !canViewReport || !session?.audioFileId) {
+    if (!isDone || !canViewTranscript || !session?.audioFileId) {
       setAudioUrl(null);
       setAudioLoading(false);
+      setAudioFailed(false);
       return;
     }
     let cancelled = false;
     setAudioLoading(true);
     setAudioUrl(null);
+    setAudioFailed(false);
     void filesApi
       .download(session.audioFileId)
       .then(({ url }) => {
         if (!cancelled) setAudioUrl(url);
       })
       .catch(() => {
-        if (!cancelled) toast.error('Не удалось получить запись');
+        // Не тост, а инлайн-состояние с кнопкой: ссылка presigned и живёт
+        // недолго — «Повторить» решает проблему в один клик.
+        if (!cancelled) setAudioFailed(true);
       })
       .finally(() => {
         if (!cancelled) setAudioLoading(false);
@@ -637,9 +730,16 @@ export function ScreeningRoomPage() {
     return () => {
       cancelled = true;
     };
-  }, [isDone, canViewReport, session?.audioFileId]);
+    // audioReloadTick — ручной перезапрос протухшей ссылки.
+  }, [isDone, canViewTranscript, session?.audioFileId, audioReloadTick]);
 
   if (isError) {
+    // 404/403 — сессия удалена или чужая: ретрай ничего не изменит, кнопку
+    // «Повторить» показывать нечестно. Всё остальное считаем сетевым сбоем.
+    const loadStatus = (loadError as { response?: { status?: number } } | null)?.response
+      ?.status;
+    const gone = loadStatus === 404;
+    const denied = loadStatus === 403;
     return (
       <div className="flex-1 space-y-3 px-6 pt-5">
         <div className="flex items-start gap-3">
@@ -655,14 +755,35 @@ export function ScreeningRoomPage() {
         <Card>
           <CardContent className="space-y-3 p-6 text-center">
             <AlertTriangle className="mx-auto h-7 w-7 text-muted-foreground/60" />
-            <div className="text-[13px] font-medium">Не удалось загрузить сессию скрининга</div>
+            <div className="text-[13px] font-medium">
+              {gone
+                ? 'Сессия скрининга не найдена'
+                : denied
+                  ? 'Нет доступа к этой сессии скрининга'
+                  : 'Не удалось загрузить сессию скрининга'}
+            </div>
             <p className="text-[12px] text-muted-foreground">
-              Проверьте соединение и попробуйте ещё раз.
+              {gone
+                ? 'Возможно, её удалили или ссылка устарела.'
+                : denied
+                  ? 'Скрининг ведёт другой рекрутер. Обратитесь к администратору, если доступ нужен для работы.'
+                  : 'Проверьте соединение и попробуйте ещё раз.'}
             </p>
-            <Button size="sm" variant="outline" onClick={() => void refetch()} disabled={isRefetching}>
-              <RotateCw className={cn('mr-1.5 h-3.5 w-3.5', isRefetching && 'animate-spin')} />
-              Повторить
-            </Button>
+            {gone || denied ? (
+              <Button size="sm" variant="outline" asChild>
+                <Link to="/video-interviews">К списку видеоинтервью</Link>
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void refetch()}
+                disabled={isRefetching}
+              >
+                <RotateCw className={cn('mr-1.5 h-3.5 w-3.5', isRefetching && 'animate-spin')} />
+                Повторить
+              </Button>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -696,7 +817,7 @@ export function ScreeningRoomPage() {
   const getCapture = () => {
     if (!captureRef.current) {
       captureRef.current = new ScreeningCapture({
-        onLevels: setLevels,
+        onLevels: handleLevels,
         onTabSilence: setTabSilent,
         onEnded: () => {
           setTabReady(false);
@@ -721,7 +842,12 @@ export function ScreeningRoomPage() {
     }
   };
 
-  const requestTab = async () => {
+  /**
+   * @param reselect — это повторный выбор вкладки при уже работающем захвате.
+   *   Тогда отмену пикера подтверждаем нейтральным тостом: прежний источник
+   *   остался жив (см. audioCapture.requestTab), и молчание здесь пугает.
+   */
+  const requestTab = async (reselect = false) => {
     if (supportIssue) {
       toast.error(supportIssue);
       return;
@@ -729,7 +855,11 @@ export function ScreeningRoomPage() {
     try {
       const ok = await getCapture().requestTab();
       if (!ok) {
-        toast.error('Не включена галка «Поделиться звуком вкладки» — попробуйте ещё раз');
+        toast.error(
+          reselect
+            ? 'Не включена галка «Поделиться звуком вкладки» — прежний источник сохранён, попробуйте ещё раз'
+            : 'Не включена галка «Поделиться звуком вкладки» — попробуйте ещё раз',
+        );
         return;
       }
       setTabReady(true);
@@ -737,7 +867,11 @@ export function ScreeningRoomPage() {
     } catch (e) {
       // NotAllowedError — пользователь просто закрыл диалог выбора вкладки.
       const message = describeCaptureError(e);
-      if (message) toast.error(message);
+      if (message) {
+        toast.error(message);
+      } else if (reselect) {
+        toast.message('Выбор вкладки отменён — прежний источник сохранён');
+      }
     }
   };
 
@@ -745,10 +879,16 @@ export function ScreeningRoomPage() {
     try {
       await startSession.mutateAsync(session.id);
     } catch (e) {
-      const err = e as { response?: Response };
-      const body = await err.response?.json?.().catch(() => null);
-      if (body?.detail?.code === 'consent_required') {
+      const { status, code, message } = await apiErrorDetail(e);
+      if (code === 'consent_required') {
         toast.error('Сначала подтвердите согласие кандидата на запись');
+      } else if (status === 403) {
+        toast.error('Нет прав начинать эту встречу — сессию ведёт другой рекрутер');
+      } else if (code === 'invalid_status') {
+        // Статус уехал в другой вкладке/на другом устройстве — подтягиваем его,
+        // иначе кнопка «Начать» продолжает обещать невозможное.
+        toast.error(message ?? 'Сессию уже нельзя начать — её статус изменился');
+        void queryClient.invalidateQueries({ queryKey: screeningKeys.byId(id) });
       } else {
         toast.error('Не удалось начать сессию');
       }
@@ -756,6 +896,10 @@ export function ScreeningRoomPage() {
     }
     try {
       await getCapture().start();
+      // Новая запись — новый файл: иначе повторное завершение привязало бы
+      // файл прошлой (неудачно завершённой) попытки, а свежий кусок встречи
+      // пропал бы молча.
+      uploadedFileIdRef.current = null;
       setCaptureActive(true);
     } catch (e) {
       toast.error(describeCaptureError(e) ?? 'Не удалось запустить запись');
@@ -766,8 +910,12 @@ export function ScreeningRoomPage() {
   const resumeCapture = async () => {
     try {
       await getCapture().start();
+      uploadedFileIdRef.current = null;
       setCaptureActive(true);
       setTabSilent(false);
+      // Стрим мог быть погашен неудачным завершением — поднимаем его обратно,
+      // иначе UI показывал бы «распознавание идёт», а кадры уходили в никуда.
+      socket.reconnect();
       toast.success('Захват восстановлен — запись и распознавание идут');
     } catch (e) {
       toast.error(describeCaptureError(e) ?? 'Не удалось запустить запись');
@@ -792,7 +940,16 @@ export function ScreeningRoomPage() {
     setMicReady(false);
     setTabReady(false);
 
+    // `stop()` («стоп» в STT-мост) шлём сразу после захвата и ДО выгрузки в S3:
+    // выгрузка занимает десятки секунд, а после finishSession сессия уже не live
+    // и финалы от STT отбрасываются — так терялась последняя фраза встречи.
+    // Обратная сторона: если finishSession упадёт, стрим уже остановлен —
+    // повторное «Завершить» просто закроет сессию, новые реплики после этого
+    // момента не распознаются (захват тоже остановлен выше).
+    socket.stop();
+
     if (blob && blob.size > 0) {
+      setUploadingBytes(blob.size);
       try {
         await uploadRecording(blob);
         toast.success('Запись сохранена');
@@ -804,14 +961,18 @@ export function ScreeningRoomPage() {
 
     try {
       await finishSession.mutateAsync({ id: session.id, durationSec });
-      // Сокет гасим ТОЛЬКО после успешного finish: иначе упавшая мутация
-      // оставляла бы live-сессию с намертво погашенным стримом.
-      socket.stop();
     } catch {
+      // Снимаем «уже завершаемся», чтобы кнопку можно было нажать ещё раз.
       finalizingRef.current = false;
-      toast.error('Не удалось завершить сессию — попробуйте ещё раз');
+      // Сессия осталась live, а сокет мы уже погасили (killedRef) — без этого
+      // «Возобновить запись» дало бы UI «распознавание идёт» при мёртвом стриме.
+      socket.reconnect();
+      toast.error(
+        'Не удалось завершить сессию — попробуйте ещё раз (запись остановлена)',
+      );
     } finally {
       setUploading(false);
+      setUploadingBytes(null);
     }
   };
 
@@ -846,8 +1007,15 @@ export function ScreeningRoomPage() {
     try {
       await regenerateQuestions.mutateAsync(session.id);
       toast.success('План вопросов обновлён');
-    } catch {
-      toast.error('Не удалось перегенерировать вопросы');
+    } catch (e) {
+      // 503 ai_unavailable — у бэка уже есть текст с инструкцией («добавьте
+      // вопросы вручную»), он полезнее нашего общего «не удалось».
+      const { code, message } = await apiErrorDetail(e);
+      if ((code === 'ai_unavailable' || code === 'ai_bad_request') && message) {
+        toast.error(message);
+      } else {
+        toast.error('Не удалось перегенерировать вопросы');
+      }
     }
   };
 
@@ -868,6 +1036,12 @@ export function ScreeningRoomPage() {
 
   const captureLost = isLive && !captureActive;
   const mmss = secToClock(elapsedSec);
+  /**
+   * Сколько осталось до хард-стопа по лимиту длительности (лимит приходит в
+   * `hello`). Без этого сервер обрывал встречу «внезапно».
+   */
+  const remainingSec =
+    isLive && socket.maxDurationSec ? Math.max(0, socket.maxDurationSec - elapsedSec) : null;
 
   return (
     <div className="flex-1 space-y-4 overflow-auto px-6 pb-8 pt-5">
@@ -896,6 +1070,17 @@ export function ScreeningRoomPage() {
                 {captureActive ? `● запись · ${mmss}` : `встреча идёт · ${mmss} · запись не ведётся`}
               </span>
             )}
+            {remainingSec !== null && (
+              <span
+                className={cn(
+                  'ml-2',
+                  remainingSec <= 300 ? 'font-medium text-amber-600' : 'text-muted-foreground',
+                )}
+                title="Сервер завершит встречу по лимиту длительности"
+              >
+                · до автозавершения {secToClock(remainingSec)}
+              </span>
+            )}
           </p>
         </div>
         {session.telemostUrl && (
@@ -915,16 +1100,38 @@ export function ScreeningRoomPage() {
         </div>
       )}
 
+      {/* Терминальный обрыв стрима: сам не поднимется, объясняем и даём выбор. */}
+      {isLive && canControl && socket.fatal && (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-200 bg-amber-50 p-2.5 text-[12px] text-amber-800">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+          <span className="flex-1">{socket.fatal.message}</span>
+          {socket.fatal.kind === 'displaced' && (
+            <Button size="sm" variant="outline" onClick={socket.reconnect}>
+              <RotateCw className="mr-1.5 h-3.5 w-3.5" />
+              Вести стрим в этой вкладке
+            </Button>
+          )}
+          {socket.fatal.kind === 'auth' && (
+            <Button size="sm" variant="outline" onClick={socket.reconnect}>
+              <RotateCw className="mr-1.5 h-3.5 w-3.5" />
+              Подключиться заново
+            </Button>
+          )}
+        </div>
+      )}
+
       {pendingBlob && (
         <div className="flex flex-wrap items-center gap-2 rounded-md border border-red-200 bg-red-50 p-2.5 text-[12px] text-red-700">
           <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
           <span className="flex-1">
-            Запись встречи не выгрузилась в хранилище. Она хранится только в этой вкладке —
-            не закрывайте страницу.
+            Запись встречи ({fmtBytes(pendingBlob.size)}) не выгрузилась в хранилище. Она
+            хранится только в этой вкладке — не закрывайте страницу.
           </span>
           <Button size="sm" variant="outline" onClick={() => void retryUpload()} disabled={uploading}>
             <RotateCw className={cn('mr-1.5 h-3.5 w-3.5', uploading && 'animate-spin')} />
-            {uploading ? 'Выгружаем…' : 'Повторить выгрузку'}
+            {uploading
+              ? `Выгружаем${uploadingBytes ? ` ${fmtBytes(uploadingBytes)}` : ''}…`
+              : 'Повторить выгрузку'}
           </Button>
           <Button size="sm" variant="outline" onClick={() => downloadBlobLocally(pendingBlob)}>
             <Download className="mr-1.5 h-3.5 w-3.5" />
@@ -935,7 +1142,7 @@ export function ScreeningRoomPage() {
               Прикрепить файл с диска
               <input
                 type="file"
-                accept="audio/webm,audio/*,.webm,.ogg,.mp3,.wav,.m4a"
+                accept="audio/webm,.webm"
                 className="sr-only"
                 disabled={uploading}
                 onChange={(e) => {
@@ -1010,10 +1217,31 @@ export function ScreeningRoomPage() {
                     <Checkbox
                       checked={session.consentConfirmed}
                       onCheckedChange={(v) =>
-                        updateSession.mutate({
-                          id: session.id,
-                          payload: { consentConfirmed: v === true },
-                        })
+                        updateSession.mutate(
+                          {
+                            id: session.id,
+                            payload: { consentConfirmed: v === true },
+                          },
+                          {
+                            // Без onError галка при 403/409 просто не
+                            // переключалась — выглядело как «не нажимается».
+                            onError: (e) => {
+                              void apiErrorDetail(e).then(({ status, code, message }) => {
+                                if (status === 403) {
+                                  toast.error(
+                                    'Нет прав менять эту сессию — скрининг ведёт другой рекрутер',
+                                  );
+                                } else if (status === 409 || code === 'invalid_status') {
+                                  toast.error(
+                                    message ?? 'Снять согласие можно только до начала встречи',
+                                  );
+                                } else {
+                                  toast.error('Не удалось сохранить согласие — попробуйте ещё раз');
+                                }
+                              });
+                            },
+                          },
+                        )
                       }
                       className="mt-0.5"
                     />
@@ -1038,7 +1266,7 @@ export function ScreeningRoomPage() {
                       variant={tabReady ? 'outline' : 'default'}
                       size="sm"
                       className="w-full"
-                      onClick={requestTab}
+                      onClick={() => void requestTab()}
                       disabled={!micReady || tabReady || !!supportIssue}
                     >
                       <MonitorUp className="mr-1.5 h-4 w-4" />
@@ -1105,7 +1333,7 @@ export function ScreeningRoomPage() {
                         variant={tabReady ? 'outline' : 'default'}
                         size="sm"
                         className="w-full"
-                        onClick={requestTab}
+                        onClick={() => void requestTab()}
                         disabled={!micReady || tabReady || !!supportIssue}
                       >
                         <MonitorUp className="mr-1.5 h-4 w-4" />
@@ -1119,6 +1347,12 @@ export function ScreeningRoomPage() {
                       >
                         3. Возобновить запись
                       </Button>
+                      {/* Та же памятка, что и в draft-панели: после F5 рекрутер
+                          проходит те же шаги и так же ловит эхо без наушников. */}
+                      <p className="text-[11px] leading-snug text-red-700/80">
+                        Работайте в наушниках. Телемост — во вкладке этого же браузера. В
+                        диалоге выбора включите «Поделиться звуком вкладки».
+                      </p>
                     </div>
                   )}
 
@@ -1134,7 +1368,7 @@ export function ScreeningRoomPage() {
                         Со вкладки Телемоста не идёт звук — проверьте галку «Поделиться звуком
                         вкладки»
                       </div>
-                      <Button variant="outline" size="sm" className="w-full" onClick={requestTab}>
+                      <Button variant="outline" size="sm" className="w-full" onClick={() => void requestTab(true)}>
                         <MonitorUp className="mr-1.5 h-3.5 w-3.5" />
                         Выбрать вкладку заново
                       </Button>
@@ -1142,7 +1376,7 @@ export function ScreeningRoomPage() {
                   )}
                   {/* при tabSilent такая же кнопка уже есть в красной плашке выше */}
                   {captureActive && !tabReady && !tabSilent && (
-                    <Button variant="outline" size="sm" className="w-full" onClick={requestTab}>
+                    <Button variant="outline" size="sm" className="w-full" onClick={() => void requestTab(true)}>
                       <MonitorUp className="mr-1.5 h-3.5 w-3.5" />
                       Выбрать вкладку заново
                     </Button>
@@ -1155,8 +1389,16 @@ export function ScreeningRoomPage() {
                     disabled={uploading || finishSession.isPending}
                   >
                     <Square className="mr-1.5 h-3.5 w-3.5" />
-                    {uploading ? 'Сохраняем запись…' : 'Завершить встречу'}
+                    {uploading
+                      ? `Сохраняем запись${uploadingBytes ? ` · ${fmtBytes(uploadingBytes)}` : ''}…`
+                      : 'Завершить встречу'}
                   </Button>
+                  {uploading && (
+                    <p className="text-[11px] leading-snug text-muted-foreground">
+                      Выгружаем запись в хранилище — не закрывайте вкладку. Большие записи
+                      могут занять минуту.
+                    </p>
+                  )}
                 </>
               )}
 
@@ -1177,21 +1419,51 @@ export function ScreeningRoomPage() {
                       </span>
                     </div>
                   )}
-                  {canViewReport ? (
+                  {canViewTranscript ? (
                     session.audioFileId ? (
                       <div className="space-y-2">
-                        {audioUrl ? (
-                          <ScreeningAudioPlayer
-                            src={audioUrl}
-                            durationSec={session.durationSec}
-                            className="w-full"
-                          />
-                        ) : audioLoading ? (
+                        {audioLoading ? (
                           <Skeleton className="h-11 w-full rounded-md" />
+                        ) : audioUrl && !audioFailed ? (
+                          <>
+                            <ScreeningAudioPlayer
+                              src={audioUrl}
+                              durationSec={session.durationSec}
+                              className="w-full"
+                              onError={() => setAudioFailed(true)}
+                            />
+                            {/* Раньше запись можно было только слушать. */}
+                            <Button size="sm" variant="outline" asChild>
+                              <a
+                                href={audioUrl}
+                                download={`screening-${id.slice(0, 8)}.webm`}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                <Download className="mr-1.5 h-3.5 w-3.5" />
+                                Скачать запись
+                              </a>
+                            </Button>
+                          </>
                         ) : (
-                          <div>Не удалось загрузить запись</div>
+                          <div className="space-y-1.5">
+                            <div>
+                              Не удалось открыть запись — ссылка на файл могла устареть.
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setAudioReloadTick((t) => t + 1)}
+                            >
+                              <RotateCw className="mr-1.5 h-3.5 w-3.5" />
+                              Повторить
+                            </Button>
+                          </div>
                         )}
-                        {canControl && (storedSegments?.length ?? 0) === 0 && (
+                        {/* Пока сегменты не загрузились, `undefined` — это «ещё не
+                            знаем», а не «их нет»: раньше кнопка успевала мигнуть
+                            до прихода ответа. */}
+                        {canControl && storedSegments !== undefined && storedSegments.length === 0 && (
                             <Button
                               size="sm"
                               variant="outline"
@@ -1201,7 +1473,7 @@ export function ScreeningRoomPage() {
                               <RefreshCw
                                 className={cn(
                                   'mr-1.5 h-3.5 w-3.5',
-                                  uploading && 'animate-spin',
+                                  (uploading || attachAudio.isPending) && 'animate-spin',
                                 )}
                               />
                               {session.status === 'processing'
@@ -1219,7 +1491,7 @@ export function ScreeningRoomPage() {
                               Прикрепить файл с диска
                               <input
                                 type="file"
-                                accept="audio/webm,audio/*,.webm,.ogg,.mp3,.wav,.m4a"
+                                accept="audio/webm,.webm"
                                 className="sr-only"
                                 disabled={uploading}
                                 onChange={(e) => {
@@ -1376,8 +1648,9 @@ export function ScreeningRoomPage() {
         )}
 
         {/* Транскрипт: живой (WS, право screening:run) — во время встречи,
-            из БД (право screening:view_report) — после */}
-        {((isLive && canControl) || (isDone && canViewReport)) && (
+            из БД — после (владельцу сессии бэк отдаёт `GET /segments` и без
+            права screening:view_report) */}
+        {((isLive && canControl) || (isDone && canViewTranscript)) && (
           <Card>
             <CardContent className="space-y-2.5 p-4">
               <div className="flex items-center justify-between">

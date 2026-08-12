@@ -19,6 +19,7 @@ class ScreeningMetrics:
     stt_latency_ms_total: float = 0.0
     stt_latency_ms_max: float = 0.0
     stt_errors: int = 0
+    stt_frames_dropped: int = 0
     ai_agent_ok: int = 0
     ai_agent_unavailable: int = 0
     ai_agent_bad_request: int = 0
@@ -49,6 +50,7 @@ class ScreeningMetrics:
             "stt_p95_latency_ms": round(p95, 1),
             "stt_max_latency_ms": round(self.stt_latency_ms_max, 1),
             "stt_errors": self.stt_errors,
+            "stt_frames_dropped": self.stt_frames_dropped,
             "ai_agent_ok": self.ai_agent_ok,
             "ai_agent_unavailable": self.ai_agent_unavailable,
             "ai_agent_bad_request": self.ai_agent_bad_request,
@@ -79,6 +81,9 @@ class ScreeningMetrics:
             "# HELP screening_stt_errors_total STT bridge / decode errors",
             "# TYPE screening_stt_errors_total counter",
             f"screening_stt_errors_total {int(snap['stt_errors'])}",
+            "# HELP screening_stt_frames_dropped_total PCM frames dropped by backpressure",
+            "# TYPE screening_stt_frames_dropped_total counter",
+            f"screening_stt_frames_dropped_total {int(snap['stt_frames_dropped'])}",
             "# HELP screening_ai_agent_total Realtime agent tick outcomes",
             "# TYPE screening_ai_agent_total counter",
             f'screening_ai_agent_total{{result="ok"}} {int(snap["ai_agent_ok"])}',
@@ -112,6 +117,7 @@ class ScreeningMetrics:
         self.stt_latency_ms_total = 0.0
         self.stt_latency_ms_max = 0.0
         self.stt_errors = 0
+        self.stt_frames_dropped = 0
         self.ai_agent_ok = 0
         self.ai_agent_unavailable = 0
         self.ai_agent_bad_request = 0
@@ -129,6 +135,7 @@ class ScreeningMetrics:
 
 SCREENING_METRICS = ScreeningMetrics()
 _LATENCY_WINDOW_MAX = 500
+_FRAME_DROP_LOG_EVERY = 100
 
 
 def record_stt_final(latency_ms: float | None) -> None:
@@ -156,6 +163,27 @@ def record_stt_error(reason: str = "stt_error") -> None:
         "screening.stt_error reason=%s",
         reason,
         extra={"screening_event": "stt_error", "reason": reason},
+    )
+
+
+def record_stt_frames_dropped(count: int = 1) -> None:
+    """Кадры PCM, выброшенные из очереди к STT (backpressure).
+
+    Дропы идут по одному кадру на переполнение, поэтому логируем первый и
+    дальше раз в _FRAME_DROP_LOG_EVERY — иначе при перегрузке STT лог
+    забивается со скоростью аудиопотока.
+    """
+    if count <= 0:
+        return
+    before = SCREENING_METRICS.stt_frames_dropped
+    SCREENING_METRICS.stt_frames_dropped = before + count
+    after = SCREENING_METRICS.stt_frames_dropped
+    if before and before // _FRAME_DROP_LOG_EVERY == after // _FRAME_DROP_LOG_EVERY:
+        return
+    logger.warning(
+        "screening.stt_frames_dropped total=%d",
+        after,
+        extra={"screening_event": "stt_frames_dropped", "total": after},
     )
 
 
@@ -280,4 +308,5 @@ __all__ = [
     "record_retention_purged",
     "record_stt_error",
     "record_stt_final",
+    "record_stt_frames_dropped",
 ]

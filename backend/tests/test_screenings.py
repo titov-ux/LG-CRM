@@ -95,6 +95,90 @@ def test_finish_sets_duration(client: TestClient, recruiter_user, candidate) -> 
     assert r.json()["detail"]["code"] == "invalid_status"
 
 
+def test_finish_twice_is_idempotent(
+    client: TestClient, recruiter_user, candidate
+) -> None:
+    """Повторный finish не пересчитывает длительность и не ставит анализ снова.
+
+    Дребезг кнопки/ретрай браузера раньше проходил read-modify-write без
+    блокировки: оба запроса видели live и оба запускали пост-анализ.
+    """
+    h = auth_headers(client, recruiter_user.email)
+    s = _make_screening(client, h, str(candidate.id))
+    client.patch(f"/api/v1/screenings/{s['id']}", headers=h, json={"consentConfirmed": True})
+    client.post(f"/api/v1/screenings/{s['id']}/start", headers=h)
+
+    r = client.post(
+        f"/api/v1/screenings/{s['id']}/finish", headers=h, json={"durationSec": 600}
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["durationSec"] == 600
+
+    r2 = client.post(
+        f"/api/v1/screenings/{s['id']}/finish", headers=h, json={"durationSec": 999}
+    )
+    assert r2.status_code == 200, r2.text
+    body = r2.json()
+    assert body["status"] in ("processing", "done")
+    assert body["durationSec"] == 600
+    assert body["endedAt"] == r.json()["endedAt"]
+
+
+def test_finish_rejects_negative_duration(
+    client: TestClient, recruiter_user, candidate
+) -> None:
+    """Клиентский таймер может прислать отрицательную длительность — 422."""
+    h = auth_headers(client, recruiter_user.email)
+    s = _make_screening(client, h, str(candidate.id))
+    client.patch(f"/api/v1/screenings/{s['id']}", headers=h, json={"consentConfirmed": True})
+    client.post(f"/api/v1/screenings/{s['id']}/start", headers=h)
+
+    r = client.post(
+        f"/api/v1/screenings/{s['id']}/finish", headers=h, json={"durationSec": -5}
+    )
+    assert r.status_code == 422
+
+
+def test_questions_positions_normalized(
+    client: TestClient, recruiter_user, candidate
+) -> None:
+    """Вставка в занятую позицию не должна плодить дубли position."""
+    h = auth_headers(client, recruiter_user.email)
+    s = _make_screening(client, h, str(candidate.id))
+
+    r = client.post(
+        f"/api/v1/screenings/{s['id']}/questions",
+        headers=h,
+        json={"text": "Вопрос в начало", "position": 0},
+    )
+    assert r.status_code == 200, r.text
+    questions = r.json()["questions"]
+    assert [q["position"] for q in questions] == [0, 1, 2]
+    assert questions[0]["text"] == "Вопрос в начало"
+
+    # Перенос вниз: 0 → 2 из трёх вопросов (раньше промахивался на единицу).
+    moved_id = questions[0]["id"]
+    r = client.patch(
+        f"/api/v1/screenings/{s['id']}/questions/{moved_id}",
+        headers=h,
+        json={"position": 2},
+    )
+    assert r.status_code == 200, r.text
+    reordered = r.json()["questions"]
+    assert [q["position"] for q in reordered] == [0, 1, 2]
+    assert [q["id"] for q in reordered] == [
+        questions[1]["id"],
+        questions[2]["id"],
+        moved_id,
+    ]
+
+    r = client.delete(
+        f"/api/v1/screenings/{s['id']}/questions/{questions[1]['id']}", headers=h
+    )
+    assert r.status_code == 200
+    assert [q["position"] for q in r.json()["questions"]] == [0, 1]
+
+
 def test_questions_crud(client: TestClient, recruiter_user, candidate) -> None:
     h = auth_headers(client, recruiter_user.email)
     s = _make_screening(client, h, str(candidate.id), questions=[])

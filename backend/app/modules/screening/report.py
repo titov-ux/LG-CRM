@@ -26,8 +26,6 @@ PROMPT_VERSION = "screening_report_v3"
 
 # Ниже порога (транскрипт + краткие ответы чек-листа) LLM не вызываем.
 MIN_EVIDENCE_CHARS = 40
-# Обратная совместимость имени для вызовов/тестов.
-MIN_TRANSCRIPT_CHARS = MIN_EVIDENCE_CHARS
 
 # Рубрики скоринга (1–5). Открытый вопрос плана закрываем фиксированным набором
 # для скрининга IT; при необходимости расширим без миграции (JSONB).
@@ -137,6 +135,11 @@ _MAX_FLAG = 200
 _MAX_FLAGS = 6
 _MAX_SUMMARY = 4000
 _MAX_RECOMMENDATION = 1500
+# Потолки чек-листа в промпте (см. _format_questions).
+_MAX_QUESTIONS = 60
+_MAX_QUESTION_TEXT = 600
+_MAX_QUESTION_GOAL = 200
+_MAX_QUESTION_ANSWER = 800
 
 
 def _clean_str(value: Any, *, max_len: int) -> str | None:
@@ -200,25 +203,6 @@ def coerce_report(raw: dict[str, Any]) -> dict[str, Any]:
         "red_flags": red_flags,
         "recommendation": recommendation,
     }
-
-
-def evidence_chars(
-    *,
-    questions: list[dict[str, Any]] | None = None,
-    segments: list[dict[str, Any]] | None = None,
-    transcript_chars: int | None = None,
-    answer_summary_chars: int | None = None,
-) -> int:
-    """Объём улик для отчёта: транскрипт + краткие ответы чек-листа."""
-    t = transcript_chars
-    if t is None:
-        t = sum(len((s.get("text") or "").strip()) for s in (segments or []))
-    a = answer_summary_chars
-    if a is None:
-        a = sum(
-            len((q.get("answer_summary") or "").strip()) for q in (questions or [])
-        )
-    return int(t) + int(a)
 
 
 def fallback_report(
@@ -286,22 +270,35 @@ def _format_transcript(
     return body
 
 
-def _format_questions(questions: list[dict[str, Any]]) -> str:
+def _cut(value: str, limit: int) -> str:
+    return value if len(value) <= limit else value[: limit - 1] + "…"
+
+
+def _format_questions(questions: list[dict[str, Any]], *, max_chars: int) -> str:
     if not questions:
         return "(чек-лист пуст)"
     lines: list[str] = []
-    for q in questions:
+    # Чек-лист идёт в промпт целиком (под транскрипт режется только остаток
+    # бюджета), поэтому ограничиваем и его: агент за встречу может нагенерить
+    # десятки follow-up, а рекрутер — вставить простыню в текст вопроса.
+    for q in questions[:_MAX_QUESTIONS]:
         status = q.get("status") or "pending"
-        text = (q.get("text") or "").strip()
-        goal = (q.get("goal") or "").strip()
-        summary = (q.get("answer_summary") or "").strip()
+        text = _cut((q.get("text") or "").strip(), _MAX_QUESTION_TEXT)
+        goal = _cut((q.get("goal") or "").strip(), _MAX_QUESTION_GOAL)
+        summary = _cut((q.get("answer_summary") or "").strip(), _MAX_QUESTION_ANSWER)
         line = f"- [{status}] {text}"
         if goal:
             line += f" (цель: {goal})"
         if summary:
             line += f" → ответ: {summary}"
         lines.append(line)
-    return "\n".join(lines)
+    if len(questions) > _MAX_QUESTIONS:
+        lines.append(f"…ещё {len(questions) - _MAX_QUESTIONS} вопрос(ов) опущено")
+    body = "\n".join(lines)
+    # Жёсткий потолок: поштучные лимиты сверху не гарантируют суммы.
+    if len(body) > max_chars:
+        body = body[: max_chars - 20] + "\n…[обрезано]"
+    return body
 
 
 async def generate_screening_report(
@@ -316,8 +313,12 @@ async def generate_screening_report(
     del candidate_payload, vacancy_payload  # не используем намеренно
     settings = get_settings()
     max_chars = settings.yandex_ai_max_input_chars
-    checklist = "=== ЧЕК-ЛИСТ ВОПРОСОВ И ОТВЕТОВ ===\n" + _format_questions(questions)
-    # Чек-лист приоритетнее: режем только транскрипт под остаток бюджета.
+    # Чек-лист приоритетнее транскрипта, но и он не имеет права съесть весь
+    # бюджет: без потолка десятки follow-up выносили промпт за контекст модели.
+    checklist = "=== ЧЕК-ЛИСТ ВОПРОСОВ И ОТВЕТОВ ===\n" + _format_questions(
+        questions, max_chars=max(1000, int(max_chars * 0.6))
+    )
+    # Дальше режем транскрипт под остаток бюджета.
     transcript_budget = max(500, max_chars - len(checklist) - 32)
     user_msg = (
         f"{checklist}\n\n=== ТРАНСКРИПТ ===\n"
@@ -341,14 +342,12 @@ async def generate_screening_report(
 
 __all__ = [
     "MIN_EVIDENCE_CHARS",
-    "MIN_TRANSCRIPT_CHARS",
     "PROMPT_VERSION",
     "REPORT_SCHEMA",
     "SCORE_KEYS",
     "AiBadRequestError",
     "AiUnavailableError",
     "coerce_report",
-    "evidence_chars",
     "fallback_report",
     "generate_screening_report",
 ]

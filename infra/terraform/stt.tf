@@ -6,6 +6,13 @@
 #
 # После apply: STT_URL в .env.prod основной VM → ws://<stt_private_ip>:8765
 # (или публичный IP, если ходите с другой сети; лучше — private + SG).
+#
+# Питание VM по расписанию рабочих часов (GPU дорогой, скрининги идут днём) —
+# infra/scripts/stt-vm-schedule.sh: он делает `yc compute instance start|stop`
+# по STT_VM_NAME (это `local.stt_vm_name` ниже, т.е. var.stt_vm_name либо
+# "<vm_name>-stt") или по STT_VM_ID. Процедура и cron — docs/runbook.md §8.4.
+# Внимание: `tofu apply`, сделанный пока VM выключена, стоит сначала смотреть
+# в плане — питание меняется мимо state, и план может предложить лишнее.
 
 variable "create_stt_vm" {
   type        = bool

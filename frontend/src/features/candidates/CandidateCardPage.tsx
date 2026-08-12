@@ -284,12 +284,14 @@ export function CandidateCardPage({ source: sourceProp }: CandidateCardPageProps
   const [screeningOpen, setScreeningOpen] = useState(false);
   const [activityExpanded, setActivityExpanded] = useState(fromDatabase);
 
+  // Блок скрининга виден не всем ролям — без `enabled` карточка любого
+  // кандидата дёргала бы /screenings и получала 403 у ролей без прав.
+  const showScreenings = canViewScreeningReport || canRunScreening;
   const { data: screeningsData } = useScreenings(
     { candidateId: id || undefined, pageSize: 10 },
-    { pollProcessing: true },
+    { pollProcessing: true, enabled: showScreenings },
   );
   const screeningSessions = screeningsData?.items ?? [];
-  const showScreenings = canViewScreeningReport || canRunScreening;
 
   // Закрытие карточки возвращает на тот же раздел, откуда её открыли.
   const close = () => navigate({ to: fromDatabase ? '/database' : '/candidates' });

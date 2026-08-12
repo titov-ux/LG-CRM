@@ -8,14 +8,20 @@ from unittest.mock import MagicMock
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.modules.candidates.models import Candidate
 from app.modules.files.models import File, FileEntityType, ScanStatus
 from app.modules.permissions import service as permissions_service
 from app.modules.screening import metrics as screening_metrics
 from app.modules.screening import service as screening_service
-from app.modules.screening.models import ScreeningSession, ScreeningStatus
+from app.modules.screening.models import (
+    ScreeningSession,
+    ScreeningStatus,
+    ScreeningVerdict,
+)
 from app.modules.users.models import Role
 from tests.conftest import _make_user, auth_headers
 
@@ -195,6 +201,57 @@ async def test_purge_expired_audio(db: AsyncSession, recruiter_user, candidate) 
 
 
 @pytest.mark.asyncio
+async def test_purge_sweeps_orphan_screening_audio(
+    db: AsyncSession, recruiter_user
+) -> None:
+    """Файл удалённой сессии не должен пережить retention (152-ФЗ).
+
+    Сессии уже нет (или S3 упал при её удалении) — по сессиям такой объект не
+    найти, поэтому его подметает вторая фаза purge_expired_audio.
+    """
+    old = datetime.now(UTC) - timedelta(days=120)
+    ghost_session_id = uuid.uuid4()
+    orphan_id = uuid.uuid4()
+    fresh_id = uuid.uuid4()
+    db.add_all(
+        [
+            File(
+                id=orphan_id,
+                file_key=f"screening/{ghost_session_id}/orphan.webm",
+                original_name="orphan.webm",
+                mime="audio/webm",
+                size=100,
+                entity_type=FileEntityType.screening,
+                entity_id=ghost_session_id,
+                owner_user_id=recruiter_user.id,
+                scan_status=ScanStatus.clean,
+                created_at=old,
+            ),
+            # Свежая сирота ещё в пределах retention — не трогаем.
+            File(
+                id=fresh_id,
+                file_key=f"screening/{uuid.uuid4()}/fresh.webm",
+                original_name="fresh.webm",
+                mime="audio/webm",
+                size=100,
+                entity_type=FileEntityType.screening,
+                entity_id=uuid.uuid4(),
+                owner_user_id=recruiter_user.id,
+                scan_status=ScanStatus.clean,
+            ),
+        ]
+    )
+    await db.commit()
+
+    s3 = MagicMock()
+    purged = await screening_service.purge_expired_audio(db, s3, retention_days=90)
+    assert purged == 1
+    s3.delete.assert_called_once()
+    assert await db.get(File, orphan_id) is None
+    assert await db.get(File, fresh_id) is not None
+
+
+@pytest.mark.asyncio
 async def test_purge_skips_when_retention_zero(db: AsyncSession) -> None:
     s3 = MagicMock()
     purged = await screening_service.purge_expired_audio(db, s3, retention_days=0)
@@ -294,6 +351,192 @@ async def test_close_stale_sessions_finishes_orphans(
     assert stale.status != ScreeningStatus.live
     assert stale.ended_at is not None
     assert fresh.status == ScreeningStatus.live
+
+
+@pytest.mark.asyncio
+async def test_orphan_grace_zero_keeps_live_session(
+    db: AsyncSession, recruiter_user, candidate, monkeypatch
+) -> None:
+    """SCREENING_ORPHAN_GRACE_MIN=0 = «не закрывать» (как написано в конфиге).
+
+    Раньше `max(1, ...)` превращал ноль в «закрыть через минуту простоя».
+    """
+    settings = get_settings()
+    monkeypatch.setattr(settings, "screening_orphan_grace_min", 0)
+    monkeypatch.setattr(settings, "screening_max_duration_min", 0)
+    monkeypatch.setattr(settings, "screening_processing_timeout_min", 0)
+
+    orphan = ScreeningSession(
+        candidate_id=candidate.id,
+        recruiter_id=recruiter_user.id,
+        status=ScreeningStatus.live,
+        started_at=datetime.now(UTC) - timedelta(hours=3),
+        last_seen_at=datetime.now(UTC) - timedelta(hours=2),
+    )
+    db.add(orphan)
+    await db.commit()
+
+    assert await screening_service.close_stale_sessions() == 0
+    await db.refresh(orphan)
+    assert orphan.status == ScreeningStatus.live
+
+
+@pytest.mark.asyncio
+async def test_sweeper_requeues_stuck_processing(
+    db: AsyncSession, recruiter_user, candidate, monkeypatch
+) -> None:
+    """Сессия зависла в processing — уборщик один раз переставляет анализ."""
+    requeued: list[uuid.UUID] = []
+
+    async def _capture(_db, session) -> None:
+        requeued.append(session.id)
+
+    monkeypatch.setattr(screening_service, "_enqueue_post_meeting", _capture)
+    settings = get_settings()
+    monkeypatch.setattr(settings, "screening_orphan_grace_min", 0)
+    monkeypatch.setattr(settings, "screening_max_duration_min", 0)
+    monkeypatch.setattr(settings, "screening_processing_timeout_min", 30)
+
+    old = datetime.now(UTC) - timedelta(minutes=45)
+    stuck = ScreeningSession(
+        candidate_id=candidate.id,
+        recruiter_id=recruiter_user.id,
+        status=ScreeningStatus.processing,
+        started_at=old,
+        ended_at=old,
+        updated_at=old,
+    )
+    db.add(stuck)
+    await db.commit()
+
+    screening_service._REQUEUED_PROCESSING.clear()
+    try:
+        await screening_service.close_stale_sessions()
+        assert requeued.count(stuck.id) == 1
+        # Второй проход беата (раз в минуту) задачу не дублирует.
+        await screening_service.close_stale_sessions()
+        assert requeued.count(stuck.id) == 1
+    finally:
+        screening_service._REQUEUED_PROCESSING.clear()
+
+    await db.refresh(stuck)
+    assert stuck.status == ScreeningStatus.processing
+
+
+async def _fail_if_called(_db, session) -> None:
+    raise AssertionError(
+        f"анализ не должен переставляться для {session.id}: он уже безнадёжен"
+    )
+
+
+@pytest.mark.asyncio
+async def test_sweeper_fails_long_stuck_processing(
+    db: AsyncSession, recruiter_user, candidate, monkeypatch
+) -> None:
+    """Втрое дольше таймаута — сдаёмся: error + уведомление рекрутеру."""
+    from app.modules.notifications.models import Notification
+
+    monkeypatch.setattr(
+        screening_service, "_enqueue_post_meeting", _fail_if_called
+    )
+    settings = get_settings()
+    monkeypatch.setattr(settings, "screening_orphan_grace_min", 0)
+    monkeypatch.setattr(settings, "screening_max_duration_min", 0)
+    monkeypatch.setattr(settings, "screening_processing_timeout_min", 30)
+
+    old = datetime.now(UTC) - timedelta(minutes=200)
+    stuck = ScreeningSession(
+        candidate_id=candidate.id,
+        recruiter_id=recruiter_user.id,
+        status=ScreeningStatus.processing,
+        started_at=old,
+        ended_at=old,
+        updated_at=old,
+    )
+    db.add(stuck)
+    await db.commit()
+
+    screening_service._REQUEUED_PROCESSING.clear()
+    await screening_service.close_stale_sessions()
+
+    await db.refresh(stuck)
+    assert stuck.status == ScreeningStatus.error
+
+    notes = list(
+        (
+            await db.execute(
+                select(Notification).where(Notification.user_id == recruiter_user.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert any(
+        (n.payload or {}).get("screeningId") == str(stuck.id) for n in notes
+    ), [n.text_ for n in notes]
+
+
+@pytest.mark.asyncio
+async def test_answer_summary_masked_without_view_report(
+    client: TestClient,
+    admin_user,
+    account_manager_user,
+    recruiter_user,
+    candidate,
+    db: AsyncSession,
+) -> None:
+    """Без `view_report` посторонний не видит ни отчёт, ни краткие ответы.
+
+    `answer_summary` — тот же материал встречи, что транскрипт: раньше он
+    утекал в списке и в карточке роли, у которой права на отчёт нет.
+    """
+    from app.modules.screening.models import ScreeningQuestion, ScreeningReport
+
+    h = auth_headers(client, recruiter_user.email)
+    s = _make_screening(client, h, str(candidate.id))
+    session_id = uuid.UUID(s["id"])
+
+    question = await db.get(ScreeningQuestion, uuid.UUID(s["questions"][0]["id"]))
+    question.answer_summary = "5 лет на Python, вёл релизы"
+    db.add(
+        ScreeningReport(
+            session_id=session_id,
+            summary="Отчёт готов",
+            verdict=ScreeningVerdict.fit,
+            model="test",
+        )
+    )
+    await db.commit()
+
+    admin_h = auth_headers(client, admin_user.email)
+    r = client.put(
+        "/api/v1/permissions-matrix/screening.view_report",
+        headers=admin_h,
+        json={"matrix": {"recruiter": False, "account_manager": False}},
+    )
+    assert r.status_code == 200, r.text
+
+    # Аккаунт-менеджер видит все сессии, но без права — без содержимого встречи.
+    h_am = auth_headers(client, account_manager_user.email)
+    r = client.get(f"/api/v1/screenings/{s['id']}", headers=h_am)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["report"] is None
+    assert body["audioFileId"] is None
+    assert body["questions"][0]["text"]  # сам вопрос остаётся
+    assert body["questions"][0]["answerSummary"] is None
+
+    r = client.get("/api/v1/screenings", headers=h_am)
+    item = next(i for i in r.json()["items"] if i["id"] == s["id"])
+    assert item["report"] is None
+    assert item["questions"][0]["answerSummary"] is None
+
+    # Ведущий рекрутер ведёт встречу и без права: свои пометки видит,
+    # отчёт — нет (как и раньше).
+    r = client.get(f"/api/v1/screenings/{s['id']}", headers=h)
+    body = r.json()
+    assert body["report"] is None
+    assert body["questions"][0]["answerSummary"] == "5 лет на Python, вёл релизы"
 
 
 @pytest.mark.asyncio

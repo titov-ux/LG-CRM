@@ -139,6 +139,17 @@ async def _require_run(db: AsyncSession, user: User) -> None:
     )
 
 
+async def _can_run_session(db: AsyncSession, user: User, s: ScreeningSession) -> bool:
+    """Может ли пользователь вести эту сессию (а не просто видеть её).
+
+    Тот же критерий, что у `_ensure_can_edit` + `_require_run`, но без
+    исключения: нужен для «побочных» действий на чтении (авто-офлайн-STT).
+    """
+    if not (user.role == Role.admin or s.recruiter_id == user.id):
+        return False
+    return await permissions_service.user_has_action(db, user, ACTION_RUN)
+
+
 async def _require_view_report(db: AsyncSession, user: User) -> None:
     await permissions_service.require_action(
         db,
@@ -214,12 +225,42 @@ def _to_dto(
         audio_file_id=s.audio_file_id,
         created_at=s.created_at,
         updated_at=s.updated_at,
-        questions=[_question_dto(q) for q in s.questions],
+        # Сортируем явно: relationship отдаёт коллекцию в том порядке, в
+        # котором её загрузили, и после смены position в этой же сессии
+        # (expire_on_commit=False) повторный _load её не переупорядочит —
+        # клиент получал вопросы в старом порядке с новыми номерами.
+        # Вторичный ключ по id — детерминированность при дублях position,
+        # которые может оставить агент.
+        questions=[
+            _question_dto(q)
+            for q in sorted(s.questions, key=lambda q: (q.position, str(q.id)))
+        ],
         candidate_name=cand_names.get(s.candidate_id),
         vacancy_title=vac_titles.get(s.vacancy_id) if s.vacancy_id else None,
         recruiter_name=rec_names.get(s.recruiter_id) if s.recruiter_id else None,
         report=ScreeningReportDTO.model_validate(report) if report else None,
     )
+
+
+def _mask_without_view_report(
+    dto: ScreeningSessionResponse,
+    user: User,
+    recruiter_id: uuid.UUID | None,
+) -> ScreeningSessionResponse:
+    """Убрать из DTO содержимое встречи для роли без `view_report`.
+
+    `answer_summary` — тот же материал встречи, что транскрипт и отчёт (его
+    пишет агент по словам кандидата), поэтому режем и его. Исключение —
+    ведущий рекрутер и админ: они ведут встречу и читают её без права
+    `view_report` (тот же компромисс, что в `list_segments`), иначе во время
+    интервью у роли без права пропадали бы собственные пометки.
+    """
+    update: dict = {"report": None, "audio_file_id": None}
+    if not (user.role == Role.admin or recruiter_id == user.id):
+        update["questions"] = [
+            q.model_copy(update={"answer_summary": None}) for q in dto.questions
+        ]
+    return dto.model_copy(update=update)
 
 
 async def to_dto(
@@ -244,7 +285,7 @@ async def to_dto(
     if user is not None and not await permissions_service.user_has_action(
         db, user, ACTION_VIEW_REPORT
     ):
-        dto = dto.model_copy(update={"report": None, "audio_file_id": None})
+        dto = _mask_without_view_report(dto, user, s.recruiter_id)
     return dto
 
 
@@ -322,7 +363,7 @@ async def list_sessions(
             report=reports.get(s.id),
         )
         if not can_view:
-            dto = dto.model_copy(update={"report": None, "audio_file_id": None})
+            dto = _mask_without_view_report(dto, user, s.recruiter_id)
         items.append(dto)
     return ScreeningListResponse(
         items=items,
@@ -404,7 +445,10 @@ async def get(
     await _ensure_can_see(db, user, session)
     # Запись есть, транскрипта нет (live-STT не сработал) — поднять офлайн-STT
     # сами, без кнопки. Не ждём: UI поллит status=processing.
-    if await maybe_start_offline_transcription(db, session):
+    # Только для того, кто реально может вести сессию: иначе обычный GET у
+    # смежного рекрутера/наблюдателя менял статус и жёг деньги на STT+LLM.
+    may_run = await _can_run_session(db, user, session)
+    if may_run and await maybe_start_offline_transcription(db, session):
         await db.commit()
         db.expire(session)
         session = await _load(db, session_id)
@@ -481,6 +525,39 @@ async def finish(
             "Завершить можно только идущую сессию",
         )
     if session.status == ScreeningStatus.live:
+        # Read-modify-write без блокировки: два параллельных (или просто
+        # повторных) POST /finish оба видели live и оба ставили пост-анализ.
+        # Берём строку под FOR UPDATE и перечитываем статус уже под ней —
+        # переводит сессию ровно один запрос.
+        locked_status = (
+            await db.execute(
+                select(ScreeningSession.status)
+                .where(ScreeningSession.id == session_id)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if locked_status is None:
+            raise NotFound("Сессия скрининга не найдена")
+        if locked_status != ScreeningStatus.live:
+            # Гонку выиграл соседний запрос. Освобождаем блокировку и отдаём
+            # актуальное состояние — тот же контракт, что у повторного finish
+            # по processing/done (200) и по остальным статусам (409).
+            # Именно commit, а не rollback: транзакция чистая (мы только
+            # читали), а rollback сделал бы expire_all() — включая объект
+            # текущего пользователя, и следующий `user.role` в to_dto упал бы
+            # ленивой подгрузкой в async-контексте (MissingGreenlet → 500).
+            await db.commit()
+            session = await _load(db, session_id)
+            if session.status not in (
+                ScreeningStatus.processing,
+                ScreeningStatus.done,
+            ):
+                raise ApiError(
+                    status.HTTP_409_CONFLICT,
+                    "invalid_status",
+                    "Завершить можно только идущую сессию",
+                )
+            return await to_dto(db, session, user=user)
         session.status = ScreeningStatus.processing
         session.ended_at = datetime.now(UTC)
         if payload.duration_sec is not None:
@@ -697,15 +774,48 @@ async def delete(db: AsyncSession, user: User, session_id: uuid.UUID) -> None:
     session = await _load(db, session_id)
     _ensure_can_edit(user, session)
     audio_file_id = session.audio_file_id
-    await db.delete(session)
-    await db.commit()
     # FK audio_file_id стоит SET NULL, поэтому файл пережил бы сессию и никогда
-    # не попал бы под retention — чистим руками.
+    # не попал бы под retention — чистим руками и ДО удаления сессии: если S3
+    # ответит ошибкой уже после db.delete(session), запись останется в бакете
+    # сиротой, невидимой ни ретеншену, ни этому коду (152-ФЗ). Осиротевшие
+    # всё же подметает вторая фаза `purge_expired_audio`.
     if audio_file_id is not None:
         await _delete_audio_file(db, audio_file_id)
+        session = await _load(db, session_id)
+    await db.delete(session)
+    await db.commit()
 
 
 # --- questions -------------------------------------------------------------
+
+
+def _renumber_questions(session: ScreeningSession) -> None:
+    """Пронумеровать вопросы 0..N-1 по текущему порядку.
+
+    Чек-лист сортируется по `position`, а он приходил и от клиента, и от
+    агента: дубли и дыры давали недетерминированный порядок (после каждого
+    рефетча вопросы прыгали местами). Нормализуем на каждой мутации списка.
+    """
+    for index, q in enumerate(sorted(session.questions, key=lambda x: x.position)):
+        if q.position != index:
+            q.position = index
+
+
+def _place_question(
+    session: ScreeningSession, question: ScreeningQuestion, position: int
+) -> None:
+    """Поставить вопрос на `position`, сдвинув остальных, и перенумеровать.
+
+    Считаем по итоговому порядку списка, а не «сдвинуть всех, у кого
+    position >= target»: последнее промахивалось на единицу при переносе вниз
+    (сосед, который и так был ниже исходной позиции, сдвигался ещё раз).
+    """
+    ordered = [q for q in session.questions if q is not question]
+    ordered.sort(key=lambda q: q.position)
+    index = max(0, min(position, len(ordered)))
+    ordered.insert(index, question)
+    for i, q in enumerate(ordered):
+        q.position = i
 
 
 async def add_question(
@@ -720,19 +830,19 @@ async def add_question(
             "empty_question",
             "Текст вопроса не может быть пустым",
         )
-    position = (
-        payload.position
-        if payload.position is not None
-        else (max((q.position for q in session.questions), default=-1) + 1)
+    question = ScreeningQuestion(
+        position=max((q.position for q in session.questions), default=-1) + 1,
+        text_=payload.text.strip(),
+        goal=payload.goal,
+        source=ScreeningQuestionSource.manual,
     )
-    session.questions.append(
-        ScreeningQuestion(
-            position=position,
-            text_=payload.text.strip(),
-            goal=payload.goal,
-            source=ScreeningQuestionSource.manual,
-        )
-    )
+    session.questions.append(question)
+    if payload.position is not None:
+        # Освобождаем место под вставку: иначе два вопроса с одинаковым
+        # position, и порядок чек-листа становится случайным.
+        _place_question(session, question, payload.position)
+    else:
+        _renumber_questions(session)
     await db.commit()
     session = await _load(db, session_id)
     return await to_dto(db, session, user=user)
@@ -758,7 +868,8 @@ async def update_question(
     if payload.status is not None:
         question.status = payload.status
     if payload.position is not None:
-        question.position = payload.position
+        # Как и при вставке: двигаем соседей, потом нормализуем нумерацию.
+        _place_question(session, question, payload.position)
     await db.commit()
     session = await _load(db, session_id)
     return await to_dto(db, session, user=user)
@@ -774,6 +885,8 @@ async def delete_question(
     if question is None:
         raise NotFound("Вопрос не найден")
     session.questions.remove(question)
+    # После удаления в нумерации остаётся дыра — схлопываем.
+    _renumber_questions(session)
     await db.commit()
     session = await _load(db, session_id)
     return await to_dto(db, session, user=user)
@@ -863,6 +976,8 @@ async def regenerate_questions(
             )
         )
         position += 1
+    # Ручные вопросы могли прийти с дублями position ещё из старых сессий.
+    _renumber_questions(session)
 
     await db.commit()
     session = await _load(db, session_id)
@@ -1192,6 +1307,102 @@ def _segment_payload(seg: ScreeningSegment) -> dict:
     }
 
 
+async def _notify_analysis_failed(
+    *,
+    session_id: uuid.UUID,
+    recruiter_id: uuid.UUID | None,
+    candidate_id: uuid.UUID,
+    vacancy_id: uuid.UUID | None,
+    candidate_name: str,
+) -> None:
+    """Сообщить рекрутеру, что отчёт не собрался, и обновить карточку по WS.
+
+    Общая ветка для всех путей провала пост-анализа (сбой LLM, сбой записи
+    отчёта, уборщик залипших processing) — чтобы тексты и события не разошлись.
+    Уведомление шлём в отдельной сессии: вызывающая может быть в rollback.
+    """
+    if recruiter_id is not None:
+        try:
+            async with SessionLocal() as ndb:
+                await notify_service.notify(
+                    ndb,
+                    recipient_id=recruiter_id,
+                    kind=NotificationKind.system,
+                    text=(
+                        "Не удалось сформировать отчёт AI-скрининга по "
+                        f"«{candidate_name}». Статус сессии: ошибка."
+                    ),
+                    entity_type=NotificationEntityType.candidate,
+                    entity_id=candidate_id,
+                    payload={"screeningId": str(session_id)},
+                )
+                await ndb.commit()
+        except Exception:
+            logger.exception(
+                "screening.analysis: notify on error failed for %s", session_id
+            )
+    publish_screening_report_ready(
+        session_id=session_id,
+        candidate_id=candidate_id,
+        vacancy_id=vacancy_id,
+        status=ScreeningStatus.error.value,
+        actor_id=recruiter_id,
+    )
+
+
+async def _persist_report(
+    db: AsyncSession,
+    session_id: uuid.UUID,
+    raw: dict,
+    *,
+    existing: ScreeningReport | None,
+) -> None:
+    """Записать отчёт, пережив гонку на UNIQUE(session_id).
+
+    Параллельные пути реальны: finish → пост-анализ и одновременно GET →
+    авто-офлайн-STT → тот же анализ по другой задаче. Вставку делаем в
+    savepoint: если конкурент успел первым, ловим IntegrityError (внешняя
+    транзакция цела) и дописываем его строку вместо своей.
+    """
+    fields = {
+        "summary": raw["summary"],
+        "verdict": raw["verdict"],
+        "scores": raw.get("scores"),
+        "red_flags": raw.get("red_flags"),
+        "recommendation": raw.get("recommendation"),
+        "model": raw.get("model"),
+        "prompt_version": raw.get("prompt_version"),
+    }
+    if existing is None:
+        report = ScreeningReport(session_id=session_id, **fields)
+        try:
+            # add ВНУТРИ savepoint: иначе его откат не выкинет объект из
+            # сессии и следующий flush повторит тот же обречённый INSERT.
+            async with db.begin_nested():
+                db.add(report)
+                await db.flush()
+            return
+        except IntegrityError:
+            if report in db.sync_session:
+                db.expunge(report)
+            existing = (
+                await db.execute(
+                    select(ScreeningReport).where(
+                        ScreeningReport.session_id == session_id
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing is None:
+                raise  # не гонка на UNIQUE — пусть разбирается вызывающий
+            logger.info(
+                "screening.analysis: report for %s inserted by a parallel task "
+                "— обновляем существующую строку",
+                session_id,
+            )
+    for key, value in fields.items():
+        setattr(existing, key, value)
+
+
 async def run_post_analysis(
     session_id: uuid.UUID, *, replace_report: bool = False
 ) -> None:
@@ -1276,6 +1487,7 @@ async def run_post_analysis(
         recruiter_id = session.recruiter_id
         candidate_id = session.candidate_id
         vacancy_id = session.vacancy_id
+        vac_title = vac.title if vac is not None else None
         sid = session.id
 
         try:
@@ -1319,96 +1531,86 @@ async def run_post_analysis(
             screening_metrics.record_ai_report_error()
             session.status = ScreeningStatus.error
             await db.commit()
-            if recruiter_id is not None:
-                try:
-                    async with SessionLocal() as ndb:
-                        await notify_service.notify(
-                            ndb,
-                            recipient_id=recruiter_id,
-                            kind=NotificationKind.system,
-                            text=(
-                                "Не удалось сформировать отчёт AI-скрининга по "
-                                f"«{cand_name}». Статус сессии: ошибка."
-                            ),
-                            entity_type=NotificationEntityType.candidate,
-                            entity_id=candidate_id,
-                            payload={"screeningId": str(sid)},
-                        )
-                        await ndb.commit()
-                except Exception:
-                    logger.exception(
-                        "screening.analysis: notify on error failed for %s",
-                        session_id,
-                    )
-            publish_screening_report_ready(
+            await _notify_analysis_failed(
                 session_id=sid,
+                recruiter_id=recruiter_id,
                 candidate_id=candidate_id,
                 vacancy_id=vacancy_id,
-                status=ScreeningStatus.error.value,
-                actor_id=recruiter_id,
+                candidate_name=cand_name,
             )
             return
 
-        if existing is None:
-            db.add(
-                ScreeningReport(
-                    session_id=session.id,
-                    summary=raw["summary"],
-                    verdict=raw["verdict"],
-                    scores=raw.get("scores"),
-                    red_flags=raw.get("red_flags"),
-                    recommendation=raw.get("recommendation"),
-                    model=raw.get("model"),
-                    prompt_version=raw.get("prompt_version"),
-                )
-            )
-        else:
-            existing.summary = raw["summary"]
-            existing.verdict = raw["verdict"]
-            existing.scores = raw.get("scores")
-            existing.red_flags = raw.get("red_flags")
-            existing.recommendation = raw.get("recommendation")
-            existing.model = raw.get("model")
-            existing.prompt_version = raw.get("prompt_version")
-
-        session.status = ScreeningStatus.done
-        screening_metrics.record_ai_report_ok()
         actor_id = recruiter_id
         verdict: ScreeningVerdict = raw["verdict"]
         verdict_label = _VERDICT_LABELS.get(verdict, verdict.value)
-        vac_title = vac.title if vac is not None else None
         activity_text = (
             f"AI-скрининг завершён: вердикт «{verdict_label}»"
             + (f" ({vac_title})" if vac_title else "")
         )
-        # Activity + notify только при первом отчёте: replace после офлайн-STT
-        # обновляет карточку через WS, без второго (десятого) колокольчика.
-        if actor_id is not None and not had_report:
-            await audit_service.record_activity(
-                db,
-                entity_type=ActivityEntityType.candidate,
-                entity_id=candidate_id,
-                actor_id=actor_id,
-                kind=ActivityKind.note,
-                text=activity_text,
+        # Запись отчёта + activity + notify раньше жили вне try/except: любая
+        # ошибка здесь (гонка на UNIQUE, недоступный БД-коннект, падение
+        # notify) улетала наружу, глоталась в tasks.py и оставляла сессию в
+        # processing навсегда. Теперь провал этой части = честный error.
+        try:
+            await _persist_report(db, sid, raw, existing=existing)
+            session.status = ScreeningStatus.done
+            # Activity + notify только при первом отчёте: replace после
+            # офлайн-STT обновляет карточку через WS, без второго (десятого)
+            # колокольчика.
+            if actor_id is not None and not had_report:
+                await audit_service.record_activity(
+                    db,
+                    entity_type=ActivityEntityType.candidate,
+                    entity_id=candidate_id,
+                    actor_id=actor_id,
+                    kind=ActivityKind.note,
+                    text=activity_text,
+                )
+                await notify_service.notify(
+                    db,
+                    recipient_id=actor_id,
+                    kind=NotificationKind.system,
+                    text=(
+                        f"Отчёт AI-скрининга по «{cand_name}» готов: "
+                        f"«{verdict_label}»."
+                    ),
+                    entity_type=NotificationEntityType.candidate,
+                    entity_id=candidate_id,
+                    payload={
+                        "screeningId": str(sid),
+                        "verdict": verdict.value,
+                    },
+                )
+            await db.commit()
+        except Exception:
+            logger.exception(
+                "screening.analysis: report persist failed for %s", session_id
             )
-            await notify_service.notify(
-                db,
-                recipient_id=actor_id,
-                kind=NotificationKind.system,
-                text=(
-                    f"Отчёт AI-скрининга по «{cand_name}» готов: "
-                    f"«{verdict_label}»."
-                ),
-                entity_type=NotificationEntityType.candidate,
-                entity_id=candidate_id,
-                payload={
-                    "screeningId": str(sid),
-                    "verdict": verdict.value,
-                },
+            screening_metrics.record_ai_report_error()
+            await db.rollback()
+            try:
+                # Точечный UPDATE, а не ORM-объект: после rollback его
+                # состояние доверия не заслуживает.
+                await db.execute(
+                    sa_update(ScreeningSession)
+                    .where(ScreeningSession.id == sid)
+                    .values(status=ScreeningStatus.error)
+                )
+                await db.commit()
+            except Exception:
+                logger.exception(
+                    "screening.analysis: cannot mark %s as error", session_id
+                )
+            await _notify_analysis_failed(
+                session_id=sid,
+                recruiter_id=recruiter_id,
+                candidate_id=candidate_id,
+                vacancy_id=vacancy_id,
+                candidate_name=cand_name,
             )
-        await db.commit()
+            return
 
+        screening_metrics.record_ai_report_ok()
         publish_screening_report_ready(
             session_id=sid,
             candidate_id=candidate_id,
@@ -1463,6 +1665,110 @@ async def touch_session_activity(session_id: uuid.UUID) -> None:
         logger.exception("screening.touch: failed for %s", session_id)
 
 
+def _aware(dt: datetime | None) -> datetime | None:
+    """UTC-aware datetime (в БД могут лежать naive значения)."""
+    if dt is None:
+        return None
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+
+
+# Дедуп повторной постановки анализа для залипших processing: беат ходит раз в
+# минуту, а «переставить один раз» нужно на весь таймаут. Держим в памяти
+# процесса сознательно — сама задача анализа идемпотентна, поэтому дубль после
+# рестарта воркера безопасен, а колонка в БД ради этого не нужна.
+_REQUEUED_PROCESSING: dict[uuid.UUID, datetime] = {}
+
+
+async def _requeue_stuck_analysis(session_id: uuid.UUID) -> None:
+    """Переставить пост-анализ у сессии, залипшей в processing."""
+    async with SessionLocal() as db:
+        session = await db.get(ScreeningSession, session_id)
+        if session is None or session.status != ScreeningStatus.processing:
+            return
+        await _enqueue_post_meeting(db, session)
+        await db.commit()
+    logger.warning("screening.sweeper: re-queued analysis for stuck %s", session_id)
+
+
+async def _fail_stuck_processing(session_id: uuid.UUID) -> None:
+    """Сессия висит в processing втрое дольше таймаута — фиксируем ошибку."""
+    async with SessionLocal() as db:
+        session = await db.get(ScreeningSession, session_id)
+        if session is None or session.status != ScreeningStatus.processing:
+            return
+        recruiter_id = session.recruiter_id
+        candidate_id = session.candidate_id
+        vacancy_id = session.vacancy_id
+        cand = await db.get(Candidate, candidate_id)
+        cand_name = cand.full_name if cand is not None else "кандидату"
+        session.status = ScreeningStatus.error
+        await db.commit()
+    screening_metrics.record_ai_report_error()
+    await _notify_analysis_failed(
+        session_id=session_id,
+        recruiter_id=recruiter_id,
+        candidate_id=candidate_id,
+        vacancy_id=vacancy_id,
+        candidate_name=cand_name,
+    )
+    logger.error(
+        "screening.sweeper: stuck processing %s → error (analysis never finished)",
+        session_id,
+    )
+
+
+async def _sweep_stuck_processing(now: datetime, timeout_min: int) -> int:
+    """Разобрать сессии, залипшие в processing (см. close_stale_sessions)."""
+    requeue: list[uuid.UUID] = []
+    fail: list[uuid.UUID] = []
+    # Чистим отметки давно уехавших сессий: беат живёт неделями, а словарь
+    # иначе растёт на каждую встречу.
+    ttl = timedelta(minutes=timeout_min * 3)
+    for sid, marked in list(_REQUEUED_PROCESSING.items()):
+        if (now - marked) > ttl:
+            _REQUEUED_PROCESSING.pop(sid, None)
+    async with SessionLocal() as db:
+        rows = list(
+            (
+                await db.execute(
+                    select(ScreeningSession).where(
+                        ScreeningSession.status == ScreeningStatus.processing
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    for s in rows:
+        anchors = [
+            a for a in (_aware(s.ended_at), _aware(s.updated_at), _aware(s.started_at))
+            if a is not None
+        ]
+        if not anchors:
+            continue
+        age = now - max(anchors)
+        if age > timedelta(minutes=timeout_min * 3):
+            fail.append(s.id)
+        elif age > timedelta(minutes=timeout_min):
+            last = _REQUEUED_PROCESSING.get(s.id)
+            if last is None or (now - last) > timedelta(minutes=timeout_min):
+                requeue.append(s.id)
+
+    for sid in requeue:
+        try:
+            await _requeue_stuck_analysis(sid)
+            _REQUEUED_PROCESSING[sid] = now
+        except Exception:
+            logger.exception("screening.sweeper: re-queue failed for %s", sid)
+    for sid in fail:
+        _REQUEUED_PROCESSING.pop(sid, None)
+        try:
+            await _fail_stuck_processing(sid)
+        except Exception:
+            logger.exception("screening.sweeper: fail-stuck failed for %s", sid)
+    return len(requeue) + len(fail)
+
+
 async def close_stale_sessions() -> int:
     """Закрыть «осиротевшие» live-сессии (Этап 6, беат раз в минуту).
 
@@ -1472,16 +1778,16 @@ async def close_stale_sessions() -> int:
     2) от клиента нет активности дольше SCREENING_ORPHAN_GRACE_MIN — рекрутер
        закрыл вкладку и не вернулся; иначе сессия висит live навсегда и отчёт
        не строится.
+
+    Плюс залипшие processing: задача пост-анализа могла потеряться (воркер
+    упал / Redis мигнул), и без этого сессия крутила «обработку» вечно.
     """
     settings = get_settings()
     now = datetime.now(UTC)
-    grace_min = max(1, int(settings.screening_orphan_grace_min))
+    # 0 = «не закрывать» по документации конфига; прежний max(1, ...) превращал
+    # это ровно в обратное — закрывать через минуту простоя.
+    grace_min = int(settings.screening_orphan_grace_min)
     max_min = int(settings.screening_max_duration_min)
-
-    def _aware(dt: datetime | None) -> datetime | None:
-        if dt is None:
-            return None
-        return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
 
     stale_ids: list[uuid.UUID] = []
     async with SessionLocal() as db:
@@ -1497,9 +1803,14 @@ async def close_stale_sessions() -> int:
             .all()
         )
         for s in rows:
-            anchor = _aware(s.last_seen_at or s.started_at or s.created_at)
             started = _aware(s.started_at or s.created_at)
-            stale = anchor is not None and (now - anchor) > timedelta(minutes=grace_min)
+            stale = False
+            if grace_min > 0:
+                anchor = _aware(s.last_seen_at or s.started_at or s.created_at)
+                stale = (
+                    anchor is not None
+                    and (now - anchor) > timedelta(minutes=grace_min)
+                )
             overlong = (
                 max_min > 0
                 and started is not None
@@ -1515,7 +1826,12 @@ async def close_stale_sessions() -> int:
             logger.exception("screening.sweeper: finish failed for %s", sid)
     if stale_ids:
         logger.warning("screening.sweeper: closed %d stale session(s)", len(stale_ids))
-    return len(stale_ids)
+
+    touched = len(stale_ids)
+    processing_timeout = int(settings.screening_processing_timeout_min)
+    if processing_timeout > 0:
+        touched += await _sweep_stuck_processing(now, processing_timeout)
+    return touched
 
 
 async def purge_expired_audio(
@@ -1526,6 +1842,10 @@ async def purge_expired_audio(
     """Удалить аудио скрининга старше retention (coalesce(ended_at, created_at)).
 
     Транскрипт и отчёт не трогаем. `retention_days=0` / конфиг 0 — no-op.
+
+    Вторая фаза подметает «осиротевшие» файлы entity_type=screening, у которых
+    сессии уже нет (её удалили, а S3 в тот момент был недоступен): по сессиям
+    их не найти, а лежать в бакете дольше retention они не имеют права.
     """
     settings = get_settings()
     days = (
@@ -1586,7 +1906,48 @@ async def purge_expired_audio(
         # удалённые в S3 объекты с живыми строками в БД.
         await db.commit()
         purged += 1
+
+    purged += await _purge_orphan_audio(db, s3, cutoff)
     if purged:
         screening_metrics.record_retention_purged(purged)
     return purged
+
+
+async def _purge_orphan_audio(
+    db: AsyncSession, s3: S3Adapter, cutoff: datetime
+) -> int:
+    """Фаза 2 retention: файлы скрининга без сессии, старше cutoff."""
+    orphans = list(
+        (
+            await db.execute(
+                select(File).where(
+                    File.entity_type == FileEntityType.screening,
+                    File.created_at < cutoff,
+                    ~select(ScreeningSession.id)
+                    .where(ScreeningSession.id == File.entity_id)
+                    .exists(),
+                    ~select(ScreeningSession.id)
+                    .where(ScreeningSession.audio_file_id == File.id)
+                    .exists(),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    swept = 0
+    for file in orphans:
+        try:
+            await asyncio.to_thread(s3.delete, file_key=file.file_key)
+        except Exception:
+            logger.exception(
+                "screening.retention: S3 delete failed for orphan %s", file.file_key
+            )
+            continue
+        await db.delete(file)
+        await db.commit()
+        swept += 1
+    if swept:
+        logger.warning("screening.retention: swept %d orphan audio file(s)", swept)
+    return swept
 

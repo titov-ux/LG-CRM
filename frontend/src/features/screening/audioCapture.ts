@@ -53,16 +53,57 @@ export function describeCaptureError(e: unknown): string | null {
   return err?.message ? `Не удалось начать захват: ${err.message}` : 'Не удалось начать захват';
 }
 
+/**
+ * Chromium ли это. Проверять только наличие `getDisplayMedia`/`MediaRecorder`
+ * бессмысленно: они есть и в Firefox, и в Safari, но звук вкладки там не
+ * отдаётся — рекрутер получал бессмысленный совет про галку «Поделиться
+ * звуком вкладки» вместо честного «откройте в Chrome».
+ */
+function isChromiumBrowser(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const brands = (
+    navigator as Navigator & { userAgentData?: { brands?: { brand: string }[] } }
+  ).userAgentData?.brands;
+  if (brands && brands.length > 0) {
+    // Firefox/Safari не реализуют userAgentData вовсе, так что сюда попадают
+    // только Chromium-браузеры, но проверяем бренды явно.
+    return brands.some((b) =>
+      /Chromium|Google Chrome|Microsoft Edge|Yandex|Opera/i.test(b.brand),
+    );
+  }
+  // Фолбэк по UA: у Safari нет «Chrome/», у Firefox — «Gecko/…Firefox».
+  return /(Chrome|Chromium|CriOS|YaBrowser|Edg)\//.test(navigator.userAgent);
+}
+
+/** Нужные для захвата API (AudioWorklet — обязателен для PCM-стрима в STT). */
+function hasCaptureApis(): boolean {
+  return (
+    typeof navigator !== 'undefined' &&
+    !!navigator.mediaDevices?.getDisplayMedia &&
+    typeof MediaRecorder !== 'undefined' &&
+    typeof AudioWorkletNode !== 'undefined'
+  );
+}
+
 /** Причина, по которой захват недоступен в этом браузере (или null, если всё ок). */
 export function captureSupportIssue(): string | null {
-  if (ScreeningCapture.isSupported()) return null;
-  return 'Захват звука вкладки работает только в Chromium-браузерах (Chrome, Яндекс Браузер, Edge). Откройте раздел в одном из них.';
+  if (!isChromiumBrowser()) {
+    return 'Захват звука вкладки есть только в Chromium-браузерах (Chrome, Яндекс Браузер, Edge): Firefox и Safari звук вкладки не отдают. Откройте раздел в одном из них.';
+  }
+  if (!hasCaptureApis()) {
+    return 'Браузер не поддерживает захват звука вкладки (нужны getDisplayMedia, MediaRecorder и AudioWorklet) — обновите Chrome или Яндекс Браузер.';
+  }
+  return null;
 }
 
 /**
  * AudioWorklet-даунсемплер: любые sampleRate → 16 кГц mono PCM16, чанки
  * ~100 мс. Инлайн-код через blob-URL (важно: НЕ работает с file://, только
  * http(s) — проверено на спайке Этапа 0).
+ *
+ * Основной путь — контекст уже на 16 кГц (см. createCaptureContext): тогда
+ * ratio === 1 и здесь идёт честное копирование 1:1. Линейная интерполяция
+ * остаётся фолбэком для браузеров, не давших нужную частоту.
  */
 const PCM_WORKLET = `
 class PCMWorklet extends AudioWorkletProcessor {
@@ -112,6 +153,35 @@ registerProcessor('pcm-worklet', PCMWorklet);
 /** Порог «вкладка молчит» и таймаут ожидания финального блоба MediaRecorder. */
 const TAB_SILENCE_MS = 15_000;
 const RECORDER_STOP_TIMEOUT_MS = 10_000;
+/**
+ * Сколько подряд «тихих» замеров нужно, чтобы поверить в тишину. Вкладка
+ * скрининга фоновая, таймеры троттлятся — одиночный замер легко попадает в
+ * паузу между репликами и даёт ложную тревогу.
+ */
+const TAB_SILENCE_MIN_POLLS = 3;
+
+/**
+ * Контекст сразу на 16 кГц: тогда ресемплинг делает браузер (с нормальным
+ * анти-алиасингом), а воркет работает 1:1 вместо линейной интерполяции.
+ * Если браузер частоту не дал — молча возвращаемся к прежнему пути.
+ *
+ * ВАЖНО: на этом же контексте построен микс для MediaRecorder, поэтому
+ * архивная запись встречи тоже пишется в 16 кГц (а не в 48). Это осознанный
+ * размен: 16 кГц — рабочая частота Whisper, для речи разборчивости хватает,
+ * а качество распознавания важнее верности архива. Если когда-нибудь
+ * понадобится архив в 48 кГц — придётся держать два контекста и ресемплить
+ * только ветку PCM.
+ */
+function createCaptureContext(): AudioContext {
+  try {
+    const ctx = new AudioContext({ sampleRate: 16000 });
+    if (ctx.sampleRate === 16000) return ctx;
+    void ctx.close().catch(() => undefined);
+  } catch {
+    /* браузер не принял sampleRate — фолбэк ниже */
+  }
+  return new AudioContext();
+}
 
 /**
  * MediaRecorder + timeslice пишет WebM без Duration/Cues — нативный
@@ -140,6 +210,8 @@ export class ScreeningCapture {
   /** Момент последнего звука со вкладки (Date.now()); null — ещё не считаем. */
   private tabLastSoundAt: number | null = null;
   private tabSilenceFlag = false;
+  /** Сколько замеров подряд вкладка «молчит» (см. TAB_SILENCE_MIN_POLLS). */
+  private tabSilentPolls = 0;
   private analysers: { mic?: AnalyserNode; tab?: AnalyserNode } = {};
   private tabTrack: MediaStreamTrack | null = null;
   private onTabEnded: (() => void) | null = null;
@@ -154,11 +226,7 @@ export class ScreeningCapture {
   constructor(private cb: CaptureCallbacks = {}) {}
 
   static isSupported(): boolean {
-    return (
-      typeof navigator !== 'undefined' &&
-      !!navigator.mediaDevices?.getDisplayMedia &&
-      typeof MediaRecorder !== 'undefined'
-    );
+    return isChromiumBrowser() && hasCaptureApis();
   }
 
   get hasMic(): boolean {
@@ -187,11 +255,9 @@ export class ScreeningCapture {
    * источник без аудио (не поставил галку «Поделиться звуком вкладки»).
    */
   async requestTab(): Promise<boolean> {
-    // Повторный выбор вкладки: гасим прошлые дорожки, иначе Chrome оставляет
-    // висеть «плашку шаринга» от предыдущего источника.
-    this.detachTabEnded();
-    this.tabStream?.getTracks().forEach((t) => t.stop());
-    this.tabStream = null;
+    // ВАЖНО: пикер открываем ДО того, как гасить прежний источник. Иначе отмена
+    // диалога (NotAllowedError) убивала рабочий шаринг, а UI продолжал считать,
+    // что «вкладка подключена».
     // video:true обязателен — иначе Chrome не покажет пикер вкладок.
     const stream = await navigator.mediaDevices.getDisplayMedia({
       video: true,
@@ -202,11 +268,16 @@ export class ScreeningCapture {
     });
     const audio = stream.getAudioTracks();
     if (!audio.length) {
+      // Пользователь не поставил галку звука — прежний источник не трогаем.
       stream.getTracks().forEach((t) => t.stop());
       return false;
     }
     // Видео на Этапе 1 не нужно — останавливаем, остаётся только звук.
     stream.getVideoTracks().forEach((t) => t.stop());
+    // Новый поток есть — только теперь освобождаем прошлые дорожки, иначе Chrome
+    // оставляет висеть «плашку шаринга» от предыдущего источника.
+    this.detachTabEnded();
+    this.tabStream?.getTracks().forEach((t) => t.stop());
     this.tabStream = new MediaStream(audio);
     // Пользователь может остановить шаринг из «плашки» Chrome.
     this.tabTrack = audio[0];
@@ -242,7 +313,7 @@ export class ScreeningCapture {
     // утечку. Дорожки не трогаем — их разрешение переиспользуем.
     if (this.ctx) await this.disposeGraph();
     try {
-      const ctx = new AudioContext();
+      const ctx = createCaptureContext();
       this.ctx = ctx;
       // Chrome стартует контекст в состоянии suspended, если вкладка не в фокусе
       // (а во время интервью вкладка скрининга как раз фоновая).
@@ -302,6 +373,7 @@ export class ScreeningCapture {
 
       this.tabLastSoundAt = Date.now();
       this.tabSilenceFlag = false;
+      this.tabSilentPolls = 0;
       this.levelTimer = window.setInterval(() => this.pollLevels(), 200);
     } catch (e) {
       // Полусобранный граф оставлять нельзя — следующий start() начнёт с нуля.
@@ -338,6 +410,7 @@ export class ScreeningCapture {
     }
     // Источник новый — счётчик тишины начинаем заново.
     this.tabLastSoundAt = Date.now();
+    this.tabSilentPolls = 0;
     if (this.tabSilenceFlag) {
       this.tabSilenceFlag = false;
       this.cb.onTabSilence?.(false);
@@ -434,7 +507,12 @@ export class ScreeningCapture {
     // скрининга фоновая, и браузер троттлит setInterval до ~1 раза в секунду.
     const now = Date.now();
     if (tab > 0.005 || this.tabLastSoundAt === null) this.tabLastSoundAt = now;
-    const silent = now - this.tabLastSoundAt > TAB_SILENCE_MS;
+    // В фоне замеров меньше и они реже попадают на речь — даём двойной запас,
+    // и в любом случае требуем несколько «тихих» замеров подряд.
+    const hidden = typeof document !== 'undefined' && document.hidden;
+    const limit = hidden ? TAB_SILENCE_MS * 2 : TAB_SILENCE_MS;
+    this.tabSilentPolls = now - this.tabLastSoundAt > limit ? this.tabSilentPolls + 1 : 0;
+    const silent = this.tabSilentPolls >= TAB_SILENCE_MIN_POLLS;
     if (silent !== this.tabSilenceFlag) {
       this.tabSilenceFlag = silent;
       this.cb.onTabSilence?.(silent);

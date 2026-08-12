@@ -152,6 +152,18 @@ class Settings(BaseSettings):
     # Через сколько минут БЕЗ активности клиента уборщик закрывает live-сессию
     # (рекрутер закрыл вкладку и не вернулся). 0 = не закрывать.
     screening_orphan_grace_min: int = 15
+    # Сколько минут сессия может провисеть в processing, прежде чем уборщик
+    # переставит пост-анализ (задача потерялась: воркер упал / Redis мигнул).
+    # Втрое дольше — сдаёмся: status=error + уведомление рекрутеру, иначе
+    # карточка вечно крутит «обработка» и рекрутер не знает, что делать.
+    # 0 = не трогать залипшие processing.
+    #
+    # ОБЯЗАНО быть больше celery `task_time_limit` (35 мин, см. celery_app.py):
+    # офлайн-STT часового интервью законно идёт до получаса, а `updated_at`
+    # всё это время не двигается. С таймаутом меньше хард-лимита уборщик
+    # поставил бы вторую задачу поверх ещё живой (двойной счёт Whisper+LLM),
+    # а затем пометил бы нормально работающую сессию как error.
+    screening_processing_timeout_min: int = 45
     # Retention аудиозаписей скрининга в S3 (дни). Celery beat
     # `screening.purge_expired_audio` чистит старше порога (152-ФЗ).
     # 0 = не чистить автоматически.
@@ -178,6 +190,13 @@ class Settings(BaseSettings):
     # ── AI-скрининг / пост-анализ отчёта (Этап 5) ────────────
     # true (dev/tests): анализ после finish в том же процессе (asyncio.create_task).
     # false (prod): Celery worker `screening.analyze_session` (нужен Redis + worker).
+    #
+    # Дефолт СОЗНАТЕЛЬНО true, хотя для прода это плохо (finish крутит LLM/STT
+    # в воркере uvicorn): тесты нигде не выставляют флаг явно и опираются на
+    # eager — например `test_finish_sets_duration` ждёт status=done сразу после
+    # POST /finish. Переворот дефолта тихо сломал бы их, поэтому прод выключает
+    # флаг явно: SCREENING_ANALYSIS_EAGER=false в .env.prod.example и в
+    # infra/docker-compose.prod.yml (там же напоминание про обязательный worker).
     screening_analysis_eager: bool = True
 
     # ── Сеть ────────────────────────────────────────────────

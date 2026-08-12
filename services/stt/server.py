@@ -24,6 +24,12 @@ MIN_SILENCE_MS = 600
 PARTIAL_EVERY_S = 3.0
 MIN_SEGMENT_S = 0.4
 MAX_OPEN_SEGMENT_S = 25.0
+# Жёсткий потолок буфера канала. VAD подрезает буфер только когда находит речь
+# и закрытые сегменты; при перегрузке (транскрибация не успевает, речь без пауз)
+# буфер рос без границы — вместе с ним и задержка распознавания.
+MAX_BUFFER_S = 30.0
+# Не чаще раза в N секунд жалуемся в лог на переполнение (иначе спам на каждый кадр).
+OVERFLOW_LOG_EVERY_S = 5.0
 # Energy-VAD (fake-режим без Silero): порог RMS и окно тишины.
 ENERGY_THRESHOLD = 0.015
 ENERGY_FRAME_MS = 30
@@ -116,12 +122,45 @@ class ChannelTranscriber:
         self.finals: list[float] = []
         self.recv_wallclock_ms = None
         self._partial_task = None
+        self.dropped_ms = 0.0
+        self._last_overflow_log = 0.0
 
     def feed(self, pcm_bytes: bytes) -> None:
+        # Только дописываем в хвост. Обрезать буфер здесь НЕЛЬЗЯ: приём кадров и
+        # ticker() — разные задачи, tick() считает регионы VAD по индексам этого
+        # же буфера и уходит в run_in_executor. Срез головы на этом await сдвинул
+        # бы данные под уже вычисленными region["start"]/["end"] — распознавался
+        # бы не тот кусок, а startedMs/endedMs уехали бы. Потолок держит tick().
         chunk = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
         self.buf = np.concatenate([self.buf, chunk])
         self.total_ms += len(chunk) / SAMPLE_RATE * 1000
         self.recv_wallclock_ms = time.monotonic() * 1000
+
+    def _enforce_buffer_cap(self) -> None:
+        """Потолок буфера: дропаем самое старое аудио и сдвигаем buf_start_ms.
+
+        Зовётся только из tick(), синхронно, ДО вычисления VAD — в этот момент
+        никаких «висящих» индексов регионов не существует. Иначе при перегрузке
+        (STT медленнее реального времени) задержка растёт неограниченно.
+        """
+        max_len = int(SAMPLE_RATE * MAX_BUFFER_S)
+        if len(self.buf) <= max_len:
+            return
+        cut = len(self.buf) - max_len
+        self.buf = self.buf[cut:]
+        cut_ms = cut / SAMPLE_RATE * 1000
+        self.buf_start_ms += cut_ms
+        self.dropped_ms += cut_ms
+        now = time.monotonic()
+        if now - self._last_overflow_log >= OVERFLOW_LOG_EVERY_S:
+            self._last_overflow_log = now
+            logger.warning(
+                "stt: буфер %s переполнен (>%.0f с) — отброшено %.0f мс (всего %.0f мс)",
+                self.speaker,
+                MAX_BUFFER_S,
+                cut_ms,
+                self.dropped_ms,
+            )
 
     def _transcribe(self, audio) -> str:
         segments, _ = self.model.transcribe(
@@ -133,6 +172,8 @@ class ChannelTranscriber:
         return " ".join(s.text.strip() for s in segments).strip()
 
     async def tick(self) -> None:
+        # Подрезаем ДО вычисления VAD (см. _enforce_buffer_cap).
+        self._enforce_buffer_cap()
         if len(self.buf) < SAMPLE_RATE // 2:
             return
         vad = _silero_vad(self.buf) if self.use_silero else _energy_vad(self.buf)
@@ -255,6 +296,7 @@ class ChannelTranscriber:
         return {
             "speaker": self.speaker,
             "finals": len(arr),
+            "droppedMs": round(self.dropped_ms),
             "latencyP50Ms": round(pct(0.50)),
             "latencyP95Ms": round(pct(0.95)),
             "latencyMaxMs": round(arr[-1]),
@@ -355,13 +397,22 @@ async def handle(ws, model, executor, *, use_silero: bool, max_sessions: int) ->
                     except (ValueError, TypeError):
                         continue
                     if data.get("type") == "stop":
-                        for c in channels.values():
-                            await c.tick()
-                            # Дожимаем открытый сегмент: тишины после
-                            # последней реплики могло и не быть.
-                            await c.flush()
-                        stats = [s for c in channels.values() if (s := c.stats())]
-                        await emit({"type": "stats", "channels": stats})
+                        # Маркер шлём из finally: если flush() упадёт, мост
+                        # иначе будет ждать полный таймаут вместо мгновенного
+                        # закрытия.
+                        try:
+                            for c in channels.values():
+                                await c.tick()
+                                # Дожимаем открытый сегмент: тишины после
+                                # последней реплики могло и не быть.
+                                await c.flush()
+                            stats = [s for c in channels.values() if (s := c.stats())]
+                            await emit({"type": "stats", "channels": stats})
+                        finally:
+                            # Явный маркер конца дожима: клиент ждёт именно его,
+                            # а не фиксированный sleep — на CPU flush() занимает
+                            # секунды, и финалы приезжают уже после него.
+                            await emit({"type": "flushed"})
             except Exception as exc:  # noqa: BLE001 — коннект не рвём
                 bad_frames += 1
                 if bad_frames <= 3:

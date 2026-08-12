@@ -12,6 +12,8 @@ import { QUERY_DEFAULTS } from '@/lib/constants';
 
 export const screeningKeys = {
   all: ['screenings'] as const,
+  /** Префикс всех списков — точка инвалидации после мутаций. */
+  lists: () => [...screeningKeys.all, 'list'] as const,
   list: (params: ScreeningsListParams) => [...screeningKeys.all, 'list', params] as const,
   byId: (id: UUID) => [...screeningKeys.all, 'byId', id] as const,
   segments: (id: UUID) => [...screeningKeys.all, 'segments', id] as const,
@@ -37,6 +39,11 @@ export interface UseScreeningsOptions {
    * опрашиваем список раз в 5 секунд, иначе поллинг выключен.
    */
   pollProcessing?: boolean;
+  /**
+   * Выключатель запроса: карточка кандидата рендерит хук до проверки прав, и
+   * без него каждая карточка тянула заведомо ненужный список скринингов.
+   */
+  enabled?: boolean;
 }
 
 const PROCESSING_POLL_MS = 5_000;
@@ -48,6 +55,7 @@ export function useScreenings(
   return useQuery({
     queryKey: screeningKeys.list(params),
     queryFn: () => screeningsApi.list(params),
+    enabled: options.enabled ?? true,
     ...QUERY_DEFAULTS,
     refetchInterval: options.pollProcessing
       ? (query) => {
@@ -81,7 +89,9 @@ function useSessionMutation<TVars>(fn: (vars: TVars) => Promise<ScreeningSession
     mutationFn: fn,
     onSuccess: (session) => {
       queryClient.setQueryData(screeningKeys.byId(session.id), session);
-      queryClient.invalidateQueries({ queryKey: screeningKeys.all });
+      // Только списки: карточку мы уже положили в кэш из ответа, а сегменты
+      // живут своей жизнью (их инвалидируют явно там, где меняется запись).
+      queryClient.invalidateQueries({ queryKey: screeningKeys.lists() });
     },
   });
 }
@@ -92,7 +102,7 @@ export function useCreateScreening() {
     mutationFn: (payload: CreateScreeningPayload) => screeningsApi.create(payload),
     onSuccess: (session) => {
       queryClient.setQueryData(screeningKeys.byId(session.id), session);
-      queryClient.invalidateQueries({ queryKey: screeningKeys.all });
+      queryClient.invalidateQueries({ queryKey: screeningKeys.lists() });
     },
   });
 }
@@ -126,7 +136,8 @@ export function useDeleteScreening() {
     mutationFn: (id: UUID) => screeningsApi.remove(id),
     onSuccess: (_d, id) => {
       queryClient.removeQueries({ queryKey: screeningKeys.byId(id) });
-      queryClient.invalidateQueries({ queryKey: screeningKeys.all });
+      queryClient.removeQueries({ queryKey: screeningKeys.segments(id) });
+      queryClient.invalidateQueries({ queryKey: screeningKeys.lists() });
     },
   });
 }
@@ -188,8 +199,11 @@ export function useUpdateQuestion() {
     onSuccess: (session) => {
       queryClient.setQueryData(screeningKeys.byId(session.id), session);
     },
-    // Сервер — источник правды по чек-листу (агент правит его параллельно).
-    onSettled: (_data, _err, vars) => {
+    // Рефетч только после ошибки: успешный ответ уже содержит всю сессию (её
+    // положили в кэш выше), а параллельные правки агента прилетают по WS
+    // (`questions.updated`) — полный рефетч на каждый клик по статусу лишний.
+    onSettled: (_data, err, vars) => {
+      if (!err) return;
       void queryClient.invalidateQueries({ queryKey: screeningKeys.byId(vars.id) });
     },
   });

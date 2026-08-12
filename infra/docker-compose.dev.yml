@@ -9,6 +9,14 @@
 #   docker compose -f infra/docker-compose.dev.yml down
 # Полный сброс данных:
 #   docker compose -f infra/docker-compose.dev.yml down -v
+#
+# Celery здесь СОЗНАТЕЛЬНО нет (в отличие от prod-компоуза с профилем `celery`):
+# в dev SCREENING_ANALYSIS_EAGER=true, и пост-анализ скрининга выполняется
+# прямо в процессе бэка после finish. Побочный эффект: beat-задач тоже нет —
+# retention аудио (`screening.purge_expired_audio`) и уборщик залипших
+# live/processing-сессий (`screening.close_stale_sessions`) локально не
+# работают; проверять их надо на staging либо запускать worker+beat руками
+# (`celery -A app.celery_app worker` / `beat` рядом с `make dev`).
 
 services:
   postgres:
@@ -46,10 +54,12 @@ services:
       retries: 10
 
   # stt-service — распознавание речи для AI-скрининга (Этап 2).
-  # Опционален: без него WS /ws/screening работает, но транскрипт не идёт.
+  # Опционален: без него WS /ws/screening работает (комната, запись, чек-лист),
+  # но живого транскрипта нет — бэк отдаёт sttReady:false.
   # Первый билд прогревает модель small (~500МБ с HuggingFace) в образ.
-  # Быстрый старт без модели: STT_FAKE=1 (заглушка, для отладки пайплайна).
-  #   docker compose -f infra/docker-compose.dev.yml --profile stt up -d
+  # Быстрый старт без модели: STT_FAKE=1 (заглушка, для отладки пайплайна);
+  # по умолчанию тут STT_FAKE=0, то есть поднимается настоящая модель.
+  #   STT_FAKE=1 docker compose -f infra/docker-compose.dev.yml --profile stt up -d
   stt:
     build:
       context: ../services/stt

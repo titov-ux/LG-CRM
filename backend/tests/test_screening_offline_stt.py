@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.files.models import File, FileEntityType, ScanStatus
 from app.modules.notifications.models import Notification
+from app.modules.permissions import service as permissions_service
 from app.modules.screening import report as screening_report
 from app.modules.screening import service as screening_service
 from app.modules.screening.models import (
@@ -81,6 +82,190 @@ async def test_maybe_start_offline_on_get_when_audio_without_transcript(
     )
     assert started_force is True
     assert len(queued) == 2
+
+
+@pytest.mark.asyncio
+async def test_get_starts_offline_only_for_session_runner(
+    db: AsyncSession, recruiter_user, candidate, monkeypatch
+) -> None:
+    """GET остаётся чтением для того, кто не может вести сессию.
+
+    Авто-офлайн-STT меняет статус и жжёт STT+LLM — запускать его вправе только
+    ведущий/админ с действующим `screening:run`.
+    """
+    from app.modules.permissions.models import PermissionRow
+
+    queued: list[uuid.UUID] = []
+
+    def _capture(session, sid: uuid.UUID) -> None:
+        queued.append(sid)
+
+    monkeypatch.setattr(
+        "app.modules.screening.service.enqueue_screening_offline_transcribe",
+        _capture,
+    )
+
+    session = ScreeningSession(
+        candidate_id=candidate.id,
+        recruiter_id=recruiter_user.id,
+        status=ScreeningStatus.done,
+        started_at=datetime.now(UTC),
+        ended_at=datetime.now(UTC),
+    )
+    db.add(session)
+    await db.flush()
+    file = File(
+        id=uuid.uuid4(),
+        file_key=f"screening/{session.id}/rec.webm",
+        original_name="rec.webm",
+        mime="audio/webm",
+        size=100,
+        entity_type=FileEntityType.screening,
+        entity_id=session.id,
+        owner_user_id=recruiter_user.id,
+        scan_status=ScanStatus.clean,
+    )
+    db.add(file)
+    session.audio_file_id = file.id
+    await db.commit()
+    session_id = session.id
+
+    # Матрица сидируется лениво — дёргаем её перед правкой строки.
+    await permissions_service.list_matrix(db)
+    row = await db.get(PermissionRow, "screening.run")
+    row.matrix = {**(row.matrix or {}), "recruiter": False}
+    await db.commit()
+
+    dto = await screening_service.get(db, recruiter_user, session_id)
+    assert dto.status == ScreeningStatus.done
+    assert queued == []
+
+    row = await db.get(PermissionRow, "screening.run")
+    row.matrix = {**(row.matrix or {}), "recruiter": True}
+    await db.commit()
+
+    dto = await screening_service.get(db, recruiter_user, session_id)
+    assert dto.status == ScreeningStatus.processing
+    assert queued == [session_id]
+
+
+@pytest.mark.asyncio
+async def test_run_post_analysis_marks_error_when_report_write_fails(
+    db: AsyncSession, recruiter_user, candidate, monkeypatch
+) -> None:
+    """Сбой на записи отчёта не должен оставлять сессию в processing навсегда."""
+    _patch_session_local(monkeypatch, db)
+    session = ScreeningSession(
+        candidate_id=candidate.id,
+        recruiter_id=recruiter_user.id,
+        status=ScreeningStatus.processing,
+        started_at=datetime.now(UTC),
+        ended_at=datetime.now(UTC),
+    )
+    db.add(session)
+    await db.flush()
+    db.add(
+        ScreeningSegment(
+            session_id=session.id,
+            seq=1,
+            speaker=ScreeningSpeaker.candidate,
+            text_="Достаточно длинный ответ кандидата про опыт и стек, чтобы пройти порог.",
+            started_ms=0,
+            ended_ms=4000,
+        )
+    )
+    await db.commit()
+    # Внутри обработчика сбоя есть rollback — снимаем id заранее, чтобы не
+    # ходить в БД за просроченными атрибутами ORM-объектов.
+    session_id = session.id
+    recruiter_id = recruiter_user.id
+
+    async def _gen(**_kwargs):
+        return {
+            "summary": "Ок",
+            "verdict": ScreeningVerdict.partial_fit,
+            "scores": {"communication": {"score": 3, "note": "норм"}},
+            "red_flags": [],
+            "recommendation": "Созвон",
+            "model": "test",
+            "prompt_version": "test",
+        }
+
+    monkeypatch.setattr(screening_report, "generate_screening_report", _gen)
+
+    async def _boom(*_args, **_kwargs):
+        raise RuntimeError("DB упала на записи отчёта")
+
+    monkeypatch.setattr(screening_service, "_persist_report", _boom)
+
+    # Ошибка не должна улететь наружу: её всё равно проглотят в tasks.py.
+    await screening_service.run_post_analysis(session_id)
+
+    await db.refresh(session)
+    assert session.status == ScreeningStatus.error
+    assert (
+        await db.execute(
+            select(ScreeningReport).where(ScreeningReport.session_id == session_id)
+        )
+    ).scalar_one_or_none() is None
+
+    notes = list(
+        (
+            await db.execute(
+                select(Notification).where(Notification.user_id == recruiter_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert any(
+        (n.payload or {}).get("screeningId") == str(session_id) for n in notes
+    ), [n.text_ for n in notes]
+
+
+@pytest.mark.asyncio
+async def test_persist_report_survives_parallel_insert(
+    db: AsyncSession, recruiter_user, candidate
+) -> None:
+    """Гонка finish → анализ и GET → офлайн-STT: UNIQUE(session_id) не 500-ит."""
+    session = ScreeningSession(
+        candidate_id=candidate.id,
+        recruiter_id=recruiter_user.id,
+        status=ScreeningStatus.processing,
+    )
+    db.add(session)
+    await db.commit()
+
+    raw = {
+        "summary": "Первый",
+        "verdict": ScreeningVerdict.partial_fit,
+        "scores": None,
+        "red_flags": [],
+        "recommendation": None,
+        "model": "test",
+        "prompt_version": "test",
+    }
+    await screening_service._persist_report(db, session.id, raw, existing=None)
+    await db.commit()
+
+    # Второй писатель тоже считает, что отчёта нет (existing=None) — должен
+    # обновить чужую строку, а не упасть на UNIQUE.
+    await screening_service._persist_report(
+        db, session.id, {**raw, "summary": "Второй"}, existing=None
+    )
+    await db.commit()
+
+    reports = list(
+        (
+            await db.execute(
+                select(ScreeningReport).where(ScreeningReport.session_id == session.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(reports) == 1
+    assert reports[0].summary == "Второй"
 
 
 @pytest.mark.asyncio

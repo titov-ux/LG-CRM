@@ -6,6 +6,10 @@
 """
 from __future__ import annotations
 
+import asyncio
+
+import pytest
+
 from app.modules.screening.agent import _can_apply_status
 from app.modules.screening.models import (
     ScreeningQuestionStatus as QS,
@@ -51,3 +55,23 @@ def test_agent_cannot_downgrade_answered():
     assert _can_apply_status(QS.answered, QS.answered)  # обновление summary
     assert _can_apply_status(QS.pending, QS.skipped)
     assert _can_apply_status(QS.asked, QS.answered)
+
+
+@pytest.mark.asyncio
+async def test_pcm_queue_drops_oldest_on_overflow():
+    """Backpressure к STT: очередь полна → выбрасываем самые старые кадры.
+
+    Ждать место нельзя: `await send_pcm` в цикле чтения останавливал приём
+    из сокета рекрутера целиком, пока STT разгребал очередь.
+    """
+    from app.api.v1.endpoints.screening_ws import _offer_pcm
+
+    queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=2)
+    assert _offer_pcm(queue, b"a") == 0
+    assert _offer_pcm(queue, b"b") == 0
+    assert _offer_pcm(queue, b"c") == 1  # "a" вытеснен
+    assert _offer_pcm(queue, b"d") == 1  # "b" вытеснен
+
+    assert queue.get_nowait() == b"c"
+    assert queue.get_nowait() == b"d"
+    assert queue.empty()

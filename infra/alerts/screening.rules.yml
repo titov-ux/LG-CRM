@@ -1,0 +1,234 @@
+# Prometheus alerting rules для AI-скрининга.
+#
+# Куда положить и как подключить:
+#   1. Файл монтируется в контейнер Prometheus (или кладётся рядом с
+#      prometheus.yml на хосте с Prometheus).
+#   2. В prometheus.yml:
+#        rule_files:
+#          - /etc/prometheus/rules/screening.rules.yml
+#        scrape_configs:
+#          - job_name: crm-lg-backend        # ← это имя используется в expr ниже
+#            metrics_path: /metrics
+#            scheme: https
+#            static_configs:
+#              - targets: ["crm.lachevsky.ru"]
+#   3. Проверка: `promtool check rules infra/alerts/screening.rules.yml`,
+#      затем reload Prometheus (`kill -HUP` / POST /-/reload).
+# Разбор каждого алерта — docs/runbook.md §8.3.
+#
+# ВАЖНО про источник метрик.
+# `GET /metrics` (backend/app/main.py) отдаёт in-process счётчики из
+# backend/app/modules/screening/metrics.py — это НЕ prometheus_client, а
+# самодельный exposition-текст:
+#   * счётчики живут в памяти процесса и обнуляются при рестарте backend —
+#     поэтому везде ниже increase()/rate(), которые переживают reset;
+#   * скрапится ровно один процесс — с `--workers 1` в
+#     infra/docker-compose.prod.yml это весь backend (при 2+ воркерах цифры
+#     были бы от случайного воркера, и алерты врали бы);
+#   * screening_stt_latency_ms{quantile=...} — не честный prometheus-summary,
+#     а перцентиль по скользящему окну последних 500 финальных сегментов
+#     ВНУТРИ процесса. Окно не «стареет» по времени: после затишья там
+#     остаются старые значения, поэтому у латентного алерта стоит guard по
+#     потоку финалов.
+#
+# Ниже используются ТОЛЬКО реально экспортируемые метрики:
+#   screening_stt_finals_total, screening_stt_latency_ms{quantile="0.95"|"1"},
+#   screening_stt_latency_ms_sum/_count, screening_stt_errors_total,
+#   screening_stt_frames_dropped_total,
+#   screening_ai_agent_total{result="ok|unavailable|bad_request|error"},
+#   screening_ai_report_total{result="ok|fallback|error"},
+#   screening_retention_purged_total, screening_max_duration_stops_total,
+#   screening_active_sessions, screening_segments_dropped_total{reason=...}.
+
+groups:
+  - name: screening-stt
+    rules:
+      # План Этапа 6: «p95 латентности STT > 5 с». До этого правило жило только
+      # текстом в runbook / Sentry-фильтром по логу screening.stt_final.
+      - alert: ScreeningSttLatencyP95High
+        expr: |
+          screening_stt_latency_ms{quantile="0.95"} > 5000
+          and on(job, instance) increase(screening_stt_finals_total[15m]) > 20
+        for: 10m
+        labels:
+          severity: warning
+          component: screening-stt
+        annotations:
+          summary: "STT p95 > 5 с ({{ $value | humanize }} мс)"
+          description: >-
+            Распознавание отстаёт от речи: рекрутер видит текст с задержкой.
+            Обычно — перегруз CPU-модели (много параллельных встреч) или
+            слишком тяжёлая STT_MODEL. Guard по increase(finals) нужен, чтобы
+            не алертить на «застывшее» окно перцентиля после затишья.
+          runbook: docs/runbook.md#83-алерты-prometheus-по-скринингу
+
+      # Мост backend → stt-service умирает / рвётся: record_stt_error()
+      # вызывается на stt_unavailable, stt_send_failed, stt_disconnected,
+      # stt_closed и на error:busy (1013) от самого stt-service.
+      # Причина в метрике НЕ размечена лейблом — смотреть в логах backend
+      # (`screening.stt_error reason=...`).
+      - alert: ScreeningSttErrorsBurst
+        expr: increase(screening_stt_errors_total[10m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+          component: screening-stt
+        annotations:
+          summary: "Всплеск ошибок STT-моста ({{ $value | humanize }} за 10 мин)"
+          description: >-
+            Кандидаты в правых причинах: контейнер stt лежит, упёрлись в
+            STT_MAX_SESSIONS (busy/1013), сеть до STT-VM.
+          runbook: docs/runbook.md#83-алерты-prometheus-по-скринингу
+
+      # Backpressure: очередь кадров к stt-service переполнена, PCM
+      # выбрасывается (record_stt_frames_dropped) — в транскрипте будут дыры.
+      # Один кадр = 100 мс аудио одного канала, порог 50 ≈ 5 с потерянной речи.
+      - alert: ScreeningSttFramesDropped
+        expr: increase(screening_stt_frames_dropped_total[10m]) > 50
+        for: 5m
+        labels:
+          severity: warning
+          component: screening-stt
+        annotations:
+          summary: "STT не успевает: выброшено {{ $value | humanize }} PCM-кадров за 10 мин"
+          description: >-
+            Аудио теряется до распознавания (перегруз модели или зависший мост).
+            Обычно идёт вместе с ростом p95; лечится так же — легче модель,
+            меньше параллельных встреч, GPU-VM.
+          runbook: docs/runbook.md#83-алерты-prometheus-по-скринингу
+
+      # Косвенная, но надёжная проверка «STT не работает»: встречи идут
+      # (gauge активных WS > 0), а финальных сегментов не появляется вовсе.
+      # Прямого up{job="stt"} нет — см. комментарий в конце файла.
+      - alert: ScreeningSttNoTranscript
+        expr: |
+          screening_active_sessions > 0
+          and on(job, instance) increase(screening_stt_finals_total[10m]) == 0
+        for: 10m
+        labels:
+          severity: critical
+          component: screening-stt
+        annotations:
+          summary: "Идут live-сессии, но транскрипта нет 10 минут"
+          description: >-
+            Ни одного transcript.final при активных соединениях — почти всегда
+            означает недоступный stt-service (STT_URL, контейнер stt, SG до
+            STT-VM). Проверить `docker compose ... ps stt` и /healthz:8765.
+          runbook: docs/runbook.md#83-алерты-prometheus-по-скринингу
+
+      # Backend перестал скрапиться — метрик скрининга нет вообще.
+      # `up` — встроенная метрика Prometheus, job должен совпадать с
+      # scrape_configs выше.
+      - alert: ScreeningMetricsScrapeDown
+        expr: up{job="crm-lg-backend"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          component: screening
+        annotations:
+          summary: "Prometheus не скрапит /metrics backend"
+          description: >-
+            Все остальные правила этой группы слепы, пока цель down.
+          runbook: docs/runbook.md#1-бэкенд-отдаёт-500--приложение-лежит
+
+  - name: screening-ai
+    rules:
+      # Realtime-агент не может сходить в YandexGPT: нет ключа/квота/5xx.
+      # Встреча при этом идёт, но follow-up вопросов в чек-листе не появляется.
+      - alert: ScreeningAiAgentUnavailable
+        expr: increase(screening_ai_agent_total{result="unavailable"}[15m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+          component: screening-ai
+        annotations:
+          summary: "YandexGPT недоступен для агента скрининга"
+          description: >-
+            >5 неудачных тиков за 15 мин (ai_unavailable). Проверить
+            YANDEX_API_KEY/YANDEX_FOLDER_ID, квоты AI Studio и 4xx/5xx в логах.
+          runbook: docs/runbook.md#81-yandexgpt-недоступен--не-задан-ключ
+
+      # Модель отвечает мусором (не проходит json_schema) — обычно признак
+      # деградации yandexgpt/rc; лечится переключением на yandexgpt/latest.
+      - alert: ScreeningAiAgentBadRequest
+        expr: increase(screening_ai_agent_total{result="bad_request"}[15m]) > 3
+        for: 5m
+        labels:
+          severity: warning
+          component: screening-ai
+        annotations:
+          summary: "YandexGPT отдаёт невалидные ответы агенту (bad_request)"
+          description: >-
+            Ответы не парсятся в ожидаемую схему. Временный обход —
+            YANDEX_AI_MODEL=yandexgpt/latest.
+          runbook: docs/runbook.md#81-yandexgpt-недоступен--не-задан-ключ
+
+      # Пост-анализ отдал fallback-отчёт (без выводов модели) вместо нормального.
+      - alert: ScreeningReportFallbackRate
+        expr: increase(screening_ai_report_total{result="fallback"}[30m]) > 3
+        for: 10m
+        labels:
+          severity: warning
+          component: screening-ai
+        annotations:
+          summary: "Отчёты скрининга собираются в fallback-режиме"
+          description: >-
+            Рекрутер получает отчёт без выводов LLM (model=fallback в
+            screening_reports). После починки AI прогнать пост-анализ заново.
+          runbook: docs/runbook.md#82-сессия-висит-в-processing--ручной-перезапуск-пост-анализа
+
+      # Пост-анализ упал с исключением: сессия ушла в error, отчёта нет.
+      # Это же — ближайший доступный сигнал про «сессия не доехала до done»
+      # (см. блок про processing ниже).
+      - alert: ScreeningReportErrors
+        expr: increase(screening_ai_report_total{result="error"}[30m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: screening-ai
+        annotations:
+          summary: "Пост-анализ скрининга падает с ошибкой"
+          description: >-
+            run_post_analysis завершился исключением — сессия в статусе error,
+            отчёта нет. Traceback: логи backend/celery-worker по
+            `screening.analysis: failed for <id>`.
+          runbook: docs/runbook.md#82-сессия-висит-в-processing--ручной-перезапуск-пост-анализа
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Чего здесь НЕТ и почему (метрик не существует — не выдумываем правила):
+#
+# 1. «Сессии, залипшие в processing».
+#    В metrics.py нет ни gauge числа сессий по статусам, ни счётчика
+#    поставленных/выполненных задач пост-анализа. screening_ai_report_total
+#    инкрементируется только когда анализ ФАКТИЧЕСКИ отработал, а классический
+#    симптом залипания — что он не стартовал вовсе (нет celery-worker, задача
+#    потерялась), и тогда ни один счётчик не двинется. Правило вида
+#    `screening_sessions_processing > 0 for 30m` требует НОВОЙ метрики
+#    (gauge по SELECT count(*) ... where status='processing', обновляемый
+#    beat-задачей). Пока метрики нет:
+#      * автоматика — SCREENING_PROCESSING_TIMEOUT_MIN (перепостановка задачи,
+#        затем перевод в error) в backend/app/core/config.py;
+#      * ручная проверка — SQL из docs/runbook.md §8.2;
+#      * косвенный сигнал — ScreeningReportErrors выше.
+#
+# 2. Прямой `up` по stt-service.
+#    services/stt/server.py отдаёт только `GET /healthz` (JSON с
+#    activeSessions/maxSessions) и не экспортирует Prometheus-метрик, а сам
+#    контейнер не является scrape-целью. Честный алерт на его недоступность
+#    делается через blackbox_exporter, которого в репозитории нет:
+#      # - alert: SttServiceDown
+#      #   expr: probe_success{job="blackbox-stt"} == 0
+#      #   for: 5m
+#    До появления blackbox-цели используем косвенные ScreeningSttNoTranscript
+#    и ScreeningSttErrorsBurst (оба — по реальным метрикам backend).
+#
+# 3. Алерт «STT перегружен / busy (1013)» отдельным правилом.
+#    stt-service шлёт error:busy, backend считает это обычной stt-ошибкой
+#    (record_stt_error), а reason в Prometheus не размечен — отличить busy от
+#    stt_unavailable по метрикам нельзя, только по логам. Отдельного правила
+#    нет намеренно; busy попадает в ScreeningSttErrorsBurst.
+#
+# 4. Метрики screening_retention_purged_total, screening_max_duration_stops_total,
+#    screening_segments_dropped_total экспортируются, но алертов по ним нет:
+#    это ожидаемые события (retention по расписанию, hard-stop 90 мин, фильтр
+#    дублей/галлюцинаций), а не инциденты. Смотреть на дашборде.

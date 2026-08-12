@@ -9,6 +9,8 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
+from pydantic import Field
+
 from app.core.schemas import CamelModel
 from app.modules.screening.models import (
     ScreeningQuestionSource,
@@ -96,7 +98,9 @@ class UpdateScreeningRequest(CamelModel):
 
 
 class FinishScreeningRequest(CamelModel):
-    duration_sec: int | None = None
+    # Длительность считает клиент по своему таймеру — отрицательное значение
+    # (перевод часов / кривой клиент) попадало в карточку и в аналитику.
+    duration_sec: int | None = Field(default=None, ge=0)
 
 
 class AttachAudioRequest(CamelModel):
@@ -109,7 +113,9 @@ class TranscriptResponse(CamelModel):
 
 
 class AddQuestionRequest(CamelModel):
-    text: str
+    # Вопрос уезжает в промпт пост-анализа: без потолка одна вставка «всего
+    # резюме» выносит контекст модели.
+    text: str = Field(max_length=2000)
     goal: str | None = None
     position: int | None = None  # None → в конец
 

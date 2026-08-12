@@ -14,7 +14,13 @@
 #   * при SCREENING_ANALYSIS_EAGER=false отчёты скрининга навсегда зависают
 #     в статусе `processing` (задача `screening.analyze_session` никем не берётся);
 #   * не выполняется retention аудио (beat `screening.purge_expired_audio`) —
-#     записи копятся в S3 дольше SCREENING_AUDIO_RETENTION_DAYS (риск по 152-ФЗ).
+#     записи копятся в S3 дольше SCREENING_AUDIO_RETENTION_DAYS (риск по 152-ФЗ);
+#   * не работает уборщик сессий (beat `screening.close_stale_sessions`, раз в
+#     минуту): live-сессия с оборванным WS висит вечно вместо закрытия по
+#     SCREENING_ORPHAN_GRACE_MIN, hard-stop по SCREENING_MAX_DURATION_MIN не
+#     срабатывает, если WS уже мёртв, и не отрабатывает автоперепостановка
+#     залипшего пост-анализа (SCREENING_PROCESSING_TIMEOUT_MIN).
+#     Ручные обходы — docs/runbook.md §8 (в т.ч. §8.2 про processing).
 #
 # Миграции: docker compose ... exec backend alembic upgrade head
 # Seed admin/permissions: docker compose ... exec backend make seed
@@ -67,7 +73,40 @@ services:
     container_name: crm-lg-backend
     # --ws-max-size 4194304 — лимит размера WS-фрейма 4 МБ (дефолт uvicorn 16 МБ);
     # ровно этот лимит задокументирован в infra/nginx.example.conf.
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--proxy-headers", "--forwarded-allow-ips=*", "--ws-max-size", "4194304"]
+    #
+    # --workers 1 — НЕ опечатка и не «временно», менять нельзя без работы ниже.
+    # Комната скрининга держит два реестра ПРОЦЕССА, а не общего хранилища
+    # (backend/app/api/v1/endpoints/screening_ws.py):
+    #   * _ACTIVE_SOCKETS  — одно активное WS-соединение на session_id: новое
+    #     подключение вытесняет предыдущее;
+    #   * _LINGERING_BRIDGES — «припаркованный» STT-мост, который переживает
+    #     обрыв клиента SCREENING_WS_HOLD_SEC и переиспользуется на reconnect.
+    # При >1 воркере оба реестра расщепляются: reconnect почти всегда попадает
+    # в ДРУГОЙ воркер, и тогда
+    #   * вытеснение не срабатывает — на одну сессию оказывается два писателя
+    #     сегментов (UNIQUE по seq не спасает: seq у них разные, в транскрипт
+    #     приезжают дубли реплик);
+    #   * припаркованный мост не находится — контекст распознавания теряется,
+    #     на каждый reconnect поднимается новая сессия в stt-service и быстрее
+    #     упирается STT_MAX_SESSIONS (WS close 1013 / error:busy).
+    # Плюс /metrics: in-process счётчики скрининга при нескольких воркерах
+    # показывали срез случайного воркера — с одним воркером scrape честный
+    # (см. infra/alerts/screening.rules.yml).
+    #
+    # ЦЕНА: весь REST обслуживает один процесс — потолок по CPU-bound запросам
+    # примерно вдвое ниже прежнего. Для текущей 2-vCPU VM это приемлемо (профиль
+    # нагрузки — I/O-bound: Postgres, S3, внешние API), но заметно на тяжёлых
+    # выгрузках/отчётах. Если упрёмся — сначала вертикальное масштабирование VM.
+    #
+    # Вернуть 2+ воркера можно ТОЛЬКО после одного из двух:
+    #   1) вынести оба реестра во внешнее состояние — Redis (владелец сокета по
+    #      ключу session_id + сигнал вытеснения через pub/sub; мост при этом
+    #      всё равно живёт в памяти конкретного воркера, значит его парковка
+    #      теряет смысл, либо STT-мост выносится в отдельный процесс);
+    #   2) липкая маршрутизация: nginx/upstream hash по session_id из пути WS,
+    #      чтобы все подключения одной сессии попадали в один и тот же воркер
+    #      (требует отдельных upstream-ов на воркер, т.е. по процессу на порт).
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--proxy-headers", "--forwarded-allow-ips=*", "--ws-max-size", "4194304"]
     expose:
       - "8000"
 

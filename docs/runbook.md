@@ -211,15 +211,40 @@ docker compose -f infra/docker-compose.prod.yml --profile celery ps
 **Действие:**
 
 1. `stt_unavailable` / контейнер down → `up -d stt`, проверить `STT_URL=ws://stt:8765`.
+   Если STT вынесен на отдельную VM — она может быть просто выключена по
+   расписанию рабочих часов (см. 8.4).
 2. `busy` (1013) → очередь полна: поднять `STT_MAX_SESSIONS` или вынести STT
-   на GPU-VM (`create_stt_vm` в tofu, см. `infra/terraform/README.md`).
+   на GPU-VM (`create_stt_vm` в tofu, см. `infra/terraform/stt.tf`).
+   Сколько сессий занято прямо сейчас — видно в `/healthz` stt-service
+   (`activeSessions`/`maxSessions`) и в `screening_active_sessions` на бэкенде.
+   Осторожно с потолком: `STT_MAX_SESSIONS` ограничен CPU/RAM (CPU ≈ 2–3,
+   T4 ≈ 5–8) и лимитами контейнера `STT_MEM_LIMIT`/`STT_CPUS`.
 3. p95 STT > 5 с в логах `screening.stt_final` → снизить модель / включить GPU /
    уменьшить параллелизм. Снимок счётчиков: `GET /metrics` (Prometheus) или
-   `GET /api/v1/analytics/screening` (admin JSON).
+   `GET /api/v1/analytics/screening` (admin JSON); готовые правила алертов —
+   `infra/alerts/screening.rules.yml` (см. 8.3).
 4. Отчёт не появляется → worker жив? `SCREENING_ANALYSIS_EAGER=false` на prod
-   требует celery-worker; смотреть задачу `screening.analyze_session`.
+   требует celery-worker; смотреть задачу `screening.analyze_session` (см. 8.2).
 5. Аудио «пропало» через N дней — норма: `SCREENING_AUDIO_RETENTION_DAYS`
    (beat `screening.purge_expired_audio` в 03:15 UTC). Транскрипт/отчёт остаются.
+6. Транскрипта нет, но `sttReady: true` и ошибок нет → почти всегда это захват
+   звука на стороне рекрутера, а не сервер: в диалоге «Поделиться» не выбрана
+   вкладка Телемоста или не включена галка «Поделиться звуком вкладки».
+   Проверяется по индикаторам уровня в комнате (молчит канал кандидата) и по
+   предупреждению «вкладка молчит» в UI. Косвенный серверный признак —
+   `screening_segments_dropped_total{reason="hallucination"}` растёт, а
+   финальных сегментов нет: Whisper выдаёт мусор на тишине, фильтр его режет.
+
+**Один uvicorn-воркер — это осознанно.** Backend в проде запускается с
+`--workers 1` (см. комментарий в `infra/docker-compose.prod.yml`): реестры
+активных WS-сокетов и припаркованных STT-мостов живут в памяти процесса, при
+2+ воркерах ломаются вытеснение соединения и переиспользование моста.
+Практические следствия для дежурного:
+* рестарт backend рвёт ВСЕ live-встречи разом (клиенты переподключатся сами,
+  но контекст STT-моста теряется) — не перезапускать в рабочие часы без нужды;
+* `GET /metrics` показывает весь backend целиком (при нескольких воркерах
+  показания были бы от случайного воркера), но счётчики in-process и
+  обнуляются при рестарте — в Prometheus смотреть через `increase()`/`rate()`.
 
 **Права.** Матрица: `screening:run` (вести встречу), `screening:view_report`
 (транскрипт/отчёт/аудио). Без права API отдаёт 403.
@@ -327,6 +352,87 @@ docker compose -f infra/docker-compose.prod.yml exec redis redis-cli llen celery
    вызов в цикле по списку id из шага 1; каждый прогон — один вызов LLM,
    поэтому учитывайте квоту AI Studio.
 
+**Автоматика.** `SCREENING_PROCESSING_TIMEOUT_MIN` (минуты, дефолт 30,
+0 = выключено) — через столько уборщик сам переставит потерянную задачу
+пост-анализа, а если и это не помогло (втрое дольше) — переведёт сессию в
+`error`, чтобы карточка не крутила «обработку» вечно. Делает это периодическая
+beat-задача уборщика, то есть **без `--profile celery` автоматика не работает**
+и всё лечится только руками по шагам выше.
+
+### 8.3. Алерты Prometheus по скринингу
+
+Правила лежат в `infra/alerts/screening.rules.yml` (создаются вместе с
+инфраструктурой мониторинга; в самом compose Prometheus не поднимается).
+
+**Как подключить.** Смонтировать файл в Prometheus и сослаться на него в
+`prometheus.yml`:
+
+```yaml
+rule_files:
+  - /etc/prometheus/rules/screening.rules.yml
+scrape_configs:
+  - job_name: crm-lg-backend      # имя job'а используется в самих правилах
+    metrics_path: /metrics
+    scheme: https
+    static_configs:
+      - targets: ["crm.lachevsky.ru"]
+```
+
+Проверка перед reload: `promtool check rules infra/alerts/screening.rules.yml`.
+Источник метрик — `GET /metrics` (in-process счётчики,
+`backend/app/modules/screening/metrics.py`); при рестарте backend они
+обнуляются, поэтому в правилах везде `increase()`.
+
+**Что делать по каждому алерту:**
+
+| Алерт | Смысл | Первое действие |
+|---|---|---|
+| `ScreeningSttLatencyP95High` | p95 распознавания > 5 с | п.3 в §8: легче модель / GPU / меньше параллельных встреч |
+| `ScreeningSttFramesDropped` | кадры PCM выбрасываются (backpressure) — дыры в транскрипте | то же, что и при высокой латентности; аудио в S3 при этом целое |
+| `ScreeningSttErrorsBurst` | всплеск ошибок моста (down / busy / обрыв) | п.1–2 в §8; причина — в логах `screening.stt_error reason=…` |
+| `ScreeningSttNoTranscript` | идут live-сессии, а финальных сегментов нет | stt-service недоступен: `ps stt`, `/healthz:8765`, `STT_URL`, VM включена? (8.4) |
+| `ScreeningMetricsScrapeDown` | Prometheus не скрапит backend | §1 руководства: жив ли backend вообще |
+| `ScreeningAiAgentUnavailable` / `ScreeningAiAgentBadRequest` | YandexGPT недоступен / отвечает мусором | §8.1 |
+| `ScreeningReportFallbackRate` | отчёты собираются без выводов модели | §8.1, затем перегенерация по §8.2 |
+| `ScreeningReportErrors` | пост-анализ падает с исключением | §8.2, шаги 4–5 |
+
+Алерта «сессии залипли в processing» нет: подходящей метрики не существует
+(в `/metrics` нет счётчика сессий по статусам). Пока за это отвечают
+`SCREENING_PROCESSING_TIMEOUT_MIN` и SQL-проверка из §8.2 — подробности
+и заготовка правила записаны комментарием в конце файла правил.
+
+### 8.4. GPU-VM для STT: включение, выключение, расписание
+
+Отдельная VM под stt-service создаётся OpenTofu (`infra/terraform/stt.tf`,
+`create_stt_vm = true`); имя — `stt_vm_name` или `<vm_name>-stt`. Backend ходит
+на неё по внутреннему адресу: `STT_URL=ws://<stt_private_ip>:8765`.
+
+Управление питанием — `infra/scripts/stt-vm-schedule.sh` (обёртка над
+`yc compute instance start|stop`; инстанс задаётся `STT_VM_ID` или
+`STT_VM_NAME`):
+
+```bash
+export STT_VM_NAME=crm-lg-prod-stt
+bash infra/scripts/stt-vm-schedule.sh status   # RUNNING/STOPPED + оба IP
+bash infra/scripts/stt-vm-schedule.sh start    # перед встречей
+bash infra/scripts/stt-vm-schedule.sh stop     # после рабочего дня
+```
+
+Расписание рабочих часов (09:00–20:00 МСК = 06:00–17:00 UTC, пн–пт) ставится
+в cron — готовый блок для `/etc/cron.d/crm-lg-stt-vm` есть в шапке скрипта.
+Помнить:
+
+- пока VM выключена, живого транскрипта нет: комната работает, запись идёт в
+  S3, `sttReady:false`. Внеурочную встречу — поднять руками (`start`) заранее,
+  модель прогревается не мгновенно, первые минуты латентность выше;
+- `stop` не проверяет, идёт ли встреча: перед плановой остановкой посмотреть
+  `screening_active_sessions` / `/healthz` stt-service;
+- после старта внутренний IP сохраняется, а публичный (NAT) может смениться —
+  если `STT_URL` вдруг указывает на публичный адрес, проверить его командой
+  `status` и поправить `.env.prod`;
+- офлайн-путь не страдает: запись, доехавшая в S3, расшифровывается задачей
+  `screening.offline_transcribe` позже, когда VM снова включена.
+
 ---
 
 ## Полезные ссылки
@@ -334,6 +440,8 @@ docker compose -f infra/docker-compose.prod.yml exec redis redis-cli llen celery
 - Архитектура: `Архитектура_CRM_ЛГ_Интеграция.docx`
 - План перехода: `План_перехода_на_API.docx`
 - OpenAPI: `docs/openapi.yaml` (Swagger UI на `/docs`)
+- WS-протокол комнаты скрининга: `docs/ws-screening.md` (в OpenAPI его нет)
+- Алерты по скринингу: `infra/alerts/screening.rules.yml`
 - Backend README: `backend/README.md`
 - Infra README: `infra/README.md`
 

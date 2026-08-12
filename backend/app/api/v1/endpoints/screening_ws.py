@@ -4,7 +4,7 @@
 Право `screening:run` — через permissions-matrix (Этап 6).
 
 Клиент → сервер:
-  - JSON control: {type:"start"|"stop"}
+  - JSON control: {type:"start"|"stop"|"pong"}
   - binary: 1 байт канала (0=recruiter, 1=candidate) + PCM16LE 16 кГц
 
 Сервер → клиент:
@@ -13,7 +13,15 @@
   - questions.updated {questions[]} — чек-лист после тика realtime-агента (Этап 4)
   - hint {text} — короткая подсказка рекрутеру
   - session.state {status, sttReady?, error?} — в т.ч. error=max_duration (Этап 6)
-  - ping каждые 30 с
+  - ping каждые 30 с (клиент отвечает {type:"pong"})
+
+Коды закрытия (контракт с фронтом — различимы по смыслу реакции клиента):
+  - 4001 — проблема с токеном (нет/невалиден/протух): обновить токен и
+    переподключиться;
+  - 4003 — соединение вытеснено новым подключением этой же сессии:
+    переподключаться НЕ нужно;
+  - 1008 — нет права вести сессию либо статус сессии не позволяет стрим
+    (терминально, реконнект не поможет).
 
 Инварианты:
   * ВСЁ, что уходит клиенту, идёт через очередь `outgoing` и единственную
@@ -31,6 +39,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -58,12 +67,72 @@ router = APIRouter(prefix="/ws", tags=["screening-realtime"])
 _PING_INTERVAL_SECONDS = 30.0
 _TOUCH_INTERVAL_SECONDS = 15.0
 _STT_RETRY_SECONDS = 5.0
+# Backoff переподключения к STT: при error:busy десятки сессий не должны
+# долбить перегруженный сервис в такт — растём до потолка и мажем джиттером.
+_STT_RETRY_MAX_SECONDS = 60.0
+_STT_RETRY_JITTER = 0.3
 _ACTION_RUN = "screening:run"
+
+# Коды закрытия WS (зафиксированы контрактом с фронтом — не менять).
+_WS_CLOSE_BAD_TOKEN = 4001  # клиент обновит access-токен и переподключится
+_WS_CLOSE_SUPERSEDED = 4003  # вытеснено новым соединением этой же сессии
+
+# Сколько новое соединение ждёт, пока предыдущее припаркует свой STT-мост.
+# Без ожидания _take_lingering_bridge приходит раньше finally старого
+# соединения → поднимается второй мост, а старый висит весь hold_sec.
+_BRIDGE_HANDOFF_WAIT_SEC = 2.0
+
+# Очередь PCM к STT: кадр PCM-worklet-а фронта = 100 мс, каналов два →
+# 100 кадров ≈ 5 с аудио. Больше копить смысла нет: STT всё равно отстанет,
+# а задержка распознавания вырастет.
+_PCM_QUEUE_MAX_FRAMES = 100
+# Сколько ждём, пока очередь дойдёт до STT на control `stop`.
+_PCM_FLUSH_WAIT_SEC = 1.0
 
 # Одно активное соединение на сессию.
 _ACTIVE_SOCKETS: dict[uuid.UUID, WebSocket] = {}
 # STT-мост переживает reconnect клиента: {session_id: (bridge, linger_task)}.
 _LINGERING_BRIDGES: dict[uuid.UUID, tuple[SttBridge, asyncio.Task]] = {}
+# Событие «это соединение освободило свой STT-мост», ключ — вытесняемый сокет
+# (адресно: одну сессию могут переоткрыть несколько раз подряд).
+_BRIDGE_HANDOFF: dict[WebSocket, asyncio.Event] = {}
+# asyncio держит на задачи только слабые ссылки: без набора закрытие/парковку
+# моста может собрать GC (тот же грабль, что в screening/tasks.py).
+_DETACHED_TASKS: set[asyncio.Task] = set()
+
+
+def _spawn_detached(coro, name: str) -> asyncio.Task:
+    """Фоновая задача с жёсткой ссылкой (иначе её съест GC)."""
+    task = asyncio.create_task(coro, name=name)
+    _DETACHED_TASKS.add(task)
+    task.add_done_callback(_DETACHED_TASKS.discard)
+    return task
+
+
+def _retry_delay(base: float) -> float:
+    """Backoff-пауза с джиттером ±_STT_RETRY_JITTER (не выше потолка)."""
+    jittered = base * (1.0 + random.uniform(-_STT_RETRY_JITTER, _STT_RETRY_JITTER))
+    return min(max(0.5, jittered), _STT_RETRY_MAX_SECONDS)
+
+
+def _offer_pcm(queue: "asyncio.Queue[bytes]", frame: bytes) -> int:
+    """Положить кадр в очередь к STT, вытесняя самые старые при переполнении.
+
+    Возвращает число выброшенных кадров. Ждать место нельзя: `await put()`
+    внутри цикла чтения — это head-of-line blocking всего контура, бэк
+    перестаёт читать сокет рекрутера, пока STT разгребает очередь.
+    """
+    dropped = 0
+    while True:
+        try:
+            queue.put_nowait(frame)
+            return dropped
+        except asyncio.QueueFull:
+            try:
+                queue.get_nowait()
+            except asyncio.QueueEmpty:  # pragma: no cover — очередь разобрали
+                return dropped
+            dropped += 1
 
 
 async def _authenticate(token: str) -> User | None:
@@ -102,13 +171,42 @@ def _take_lingering_bridge(session_id: uuid.UUID) -> SttBridge | None:
     if bridge.connected:
         logger.info("screening_ws: reusing STT bridge for %s", session_id)
         return bridge
+    # Мост умер, пока ждал реконнекта: linger-таск мы только что сняли, так что
+    # закрыть сокет к STT больше некому — делаем это здесь.
+    _spawn_detached(bridge.close(), f"screening-stt-close-{session_id}")
     return None
+
+
+async def _await_bridge_handoff(
+    session_id: uuid.UUID, handoff: asyncio.Event
+) -> None:
+    """Дождаться, пока вытесненное соединение освободит свой STT-мост.
+
+    Без этого ожидания новое соединение зовёт _take_lingering_bridge раньше,
+    чем старое дошло до finally: мост ещё не припаркован → поднимаем второй
+    коннект к STT, а старый висит весь hold_sec (и жрёт слот max_sessions).
+    Ждём коротко и без блокировки loop: не дождались — работаем как раньше.
+    """
+    try:
+        if session_id in _LINGERING_BRIDGES:
+            return  # старое соединение уже успело припарковать мост
+        try:
+            await asyncio.wait_for(handoff.wait(), _BRIDGE_HANDOFF_WAIT_SEC)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "screening_ws: previous connection has not released STT bridge in %.1fs (%s)",
+                _BRIDGE_HANDOFF_WAIT_SEC,
+                session_id,
+            )
+    finally:
+        if _BRIDGE_HANDOFF.get(session_id) is handoff:
+            _BRIDGE_HANDOFF.pop(session_id, None)
 
 
 def _park_bridge(session_id: uuid.UUID, bridge: SttBridge, hold_sec: int) -> None:
     """Оставить мост живым hold_sec — клиент может переподключиться."""
     if hold_sec <= 0 or not bridge.connected:
-        asyncio.create_task(bridge.close())
+        _spawn_detached(bridge.close(), f"screening-stt-close-{session_id}")
         return
 
     async def _linger() -> None:
@@ -116,10 +214,22 @@ def _park_bridge(session_id: uuid.UUID, bridge: SttBridge, hold_sec: int) -> Non
             await asyncio.sleep(hold_sec)
         except asyncio.CancelledError:
             return
-        _LINGERING_BRIDGES.pop(session_id, None)
+        if _LINGERING_BRIDGES.get(session_id, (None, None))[0] is bridge:
+            _LINGERING_BRIDGES.pop(session_id, None)
         await bridge.close()
 
-    task = asyncio.create_task(_linger(), name=f"screening-stt-linger-{session_id}")
+    # Уже припаркованный мост этой сессии нельзя просто затереть: его linger-таск
+    # остался бы висеть, а сокет к STT — течь до конца жизни процесса.
+    stale = _LINGERING_BRIDGES.pop(session_id, None)
+    if stale is not None:
+        stale_bridge, stale_task = stale
+        stale_task.cancel()
+        if stale_bridge is not bridge:
+            _spawn_detached(
+                stale_bridge.close(), f"screening-stt-close-stale-{session_id}"
+            )
+
+    task = _spawn_detached(_linger(), f"screening-stt-linger-{session_id}")
     _LINGERING_BRIDGES[session_id] = (bridge, task)
 
 
@@ -129,9 +239,15 @@ async def screening_ws(
     session_id: uuid.UUID,
     token: str = Query(default=""),
 ) -> None:
+    # Принимаем ДО любых проверок: на непринятом соединении uvicorn отвечает на
+    # handshake HTTP 403, и браузер видит 1006 вместо нашего кода — ни 4001
+    # (обновить токен), ни 1008 (терминально) до фронта тогда не доходят.
+    await websocket.accept()
+
     user = await _authenticate(token) if token else None
     if user is None:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        # Отдельный код: клиенту нужно обновить токен, а не сдаваться.
+        await websocket.close(code=_WS_CLOSE_BAD_TOKEN)
         return
 
     started_at: datetime | None = None
@@ -150,14 +266,17 @@ async def screening_ws(
         started_at = session.started_at
         last_seq = await screening_service.next_seq(db, session_id) - 1
 
-    await websocket.accept()
-
     # Вытесняем прошлое соединение этой сессии: два писателя дублировали бы
     # сегменты (UNIQUE по seq от этого не спасает — seq у них разные).
     previous = _ACTIVE_SOCKETS.get(session_id)
+    handoff: asyncio.Event | None = None
     if previous is not None and previous is not websocket:
+        # Событие адресуем конкретному вытесняемому сокету: при трёх быстрых
+        # реконнектах общий ключ по сессии разбудил бы не то соединение.
+        handoff = asyncio.Event()
+        _BRIDGE_HANDOFF[previous] = handoff
         try:
-            await previous.close(code=status.WS_1012_SERVICE_RESTART)
+            await previous.close(code=_WS_CLOSE_SUPERSEDED)
         except Exception:  # noqa: BLE001
             pass
     _ACTIVE_SOCKETS[session_id] = websocket
@@ -182,13 +301,18 @@ async def screening_ws(
 
     bridge: SttBridge | None = None
     outgoing: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+    # Ограниченная очередь PCM: чтение сокета рекрутера не должно зависеть от
+    # скорости STT (см. _offer_pcm).
+    pcm_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=_PCM_QUEUE_MAX_FRAMES)
     stop_requested = False
     timed_out = False
 
     async def _emit(msg: dict[str, Any]) -> None:
         await outgoing.put(msg)
 
-    agent = ScreeningRealtimeAgent(session_id, _emit)
+    # last_seq — то, что агент уже мог разобрать до реконнекта: с нуля встречу
+    # перечитывать нельзя, это лишние вызовы LLM из лимита сессии.
+    agent = ScreeningRealtimeAgent(session_id, _emit, start_seq=max(0, last_seq))
 
     async def _on_stt_event(msg: dict[str, Any]) -> None:
         kind = msg.get("type")
@@ -230,11 +354,17 @@ async def screening_ws(
             except Exception:
                 logger.exception("screening_ws: failed to persist segment")
         elif kind == "transcript.partial":
+            # Валидируем так же, как final: без этого на фронте появлялся
+            # partials[undefined] и «залипший» партиал непонятного канала.
+            speaker_raw = msg.get("speaker")
+            text = (msg.get("text") or "").strip()
+            if not text or speaker_raw not in ("recruiter", "candidate"):
+                return
             await outgoing.put(
                 {
                     "type": "transcript.partial",
-                    "speaker": msg.get("speaker"),
-                    "text": msg.get("text"),
+                    "speaker": speaker_raw,
+                    "text": text,
                 }
             )
         elif kind in ("stt.error", "stt_error"):
@@ -250,6 +380,8 @@ async def screening_ws(
             )
 
     if stt_ready:
+        if handoff is not None:
+            await _await_bridge_handoff(session_id, handoff)
         bridge = _take_lingering_bridge(session_id)
         if bridge is not None:
             bridge.set_handler(_on_stt_event)
@@ -279,6 +411,28 @@ async def screening_ws(
                 return
             await websocket.send_json(msg)
 
+    async def _pump_pcm() -> None:
+        """Единственный писатель в STT: разгребает pcm_queue вне цикла чтения."""
+        while True:
+            frame = await pcm_queue.get()
+            target = bridge
+            if target is None or not target.connected:
+                continue
+            try:
+                await target.send_pcm(frame)
+            except Exception:
+                # Мост умер между проверкой и отправкой: не роняем встречу,
+                # супервизор поднимет соединение.
+                logger.warning("screening_ws: send_pcm failed, STT dropped")
+                screening_metrics.record_stt_error("stt_send_failed")
+
+    async def _flush_pcm_queue() -> None:
+        """Дать очереди дойти до STT перед stop (иначе хвост фразы теряется)."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _PCM_FLUSH_WAIT_SEC
+        while not pcm_queue.empty() and loop.time() < deadline:
+            await asyncio.sleep(0.05)
+
     async def _heartbeat() -> None:
         elapsed = 0.0
         while True:
@@ -296,11 +450,13 @@ async def screening_ws(
         if not stt_url:
             await asyncio.Event().wait()
             return
+        delay = _STT_RETRY_SECONDS
         while True:
-            await asyncio.sleep(_STT_RETRY_SECONDS)
+            await asyncio.sleep(_retry_delay(delay))
             if stop_requested or timed_out:
                 return
             if bridge is not None and bridge.connected:
+                delay = _STT_RETRY_SECONDS
                 continue
             old = bridge
             bridge = None
@@ -310,9 +466,17 @@ async def screening_ws(
                 new_bridge = SttBridge(stt_url, _on_stt_event)
                 await new_bridge.connect()
             except Exception:
-                logger.warning("screening_ws: STT still unavailable (%s)", stt_url)
+                # Экспоненциальный backoff: при error:busy десятки сессий иначе
+                # ретраят в такт и добивают перегруженный stt-service.
+                delay = min(delay * 2, _STT_RETRY_MAX_SECONDS)
+                logger.warning(
+                    "screening_ws: STT still unavailable (%s), next retry in ~%.0fs",
+                    stt_url,
+                    delay,
+                )
                 continue
             bridge = new_bridge
+            delay = _STT_RETRY_SECONDS
             logger.info("screening_ws: STT reconnected for %s", session_id)
             await outgoing.put(
                 {"type": "session.state", "status": "live", "sttReady": True}
@@ -361,13 +525,11 @@ async def screening_ws(
             if "bytes" in event and event["bytes"] is not None:
                 raw: bytes = event["bytes"]
                 if bridge is not None and bridge.connected:
-                    try:
-                        await bridge.send_pcm(raw)
-                    except Exception:
-                        # Мост умер между проверкой и отправкой: не роняем
-                        # встречу, супервизор поднимет соединение.
-                        logger.warning("screening_ws: send_pcm failed, STT dropped")
-                        screening_metrics.record_stt_error("stt_send_failed")
+                    dropped = _offer_pcm(pcm_queue, raw)
+                    if dropped:
+                        # STT не успевает: жертвуем самыми старыми кадрами,
+                        # но продолжаем читать сокет рекрутера.
+                        screening_metrics.record_stt_frames_dropped(dropped)
                 continue
             if "text" in event and event["text"] is not None:
                 try:
@@ -386,9 +548,15 @@ async def screening_ws(
                             "sttReady": bridge is not None and bridge.connected,
                         }
                     )
+                elif kind == "pong":
+                    # Ответ на наш ping — служебный, молча игнорируем.
+                    continue
                 elif kind == "stop":
                     stop_requested = True
                     if bridge is not None:
+                        # Сначала досылаем очередь PCM, потом просим STT дожать
+                        # хвост: иначе последняя фраза уедет в мусор.
+                        await _flush_pcm_queue()
                         await bridge.stop()
                         bridge = None
                     await outgoing.put(
@@ -400,6 +568,7 @@ async def screening_ws(
 
     tasks = [
         asyncio.create_task(_pump_out(), name="screening_out"),
+        asyncio.create_task(_pump_pcm(), name="screening_pcm"),
         asyncio.create_task(_heartbeat(), name="screening_hb"),
         asyncio.create_task(_drain_in(), name="screening_in"),
         asyncio.create_task(_duration_watch(), name="screening_duration"),
@@ -438,6 +607,15 @@ async def screening_ws(
                 # Обрыв сети: держим мост hold_sec, клиент переподключится с
                 # backoff и продолжит распознавание без потери контекста.
                 _park_bridge(session_id, bridge, hold_sec)
+        # Свой непотреблённый handoff (STT выключен / не дошли до моста) не
+        # должен пережить соединение.
+        if handoff is not None and _BRIDGE_HANDOFF.get(session_id) is handoff:
+            _BRIDGE_HANDOFF.pop(session_id, None)
+        # Мост освобождён — будим новое соединение этой сессии, если оно нас
+        # вытеснило и ждёт парковки.
+        waiter = _BRIDGE_HANDOFF.get(session_id)
+        if waiter is not None:
+            waiter.set()
         try:
             await websocket.close()
         except Exception:

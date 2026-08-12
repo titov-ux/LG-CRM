@@ -9,15 +9,23 @@
  *  - дедуп финальных сегментов по `seq` (при reconnect сервер может прислать
  *    уже виденное — бэк нумерует сквозным счётчиком);
  *  - `hello.lastSeq` после реконнекта: если сервер ушёл вперёд, дозагружаем
- *    пропущенное через REST `GET /screenings/{id}/transcript` ({items,lastSeq})
- *    и сливаем по seq;
+ *    пропущенное через REST `GET /screenings/{id}/segments` (плоский список
+ *    сегментов) и сливаем по seq;
  *  - PCM-буфер (~2 с) пока WS не OPEN: иначе на reconnect теряется интервал
  *    аудио («дозагрузка недостающего» с клиента);
  *  - graceful-завершение: `stop()` шлёт `{type:"stop"}` перед закрытием — иначе
  *    бэкенд теряет последние сегменты. В cleanup эффекта `stop` НЕ шлём: в dev
  *    StrictMode это рвало бы STT-мост на первом же mount/unmount;
- *  - «погашенный» сокет (лимит длительности, 1008) не переподключается; флаг
- *    снимается при смене sessionId и при повторном включении (`enabled`).
+ *  - «погашенный» сокет (лимит длительности, терминальный код закрытия) не
+ *    переподключается; флаг снимается при смене sessionId, при повторном
+ *    включении (`enabled`) и по явному `reconnect()` из UI;
+ *  - коды закрытия различаем: 4001 — протух токен (обновляем его «пробуждающим»
+ *    REST-запросом и переподключаемся, не больше нескольких раз), 4003 — нас
+ *    вытеснила другая вкладка (реконнект запрещён), 1008 — нет прав / сессия
+ *    не live (терминально);
+ *  - watchdog по входящему трафику: сервер шлёт `ping` раз в 30 с, на него
+ *    отвечаем `pong`; тишина дольше WATCHDOG_MS = полуоткрытый TCP, рвём сокет
+ *    руками и уходим в реконнект (иначе UI врёт «распознавание идёт»).
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -49,9 +57,33 @@ export interface LiveHint {
 
 export type SttStatus = 'connecting' | 'ok' | 'unavailable';
 
+/** Терминальная причина, по которой сокет больше не поднимется сам. */
+export type SocketFatalKind = 'forbidden' | 'displaced' | 'auth';
+
+export interface SocketFatal {
+  kind: SocketFatalKind;
+  message: string;
+}
+
 const MAX_HINTS = 5;
 /** Сервер закрывает WS этим кодом, если пользователь не ведёт эту сессию. */
 const WS_POLICY_VIOLATION = 1008;
+/** Токен невалиден/протух — нужен свежий access и повторное подключение. */
+const WS_TOKEN_INVALID = 4001;
+/** Это подключение вытеснено другим подключением той же сессии. */
+const WS_DISPLACED = 4003;
+/**
+ * Легаси-код вытеснения (бэк слал 1012 до появления 4003). Обрабатываем так же:
+ * реконнект после вытеснения давал бесконечный «пинг-понг» двух вкладок.
+ */
+const WS_SERVICE_RESTART = 1012;
+/** Сколько раз пробуем обновить токен по 4001, прежде чем сдаться. */
+const MAX_AUTH_RETRIES = 3;
+/**
+ * Сервер шлёт `ping` раз в 30 с. Если ничего не приходило дольше — соединение
+ * полуоткрытое (NAT/усыпление): рвём сами, иначе транскрипт молча замирает.
+ */
+const WATCHDOG_MS = 50_000;
 /** Пауза перед close() — чтобы сервер успел прочитать `stop`. */
 const STOP_GRACE_MS = 400;
 /**
@@ -107,12 +139,22 @@ export function useScreeningSocket(sessionId: string, enabled: boolean) {
   const [questionsUpdatedAt, setQuestionsUpdatedAt] = useState<number | null>(null);
   /** Этап 6: сервер закрыл сессию по SCREENING_MAX_DURATION_MIN. */
   const [maxDurationHit, setMaxDurationHit] = useState(false);
+  /** Лимит длительности встречи из `hello` — показываем оставшееся время. */
+  const [maxDurationSec, setMaxDurationSec] = useState<number | null>(null);
   /** Причина, по которой live-транскрипт неполный (403 на дозагрузке и т.п.). */
   const [transcriptNotice, setTranscriptNotice] = useState<string | null>(null);
+  /** Терминальная причина обрыва: сам сокет уже не поднимется, нужен UI. */
+  const [fatal, setFatal] = useState<SocketFatal | null>(null);
+  /** Ручное «подключиться заново» из UI — перезапускает эффект сокета. */
+  const [retryTick, setRetryTick] = useState(0);
 
   const wsRef = useRef<WebSocket | null>(null);
   const retryRef = useRef(0);
   const timerRef = useRef<number | null>(null);
+  /** Таймер «давно не было ни одного сообщения» (ping/pong watchdog). */
+  const watchdogRef = useRef<number | null>(null);
+  /** Сколько раз уже пробовали обновить токен после кода 4001. */
+  const authRetryRef = useRef(0);
   const hintIdRef = useRef(0);
   const segmentsRef = useRef<LiveSegment[]>([]);
   segmentsRef.current = segments;
@@ -126,7 +168,7 @@ export function useScreeningSocket(sessionId: string, enabled: boolean) {
   enabledRef.current = enabled;
   /** Докуда уже дозагружали транскрипт по REST — чтобы не дёргать его зря. */
   const backfilledSeqRef = useRef(0);
-  /** 403 на `GET /transcript` — повторять бессмысленно, сообщаем один раз. */
+  /** 403 на `GET /segments` — повторять бессмысленно, сообщаем один раз. */
   const backfillDeniedRef = useRef(false);
   /**
    * PCM, накопленный пока WS не OPEN (reconnect / краткий обрыв).
@@ -138,6 +180,7 @@ export function useScreeningSocket(sessionId: string, enabled: boolean) {
   useEffect(() => {
     killedRef.current = false;
     retryRef.current = 0;
+    authRetryRef.current = 0;
     backfilledSeqRef.current = 0;
     backfillDeniedRef.current = false;
     pcmBufferRef.current = [];
@@ -147,7 +190,9 @@ export function useScreeningSocket(sessionId: string, enabled: boolean) {
     setQuestionsUpdatedAt(null);
     setSttStatus('connecting');
     setMaxDurationHit(false);
+    setMaxDurationSec(null);
     setTranscriptNotice(null);
+    setFatal(null);
   }, [sessionId]);
 
   // Сокет снова понадобился (например, «Завершить» упало и сессия осталась
@@ -156,6 +201,8 @@ export function useScreeningSocket(sessionId: string, enabled: boolean) {
     if (!enabled) return;
     killedRef.current = false;
     retryRef.current = 0;
+    authRetryRef.current = 0;
+    setFatal(null);
   }, [enabled]);
 
   /** Дозагрузка пропущенных сегментов после реконнекта (hello.lastSeq). */
@@ -165,7 +212,10 @@ export function useScreeningSocket(sessionId: string, enabled: boolean) {
       const localMax = segmentsRef.current.reduce((m, s) => Math.max(m, s.seq), 0);
       if (lastSeq <= Math.max(localMax, backfilledSeqRef.current)) return;
       try {
-        const { items, lastSeq: storedSeq } = await screeningsApi.transcript(sessionId);
+        // Именно `GET /segments`: он сделан для ведущего рекрутера и не требует
+        // права `screening:view_report` (в отличие от `GET /transcript`).
+        const items = await screeningsApi.segments(sessionId);
+        const storedSeq = items.reduce((m, s) => Math.max(m, s.seq), 0);
         setSegments((prev) =>
           mergeSegments(
             prev,
@@ -184,8 +234,9 @@ export function useScreeningSocket(sessionId: string, enabled: boolean) {
       } catch (e) {
         const status = (e as { response?: { status?: number } } | null)?.response?.status;
         if (status === 403) {
-          // Нет права `screening:view_report` — REST-дозагрузка недоступна,
-          // ретраить нечего: показываем только реплики этого подключения.
+          // Фолбэк на реальный 403 (сессию ведёт кто-то другой): REST-дозагрузка
+          // недоступна, ретраить нечего — показываем только реплики этого
+          // подключения.
           backfillDeniedRef.current = true;
           setTranscriptNotice(
             'Нет прав на просмотр сохранённого транскрипта — показываем только реплики с момента подключения.',
@@ -201,6 +252,48 @@ export function useScreeningSocket(sessionId: string, enabled: boolean) {
     if (!enabled) return;
 
     let disposed = false;
+
+    const clearWatchdog = () => {
+      if (watchdogRef.current !== null) {
+        window.clearTimeout(watchdogRef.current);
+        watchdogRef.current = null;
+      }
+    };
+
+    /**
+     * Взводим «сторож тишины» заново на каждом входящем сообщении. Сработал —
+     * значит не дошёл даже серверный ping: рвём сокет, onclose уведёт нас в
+     * обычный reconnect.
+     */
+    const armWatchdog = (ws: WebSocket) => {
+      clearWatchdog();
+      watchdogRef.current = window.setTimeout(() => {
+        watchdogRef.current = null;
+        setSttStatus('connecting');
+        try {
+          ws.close();
+        } catch {
+          /* ignore */
+        }
+      }, WATCHDOG_MS);
+    };
+
+    /**
+     * Код 4001: access-токен протух. Дёргаем любой authenticated REST — на 401
+     * ky-интерцептор сам сходит за refresh и положит свежий токен в стор
+     * (см. api/client.ts), после чего переподключаемся уже с ним.
+     */
+    const refreshTokenAndReconnect = async () => {
+      if (disposed || !enabledRef.current || killedRef.current) return;
+      setSttStatus('connecting');
+      try {
+        await screeningsApi.byId(sessionId);
+      } catch {
+        /* даже если запрос упал — попытка переподключения ниже не повредит */
+      }
+      if (disposed || !enabledRef.current || killedRef.current) return;
+      scheduleReconnect();
+    };
 
     const connect = () => {
       if (disposed || !enabledRef.current || killedRef.current) return;
@@ -223,7 +316,9 @@ export function useScreeningSocket(sessionId: string, enabled: boolean) {
 
       ws.onopen = () => {
         retryRef.current = 0;
+        authRetryRef.current = 0;
         setConnected(true);
+        armWatchdog(ws);
         try {
           ws.send(JSON.stringify({ type: 'start', sampleRate: 16000 }));
         } catch {
@@ -261,15 +356,56 @@ export function useScreeningSocket(sessionId: string, enabled: boolean) {
         }
       };
       ws.onclose = (ev) => {
+        clearWatchdog();
         setConnected(false);
         // Недоговорённая фраза после обрыва протухла — иначе висит вечно.
         setPartials({});
-        if (wsRef.current === ws) wsRef.current = null;
+        // Разбирать коды имеет смысл только для АКТУАЛЬНОГО сокета. При
+        // перезапуске эффекта (StrictMode mount→unmount→mount, ручной
+        // reconnect, смена enabled) сервер вытесняет прошлое соединение кодом
+        // 4003 — и onclose уже мёртвого сокета убивал бы только что поднятый:
+        // killedRef + баннер «открыто в другой вкладке» на живой вкладке.
+        if (wsRef.current !== ws) return;
+        wsRef.current = null;
+        if (disposed) return;
+        if (ev.code === WS_TOKEN_INVALID) {
+          // Протух токен: обновляем его и пробуем ещё раз — но не бесконечно,
+          // иначе разлогиненный пользователь крутил бы refresh по кругу.
+          if (authRetryRef.current >= MAX_AUTH_RETRIES) {
+            killedRef.current = true;
+            setSttStatus('unavailable');
+            setFatal({
+              kind: 'auth',
+              message:
+                'Не удалось подтвердить авторизацию для стрима — обновите страницу и войдите заново.',
+            });
+            return;
+          }
+          authRetryRef.current += 1;
+          void refreshTokenAndReconnect();
+          return;
+        }
+        if (ev.code === WS_DISPLACED || ev.code === WS_SERVICE_RESTART) {
+          // Эту сессию перехватило другое подключение (вторая вкладка).
+          // Реконнект здесь означал бы «пинг-понг» двух вкладок по кругу.
+          killedRef.current = true;
+          setSttStatus('unavailable');
+          setFatal({
+            kind: 'displaced',
+            message: 'Комната открыта в другой вкладке — стрим ведётся там.',
+          });
+          return;
+        }
         if (ev.code === WS_POLICY_VIOLATION) {
           // Нет прав вести эту сессию либо она уже не live — реконнект
           // бессмыслен, перечитываем карточку, чтобы UI обновил статус.
           killedRef.current = true;
           setSttStatus('unavailable');
+          setFatal({
+            kind: 'forbidden',
+            message:
+              'Стрим закрыт сервером: нет прав вести эту сессию либо встреча уже завершена.',
+          });
           void queryClient.invalidateQueries({ queryKey: screeningKeys.byId(sessionId) });
           return;
         }
@@ -277,6 +413,8 @@ export function useScreeningSocket(sessionId: string, enabled: boolean) {
         scheduleReconnect();
       };
       ws.onmessage = (e) => {
+        // Любой входящий байт — признак живого соединения (в т.ч. ping).
+        armWatchdog(ws);
         if (typeof e.data !== 'string') return;
         let msg: Record<string, unknown>;
         try {
@@ -287,6 +425,10 @@ export function useScreeningSocket(sessionId: string, enabled: boolean) {
         switch (msg.type) {
           case 'hello': {
             setSttStatus(msg.sttReady ? 'ok' : 'unavailable');
+            // Лимит длительности показываем рекрутеру: hard-stop не должен
+            // наступать «внезапно» посреди разговора.
+            const limit = Number(msg.maxDurationSec ?? 0);
+            setMaxDurationSec(Number.isFinite(limit) && limit > 0 ? limit : null);
             void backfill(Number(msg.lastSeq ?? 0));
             break;
           }
@@ -342,8 +484,18 @@ export function useScreeningSocket(sessionId: string, enabled: boolean) {
             setHints((prev) => [...prev, hint].slice(-MAX_HINTS));
             break;
           }
+          case 'ping': {
+            // Отвечаем, чтобы сервер видел живого клиента (и не рвал по своему
+            // таймауту). Watchdog уже перевзведён выше, в onmessage.
+            try {
+              ws.send(JSON.stringify({ type: 'pong' }));
+            } catch {
+              /* ignore */
+            }
+            break;
+          }
           default:
-            break; // ping и прочее
+            break;
         }
       };
     };
@@ -362,6 +514,7 @@ export function useScreeningSocket(sessionId: string, enabled: boolean) {
     connect();
     return () => {
       disposed = true;
+      clearWatchdog();
       if (timerRef.current !== null) {
         window.clearTimeout(timerRef.current);
         timerRef.current = null;
@@ -378,7 +531,8 @@ export function useScreeningSocket(sessionId: string, enabled: boolean) {
       }
       setConnected(false);
     };
-  }, [sessionId, enabled, backfill, queryClient]);
+    // retryTick — ручное «подключиться заново» из UI: перезапускает эффект.
+  }, [sessionId, enabled, backfill, queryClient, retryTick]);
 
   /**
    * PCM-фрейм от audioCapture → на сервер.
@@ -440,6 +594,19 @@ export function useScreeningSocket(sessionId: string, enabled: boolean) {
     setHints((prev) => prev.filter((h) => h.id !== id));
   }, []);
 
+  /**
+   * Ручное переподключение из UI после терминального обрыва (вытеснила другая
+   * вкладка, протух токен): снимаем «погашенность» и перезапускаем эффект.
+   */
+  const reconnect = useCallback(() => {
+    killedRef.current = false;
+    retryRef.current = 0;
+    authRetryRef.current = 0;
+    setFatal(null);
+    setSttStatus('connecting');
+    setRetryTick((t) => t + 1);
+  }, []);
+
   return {
     connected,
     sttStatus,
@@ -452,5 +619,8 @@ export function useScreeningSocket(sessionId: string, enabled: boolean) {
     stop,
     dismissHint,
     maxDurationHit,
+    maxDurationSec,
+    fatal,
+    reconnect,
   };
 }

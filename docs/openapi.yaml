@@ -12,6 +12,13 @@ info:
     `{ ok: true }` для удалений). Чувствительные поля кандидатов (`email`,
     `phone`, `rateMonth`) фильтруются на сервере в зависимости от роли —
     клиент получит `null` или `"—"` вместо значения.
+
+    WebSocket-ручки в этом контракте НЕ описаны (OpenAPI описывает HTTP-запросы,
+    а не поток фреймов после Upgrade) и, соответственно, не попадают в codegen.
+    Протокол комнаты AI-скрининга `/api/v1/ws/screening/{sessionId}?token=` —
+    control-сообщения, формат бинарных аудио-фреймов, события сервер→клиент,
+    ping/pong, коды закрытия и семантика reconnect — описан отдельно:
+    `docs/ws-screening.md`.
   contact:
     name: ЛГ Интеграция
     email: ops@lg.ru
@@ -2358,7 +2365,7 @@ paths:
             schema:
               type: object
               properties:
-                durationSec: { type: integer, nullable: true }
+                durationSec: { type: integer, nullable: true, minimum: 0 }
       responses:
         '200':
           description: ScreeningSession
@@ -2490,7 +2497,7 @@ paths:
               type: object
               required: [text]
               properties:
-                text:     { type: string }
+                text:     { type: string, maxLength: 2000 }
                 goal:     { type: string, nullable: true }
                 position: { type: integer, nullable: true }
       responses:

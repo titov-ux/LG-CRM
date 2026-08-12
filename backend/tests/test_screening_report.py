@@ -41,6 +41,58 @@ def test_fallback_empty_transcript():
     assert "почти нет" in out["summary"]
 
 
+class _StubClient:
+    """Заглушка YandexGptClient: запоминает промпт, отдаёт валидный JSON."""
+
+    model = "yandexgpt/rc"
+    last_user: str = ""
+
+    def __init__(self, *a, **k):
+        pass
+
+    async def json_completion(self, **kwargs):
+        type(self).last_user = kwargs["user"]
+        return {
+            "summary": "Ок.",
+            "verdict": "partial_fit",
+            "scores": {k: {"score": 3, "note": "ok"} for k in report.SCORE_KEYS},
+            "red_flags": [],
+            "recommendation": "Следующий шаг.",
+        }
+
+
+async def test_generate_report_caps_checklist(monkeypatch):
+    """Чек-лист тоже режется: раньше под max_chars попадал только транскрипт.
+
+    Агент за встречу добавляет follow-up, а рекрутер может вставить в вопрос
+    целое резюме — без потолка промпт улетал за контекст модели.
+    """
+    monkeypatch.setattr(
+        "app.modules.screening.report.YandexGptClient", _StubClient
+    )
+    from app.core.config import get_settings
+
+    max_chars = get_settings().yandex_ai_max_input_chars
+    questions = [
+        {
+            "text": "В" * 5000,
+            "status": "answered",
+            "answer_summary": "О" * 5000,
+            "goal": "цель",
+        }
+        for _ in range(200)
+    ]
+    await report.generate_screening_report(
+        questions=questions,
+        segments=[{"speaker": "candidate", "text": "Т" * 100_000}],
+    )
+    user = _StubClient.last_user
+    # Промпт укладывается в бюджет входа (с небольшим запасом на заголовки).
+    assert len(user) < max_chars + 500
+    assert "опущено" in user or "[обрезано]" in user
+    assert "=== ТРАНСКРИПТ ===" in user
+
+
 async def test_generate_report_calls_llm(monkeypatch):
     captured: dict = {}
 

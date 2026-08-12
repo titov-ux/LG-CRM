@@ -4,10 +4,6 @@ import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import type { ScreeningReport, ScreeningSession, ScreeningVerdict } from '@/api/screenings';
-import {
-  generateScreeningReportDocxBlob,
-  screeningReportFileName,
-} from './generateReportDocx';
 
 const VERDICT_META: Record<
   ScreeningVerdict,
@@ -33,8 +29,14 @@ const SCORE_LABELS: Record<string, string> = {
  * Скачивание DOCX. Ссылку обязательно добавляем в DOM (вне Chrome click() по
  * detached-элементу игнорируется), а revoke откладываем — иначе Safari/Firefox
  * успевают отменить загрузку.
+ *
+ * `docx` весит немало, а панель рендерится в карточке кандидата у всех — грузим
+ * генератор динамически, только когда действительно жмут «DOCX».
  */
 async function downloadReport(session: ScreeningSession, report: ScreeningReport) {
+  const { generateScreeningReportDocxBlob, screeningReportFileName } = await import(
+    './generateReportDocx'
+  );
   const blob = await generateScreeningReportDocxBlob(session, report);
   const url = URL.createObjectURL(blob);
   try {
@@ -76,6 +78,26 @@ export function ScreeningReportPanel({
     }
   };
 
+  /** Кнопка выгрузки — нужна и в обычной панели, и в ветке `status=error`. */
+  const docxButton = (report: ScreeningReport, className?: string) => (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      className={className ?? 'h-7 gap-1 px-2 text-[11px]'}
+      onClick={() => void handleDownload(report)}
+      disabled={downloading}
+      aria-label="Скачать отчёт в формате DOCX"
+    >
+      {downloading ? (
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+      ) : (
+        <FileDown className="h-3.5 w-3.5" />
+      )}
+      {downloading ? 'Готовим…' : 'DOCX'}
+    </Button>
+  );
+
   const statusHint = STATUS_HINT[session.status];
   if (statusHint) {
     return <div className="text-[12px] text-muted-foreground">{statusHint}</div>;
@@ -94,9 +116,14 @@ export function ScreeningReportPanel({
 
   if (session.status === 'error') {
     return (
-      <div className="rounded-md border border-red-200 bg-red-50/60 px-3 py-2.5 text-[12px] text-red-800">
-        Не удалось сформировать отчёт. Транскрипт и запись сохранены — можно
-        оценить встречу вручную.
+      <div className="space-y-2">
+        <div className="rounded-md border border-red-200 bg-red-50/60 px-3 py-2.5 text-[12px] text-red-800">
+          Не удалось сформировать отчёт. Транскрипт и запись сохранены — можно
+          оценить встречу вручную.
+        </div>
+        {/* Пост-анализ мог упасть уже после того, как отчёт сохранился (или на
+            повторном прогоне) — не лишаем выгрузки только из-за статуса. */}
+        {session.report && docxButton(session.report)}
       </div>
     );
   }
@@ -120,22 +147,7 @@ export function ScreeningReportPanel({
         {!compact && session.vacancyTitle && (
           <span className="text-[11.5px] text-muted-foreground">{session.vacancyTitle}</span>
         )}
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="ml-auto h-7 gap-1 px-2 text-[11px]"
-          onClick={() => void handleDownload(report)}
-          disabled={downloading}
-          aria-label="Скачать отчёт в формате DOCX"
-        >
-          {downloading ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <FileDown className="h-3.5 w-3.5" />
-          )}
-          {downloading ? 'Готовим…' : 'DOCX'}
-        </Button>
+        {docxButton(report, 'ml-auto h-7 gap-1 px-2 text-[11px]')}
       </div>
 
       <p className="text-[12.5px] leading-snug text-foreground/90">{report.summary}</p>

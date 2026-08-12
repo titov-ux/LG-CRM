@@ -84,7 +84,9 @@ export function VideoInterviewsPage() {
     recruiterId === me?.id || me?.role === 'admin';
   const { data, isLoading, isError, refetch, isRefetching } = useScreenings(
     { pageSize: 50 },
-    { pollProcessing: canSeeList },
+    // Без прав раздел всё равно показывает заглушку — запрос не нужен (и всё
+    // равно вернул бы 403).
+    { pollProcessing: canSeeList, enabled: canSeeList },
   );
   const deleteSession = useDeleteScreening();
   const items = data?.items ?? [];

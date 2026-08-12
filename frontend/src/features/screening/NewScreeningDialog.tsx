@@ -47,6 +47,7 @@ function SearchablePick({
   searchPlaceholder,
   emptyText = 'Ничего не найдено',
   disabled,
+  loading = false,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -55,6 +56,8 @@ function SearchablePick({
   searchPlaceholder: string;
   emptyText?: string;
   disabled?: boolean;
+  /** Справочник ещё грузится — «Ничего не найдено» тут вводит в заблуждение. */
+  loading?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const selected = options.find((o) => o.value === value);
@@ -98,7 +101,7 @@ function SearchablePick({
         <Command>
           <CommandInput placeholder={searchPlaceholder} />
           <CommandList>
-            <CommandEmpty>{emptyText}</CommandEmpty>
+            <CommandEmpty>{loading ? 'Загружаем справочник…' : emptyText}</CommandEmpty>
             {groups.map(({ heading, items }) => (
               <CommandGroup key={heading ?? '__default'} heading={heading}>
                 {items.map((o) => (
@@ -151,8 +154,12 @@ export function NewScreeningDialog({
   const navigate = useNavigate();
   const meId = useAuthStore((s) => s.user?.id);
   const create = useCreateScreening();
-  const { data: candidates } = useCandidatesList(open);
-  const { data: vacancies } = useVacanciesList(open);
+  const { data: candidates, isFetching: candidatesFetching } = useCandidatesList(open);
+  const { data: vacancies, isFetching: vacanciesFetching } = useVacanciesList(open);
+  // Именно isFetching, а не `!data`: при упавшем запросе данных тоже нет, и
+  // «Загружаем справочник…» висело бы вечно вместо «Ничего не найдено».
+  const candidatesLoading = candidatesFetching && !candidates;
+  const vacanciesLoading = vacanciesFetching && !vacancies;
 
   const [candidateId, setCandidateId] = useState('');
   const [vacancyId, setVacancyId] = useState(NONE);
@@ -295,6 +302,7 @@ export function NewScreeningDialog({
               placeholder="Выберите кандидата"
               searchPlaceholder="Поиск кандидата…"
               disabled={!!defaultCandidateId}
+              loading={candidatesLoading}
             />
           </div>
           <div className="space-y-1.5">
@@ -305,6 +313,7 @@ export function NewScreeningDialog({
               options={vacancyOptions}
               placeholder="Без вакансии"
               searchPlaceholder="Поиск вакансии…"
+              loading={vacanciesLoading}
             />
           </div>
           <div className="space-y-1.5">

@@ -34,6 +34,15 @@ BRANCH="main"
 SKIP_FRONTEND=0
 SKIP_MIGRATE=0
 HEALTHCHECK_URL="${HEALTHCHECK_URL:-https://localhost/healthz}"
+# Host-заголовок для health check. Без него запрос уходит в nginx как
+# `Host: localhost`, не попадает в server-блок домена и возвращает 502 —
+# деплой падал на ровном месте при полностью живом приложении (проверено:
+# с `-H "Host: <домен>"` тот же URL отдаёт 200). Берём server_name из
+# infra/nginx.conf, если не задан явно.
+HEALTHCHECK_HOST="${HEALTHCHECK_HOST:-}"
+if [[ -z "$HEALTHCHECK_HOST" && -f infra/nginx.conf ]]; then
+  HEALTHCHECK_HOST="$(awk '$1=="server_name" {print $2; exit}' infra/nginx.conf | tr -d ';')"
+fi
 
 step() { printf "\n\033[1;36m[deploy]\033[0m %s\n" "$*"; }
 warn() { printf "\n\033[1;33m[deploy]\033[0m %s\n" "$*"; }
@@ -120,13 +129,26 @@ CURL_HEALTH_OPTS=(-fsS)
 if [[ "$HEALTHCHECK_URL" == https://* ]]; then
   CURL_HEALTH_OPTS+=(-k)
 fi
+if [[ -n "$HEALTHCHECK_HOST" ]]; then
+  CURL_HEALTH_OPTS+=(-H "Host: $HEALTHCHECK_HOST")
+fi
 for _ in $(seq 1 30); do
   if curl "${CURL_HEALTH_OPTS[@]}" "$HEALTHCHECK_URL" >/dev/null 2>&1; then
     break
   fi
   sleep 2
 done
-curl "${CURL_HEALTH_OPTS[@]}" "$HEALTHCHECK_URL" >/dev/null || die "backend health check failed ($HEALTHCHECK_URL)"
+if ! curl "${CURL_HEALTH_OPTS[@]}" "$HEALTHCHECK_URL" >/dev/null; then
+  # Через nginx не ответило — спрашиваем сам бэкенд. Так деплой не падает
+  # из-за конфигурации фронта, но и не притворяется успешным, если приложение
+  # действительно не поднялось.
+  if $COMPOSE exec -T backend python -c \
+    "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=5).status == 200 else 1)"; then
+    warn "health check через nginx не прошёл ($HEALTHCHECK_URL), но бэкенд отвечает напрямую — проверьте server_name / HEALTHCHECK_HOST"
+  else
+    die "backend health check failed ($HEALTHCHECK_URL)"
+  fi
+fi
 
 step "deploy completed successfully"
 echo "Branch: $BRANCH"

@@ -28,6 +28,9 @@ from typing import TYPE_CHECKING
 
 from fastapi import status
 from sqlalchemy import func, or_, select
+# `delete` в этом модуле — сервисная функция удаления сессии, поэтому
+# SQL-конструктор берём под алиасом (как и `update`).
+from sqlalchemy import delete as sa_delete
 from sqlalchemy import update as sa_update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -749,6 +752,47 @@ async def attach_audio(
     return await to_dto(db, session, user=user)
 
 
+async def retranscribe(
+    db: AsyncSession, user: User, session_id: uuid.UUID
+) -> ScreeningSessionResponse:
+    """Прогнать распознавание прикреплённой записи заново.
+
+    Отличие от `attach_audio` / авто-повтора: работает и когда транскрипт уже
+    есть — старый текст заменяется свежим, а отчёт пересобирается по нему
+    (`run_post_analysis(replace_report=True)` внутри офлайн-задачи). Нужно,
+    когда первый прогон дал мусор: обрезанную запись, чужую дорожку, текст до
+    починки STT. Пустой ответ STT ничего не стирает (см.
+    `insert_offline_segments`).
+    """
+    await _require_run(db, user)
+    session = await _load(db, session_id)
+    _ensure_can_edit(user, session)
+    if session.audio_file_id is None:
+        raise ApiError(
+            status.HTTP_400_BAD_REQUEST,
+            "no_audio",
+            "К сессии не привязана запись разговора",
+        )
+    if session.status in (ScreeningStatus.draft, ScreeningStatus.live):
+        raise ApiError(
+            status.HTTP_409_CONFLICT,
+            "session_not_finished",
+            "Распознать заново можно только после завершения встречи",
+        )
+    session.status = ScreeningStatus.processing
+    # bump: по updated_at считается cooldown авто-повторов офлайн-STT.
+    session.updated_at = datetime.now(UTC)
+    enqueue_screening_offline_transcribe(db.sync_session, session.id, replace=True)
+    await db.commit()
+    logger.info("screening.offline: manual re-run queued for %s", session_id)
+    # Eager (dev/tests): дождаться текста и отчёта. В prod задача уходит в
+    # Celery, ответ сразу processing — UI поллит карточку.
+    await wait_for_pending_analysis(timeout=180.0)
+    db.expire(session)
+    session = await _load(db, session_id)
+    return await to_dto(db, session, user=user)
+
+
 async def _delete_audio_file(db: AsyncSession, file_id: uuid.UUID) -> bool:
     """Удалить объект записи в S3 и строку files. Ошибка S3 не валит вызов."""
     from app.integrations.s3 import get_s3_adapter
@@ -1187,17 +1231,22 @@ async def insert_offline_segments(
     items: list[dict],
     *,
     speaker: ScreeningSpeaker = ScreeningSpeaker.candidate,
+    replace: bool = False,
 ) -> int:
     """Записать сегменты офлайн-STT (сессия уже не live).
 
     Не трогает существующий live-транскрипт: если сегменты уже есть — no-op.
+    `replace=True` («Распознать заново») — наоборот, старые сегменты сносятся
+    и заменяются свежими; удаление делаем здесь, когда текст от STT уже на
+    руках, чтобы неудачный прогон не оставил сессию без транскрипта вообще.
     Роль берётся из дорожки записи (стерео: микрофон = рекрутёр, вкладка =
     кандидат). У старых моно-записей дорожка одна — там всё уйдёт как
     `speaker` (по умолчанию кандидат), как и было до Этапа 7.
     """
-    if await _segment_count(db, session_id) > 0:
+    had_segments = await _segment_count(db, session_id) > 0
+    if had_segments and not replace:
         return 0
-    written = 0
+    rows: list[ScreeningSegment] = []
     seq = 0
     # Сегменты двух дорожек приходят вперемешку — раскладываем по времени,
     # иначе seq (а значит и порядок в UI) не совпадёт с ходом разговора.
@@ -1222,7 +1271,7 @@ async def insert_offline_segments(
             item_speaker = ScreeningSpeaker(raw_speaker) if raw_speaker else speaker
         except ValueError:
             item_speaker = speaker
-        db.add(
+        rows.append(
             ScreeningSegment(
                 session_id=session_id,
                 seq=seq,
@@ -1232,14 +1281,28 @@ async def insert_offline_segments(
                 ended_ms=ended,
             )
         )
-        written += 1
-    if written:
-        await db.commit()
-    return written
+    if not rows:
+        # Пустой прогон при replace: старый транскрипт не трогаем — иначе
+        # «распознать заново» на сбойной записи стирало бы имеющийся текст.
+        return 0
+    if had_segments:
+        await db.execute(
+            sa_delete(ScreeningSegment).where(ScreeningSegment.session_id == session_id)
+        )
+        await db.flush()
+    db.add_all(rows)
+    await db.commit()
+    return len(rows)
 
 
-async def run_offline_transcription(session_id: uuid.UUID) -> int:
-    """Скачать audio из S3 → STT → сегменты. 0 если нечего делать / ошибка."""
+async def run_offline_transcription(
+    session_id: uuid.UUID, *, replace: bool = False
+) -> int:
+    """Скачать audio из S3 → STT → сегменты. 0 если нечего делать / ошибка.
+
+    `replace=True` — прогон по кнопке «Распознать заново»: существующий
+    транскрипт не повод пропустить работу, он будет перезаписан.
+    """
     from app.integrations.s3 import get_s3_adapter
     from app.modules.screening.offline_stt import OfflineSttError, transcribe_audio_bytes
 
@@ -1255,7 +1318,7 @@ async def run_offline_transcription(session_id: uuid.UUID) -> int:
         if session.audio_file_id is None:
             logger.info("screening.offline: no audio for %s", session_id)
             return 0
-        if await _segment_count(db, session_id) > 0:
+        if not replace and await _segment_count(db, session_id) > 0:
             logger.info("screening.offline: segments already exist for %s", session_id)
             return 0
         file = await db.get(File, session.audio_file_id)
@@ -1281,7 +1344,7 @@ async def run_offline_transcription(session_id: uuid.UUID) -> int:
         return 0
 
     async with SessionLocal() as db:
-        n = await insert_offline_segments(db, session_id, items)
+        n = await insert_offline_segments(db, session_id, items, replace=replace)
     logger.info("screening.offline: wrote %d segment(s) for %s", n, session_id)
     return n
 

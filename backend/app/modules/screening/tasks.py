@@ -26,8 +26,18 @@ _BACKGROUND_TASKS: set[asyncio.Task] = set()
 _ENQUEUE_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="screening-enqueue")
 
 
-def _spawn(loop: asyncio.AbstractEventLoop, sid: str, *, offline: bool = False) -> asyncio.Task:
-    coro = _run_offline_then_analysis(sid) if offline else _run_analysis(sid)
+def _spawn(
+    loop: asyncio.AbstractEventLoop,
+    sid: str,
+    *,
+    offline: bool = False,
+    replace: bool = False,
+) -> asyncio.Task:
+    coro = (
+        _run_offline_then_analysis(sid, replace=replace)
+        if offline
+        else _run_analysis(sid)
+    )
     name = f"screening-offline-{sid}" if offline else f"screening-analysis-{sid}"
     task = loop.create_task(coro, name=name)
     _BACKGROUND_TASKS.add(task)
@@ -56,9 +66,17 @@ def enqueue_screening_analysis(session, session_id: uuid.UUID) -> None:
     session.info.setdefault(_OUTBOX_KEY, []).append(session_id)
 
 
-def enqueue_screening_offline_transcribe(session, session_id: uuid.UUID) -> None:
-    """Офлайн-STT из audio_file + затем пост-анализ (после commit)."""
-    session.info.setdefault(_OUTBOX_OFFLINE_KEY, []).append(session_id)
+def enqueue_screening_offline_transcribe(
+    session, session_id: uuid.UUID, *, replace: bool = False
+) -> None:
+    """Офлайн-STT из audio_file + затем пост-анализ (после commit).
+
+    `replace=True` — кнопка «Распознать заново»: STT гоняется даже когда
+    транскрипт уже есть, а старые сегменты сносятся только после успешного
+    ответа STT (иначе сбой распознавания оставлял бы карточку вообще без
+    текста).
+    """
+    session.info.setdefault(_OUTBOX_OFFLINE_KEY, []).append((session_id, replace))
 
 
 @event.listens_for(Session, "after_commit")
@@ -67,13 +85,18 @@ def _flush_analysis_after_commit(session: Session) -> None:
     pending = session.info.pop(_OUTBOX_KEY, None) or []
     # Офлайн уже включает анализ — не дублируем. Дедуп по id: один commit
     # мог несколько раз вызвать enqueue (GET+finish) и породить N задач.
-    seen_offline: set[str] = set()
-    for session_id in offline:
+    # Дедуп схлопывает повторы одного id, но «заново» приоритетнее обычного
+    # прогона: иначе force-кнопка в паре с авто-постановкой теряла бы replace.
+    offline_replace: dict[str, bool] = {}
+    offline_ids: dict[str, uuid.UUID] = {}
+    for item in offline:
+        session_id, replace = item if isinstance(item, tuple) else (item, False)
         key = str(session_id)
-        if key in seen_offline:
-            continue
-        seen_offline.add(key)
-        _dispatch(session_id, offline=True)
+        offline_ids[key] = session_id
+        offline_replace[key] = offline_replace.get(key, False) or bool(replace)
+    seen_offline: set[str] = set(offline_ids)
+    for key, session_id in offline_ids.items():
+        _dispatch(session_id, offline=True, replace=offline_replace[key])
     seen_pending: set[str] = set()
     for session_id in pending:
         key = str(session_id)
@@ -89,20 +112,24 @@ def _drop_analysis_after_rollback(session: Session) -> None:
     session.info.pop(_OUTBOX_OFFLINE_KEY, None)
 
 
-def _send_to_broker(sid: str, *, offline: bool) -> None:
+def _send_to_broker(sid: str, *, offline: bool, replace: bool = False) -> None:
     """Собственно `.delay()` — только он ходит в Redis (см. `_ENQUEUE_POOL`)."""
     if offline:
-        offline_transcribe_screening.delay(sid)
+        offline_transcribe_screening.delay(sid, replace)
     else:
         analyze_screening_session.delay(sid)
 
 
-def _run_inline(sid: str, *, offline: bool) -> None:
+def _run_inline(sid: str, *, offline: bool, replace: bool = False) -> None:
     """Фолбэк без брокера: гоняем анализ прямо здесь (dev / сбой Celery)."""
-    asyncio.run(_run_offline_then_analysis(sid) if offline else _run_analysis(sid))
+    asyncio.run(
+        _run_offline_then_analysis(sid, replace=replace)
+        if offline
+        else _run_analysis(sid)
+    )
 
 
-def _dispatch(session_id: uuid.UUID, *, offline: bool) -> None:
+def _dispatch(session_id: uuid.UUID, *, offline: bool, replace: bool = False) -> None:
     settings = get_settings()
     sid = str(session_id)
     kind = "offline" if offline else "analysis"
@@ -114,30 +141,39 @@ def _dispatch(session_id: uuid.UUID, *, offline: bool) -> None:
     if settings.screening_analysis_eager:
         if loop is None:
             logger.warning("screening.%s: no event loop — running sync for %s", kind, sid)
-            _run_inline(sid, offline=offline)
+            _run_inline(sid, offline=offline, replace=replace)
             return
-        _spawn(loop, sid, offline=offline)
+        _spawn(loop, sid, offline=offline, replace=replace)
         return
 
     if loop is None:
         # Вне event loop (Celery-воркер, скрипты) блокирующий .delay() безопасен.
         try:
-            _send_to_broker(sid, offline=offline)
+            _send_to_broker(sid, offline=offline, replace=replace)
         except Exception:
             logger.exception(
                 "screening.%s: Celery enqueue failed for %s — fallback inline",
                 kind,
                 sid,
             )
-            _run_inline(sid, offline=offline)
+            _run_inline(sid, offline=offline, replace=replace)
         return
 
     # Мы внутри `await db.commit()`: отдаём отправку в пул потоков, а ошибку
     # брокера разбираем колбэком — контракт outbox/дедупа не меняется, задача
     # по-прежнему ставится ровно один раз на commit.
-    future: Future = _ENQUEUE_POOL.submit(_send_to_broker, sid, offline=offline)
+    future: Future = _ENQUEUE_POOL.submit(
+        _send_to_broker, sid, offline=offline, replace=replace
+    )
     future.add_done_callback(
-        partial(_on_enqueue_done, loop=loop, sid=sid, offline=offline, kind=kind)
+        partial(
+            _on_enqueue_done,
+            loop=loop,
+            sid=sid,
+            offline=offline,
+            replace=replace,
+            kind=kind,
+        )
     )
 
 
@@ -148,6 +184,7 @@ def _on_enqueue_done(
     sid: str,
     offline: bool,
     kind: str,
+    replace: bool = False,
 ) -> None:
     if future.cancelled() or future.exception() is None:
         return
@@ -159,7 +196,9 @@ def _on_enqueue_done(
     )
     try:
         # Колбэк выполняется в потоке пула — на loop возвращаемся аккуратно.
-        loop.call_soon_threadsafe(partial(_spawn, loop, sid, offline=offline))
+        loop.call_soon_threadsafe(
+            partial(_spawn, loop, sid, offline=offline, replace=replace)
+        )
     except RuntimeError:
         # Loop уже закрыт (шатдаун процесса) — сессию добьёт уборщик
         # `screening.close_stale_sessions` по processing-таймауту.
@@ -186,14 +225,14 @@ async def _run_analysis(session_id: str, *, raise_errors: bool = False) -> None:
 
 
 async def _run_offline_then_analysis(
-    session_id: str, *, raise_errors: bool = False
+    session_id: str, *, raise_errors: bool = False, replace: bool = False
 ) -> None:
     from app.modules.screening import service as screening_service
 
     sid = uuid.UUID(session_id)
     wrote = 0
     try:
-        wrote = await screening_service.run_offline_transcription(sid)
+        wrote = await screening_service.run_offline_transcription(sid, replace=replace)
     except Exception:  # noqa: BLE001
         logger.exception("screening.offline: failed for %s", session_id)
     try:
@@ -244,12 +283,19 @@ def analyze_screening_session(self, session_id: str) -> str:
 
 
 @celery_app.task(name="screening.offline_transcribe", bind=True, max_retries=1)
-def offline_transcribe_screening(self, session_id: str) -> str:
-    """Офлайн-STT из S3-записи, затем пост-анализ отчёта."""
+def offline_transcribe_screening(self, session_id: str, replace: bool = False) -> str:
+    """Офлайн-STT из S3-записи, затем пост-анализ отчёта.
+
+    `replace` — позиционный аргумент со значением по умолчанию: задачи,
+    поставленные в очередь до деплоя (без второго аргумента), доезжают как
+    обычный прогон.
+    """
     try:
         asyncio.run(
             _dispose_engine_after(
-                _run_offline_then_analysis(session_id, raise_errors=True)
+                _run_offline_then_analysis(
+                    session_id, raise_errors=True, replace=bool(replace)
+                )
             )
         )
     except Exception as exc:  # noqa: BLE001

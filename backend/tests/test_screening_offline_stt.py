@@ -418,7 +418,7 @@ async def test_attach_audio_triggers_offline_then_report(
     db.add(file)
     await db.commit()
 
-    async def _fake_offline(sid: uuid.UUID) -> int:
+    async def _fake_offline(sid: uuid.UUID, *, replace: bool = False) -> int:
         assert sid == session.id
         return await screening_service.insert_offline_segments(
             db,
@@ -430,6 +430,7 @@ async def test_attach_audio_triggers_offline_then_report(
                     "endedMs": 4000,
                 }
             ],
+            replace=replace,
         )
 
     monkeypatch.setattr(screening_service, "run_offline_transcription", _fake_offline)
@@ -886,3 +887,232 @@ async def test_transcribe_tracks_requests_batch_mode(monkeypatch) -> None:
         ("recruiter", "Расскажите о себе"),
         ("candidate", "Я дата-инженер"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_insert_offline_segments_replace_overwrites(
+    db: AsyncSession, recruiter_user, candidate
+) -> None:
+    """`replace=True` («распознать заново») меняет старый транскрипт на новый."""
+    session = ScreeningSession(
+        candidate_id=candidate.id,
+        recruiter_id=recruiter_user.id,
+        status=ScreeningStatus.processing,
+    )
+    db.add(session)
+    await db.flush()
+    db.add(
+        ScreeningSegment(
+            session_id=session.id,
+            seq=1,
+            speaker=ScreeningSpeaker.recruiter,
+            text_="мусор с первого прогона",
+            started_ms=0,
+            ended_ms=500,
+        )
+    )
+    await db.commit()
+
+    n = await screening_service.insert_offline_segments(
+        db,
+        session.id,
+        [
+            {"text": "Расскажите о себе", "startedMs": 0, "endedMs": 1500},
+            {"text": "Я дата-инженер", "startedMs": 1600, "endedMs": 4000},
+        ],
+        replace=True,
+    )
+    assert n == 2
+    rows = list(
+        (
+            await db.execute(
+                select(ScreeningSegment)
+                .where(ScreeningSegment.session_id == session.id)
+                .order_by(ScreeningSegment.seq.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert [r.text_ for r in rows] == ["Расскажите о себе", "Я дата-инженер"]
+
+
+@pytest.mark.asyncio
+async def test_insert_offline_segments_replace_keeps_old_when_empty(
+    db: AsyncSession, recruiter_user, candidate
+) -> None:
+    """Пустой повторный прогон не должен стирать уже имеющийся текст."""
+    session = ScreeningSession(
+        candidate_id=candidate.id,
+        recruiter_id=recruiter_user.id,
+        status=ScreeningStatus.processing,
+    )
+    db.add(session)
+    await db.flush()
+    db.add(
+        ScreeningSegment(
+            session_id=session.id,
+            seq=1,
+            speaker=ScreeningSpeaker.candidate,
+            text_="старый, но живой транскрипт",
+            started_ms=0,
+            ended_ms=500,
+        )
+    )
+    await db.commit()
+
+    n = await screening_service.insert_offline_segments(
+        db, session.id, [{"text": "   ", "startedMs": 0, "endedMs": 10}], replace=True
+    )
+    assert n == 0
+    rows = (
+        await db.execute(
+            select(ScreeningSegment).where(ScreeningSegment.session_id == session.id)
+        )
+    ).scalars().all()
+    assert [r.text_ for r in rows] == ["старый, но живой транскрипт"]
+
+
+@pytest.mark.asyncio
+async def test_retranscribe_replaces_transcript_and_report(
+    db: AsyncSession, recruiter_user, candidate, monkeypatch
+) -> None:
+    """Кнопка «Распознать заново»: новый текст + пересобранный отчёт."""
+    _patch_session_local(monkeypatch, db)
+    session = ScreeningSession(
+        candidate_id=candidate.id,
+        recruiter_id=recruiter_user.id,
+        status=ScreeningStatus.done,
+        started_at=datetime.now(UTC),
+        ended_at=datetime.now(UTC),
+        duration_sec=60,
+    )
+    db.add(session)
+    await db.flush()
+    file = File(
+        id=uuid.uuid4(),
+        file_key=f"screening/{session.id}/rec.webm",
+        original_name="rec.webm",
+        mime="audio/webm",
+        size=2048,
+        entity_type=FileEntityType.screening,
+        entity_id=session.id,
+        owner_user_id=recruiter_user.id,
+        scan_status=ScanStatus.clean,
+    )
+    db.add(file)
+    session.audio_file_id = file.id
+    db.add(
+        ScreeningSegment(
+            session_id=session.id,
+            seq=1,
+            speaker=ScreeningSpeaker.candidate,
+            text_="обрывок с первого прогона",
+            started_ms=0,
+            ended_ms=500,
+        )
+    )
+    db.add(
+        ScreeningReport(
+            session_id=session.id,
+            summary="Отчёт по обрывку",
+            verdict=ScreeningVerdict.no_fit,
+            model="test",
+        )
+    )
+    await db.commit()
+
+    async def _fake_offline(sid: uuid.UUID, *, replace: bool = False) -> int:
+        assert sid == session.id
+        # Ради этого флага всё и затевалось: без него старый транскрипт
+        # заставил бы STT промолчать.
+        assert replace is True
+        return await screening_service.insert_offline_segments(
+            db,
+            session.id,
+            [
+                {
+                    "text": (
+                        "Кандидат подробно рассказал про опыт в Python, "
+                        "командную работу и переезд."
+                    ),
+                    "startedMs": 0,
+                    "endedMs": 4000,
+                }
+            ],
+            replace=replace,
+        )
+
+    monkeypatch.setattr(screening_service, "run_offline_transcription", _fake_offline)
+
+    async def _gen(**_kwargs):
+        return {
+            "summary": "Отчёт по перераспознанному тексту.",
+            "verdict": ScreeningVerdict.partial_fit,
+            "scores": {"communication": 4},
+            "red_flags": [],
+            "recommendation": "Звать на техинтервью",
+            "model": "test",
+            "prompt_version": "test",
+        }
+
+    monkeypatch.setattr(screening_report, "generate_screening_report", _gen)
+
+    dto = await screening_service.retranscribe(db, recruiter_user, session.id)
+    assert dto.status == ScreeningStatus.done
+
+    rows = (
+        await db.execute(
+            select(ScreeningSegment).where(ScreeningSegment.session_id == session.id)
+        )
+    ).scalars().all()
+    assert len(rows) == 1
+    assert "Python" in rows[0].text_
+
+    report = (
+        await db.execute(
+            select(ScreeningReport).where(ScreeningReport.session_id == session.id)
+        )
+    ).scalars().one()
+    await db.refresh(report)
+    assert report.summary == "Отчёт по перераспознанному тексту."
+
+
+@pytest.mark.asyncio
+async def test_retranscribe_rejects_live_and_missing_audio(
+    db: AsyncSession, recruiter_user, candidate
+) -> None:
+    from app.core.errors import ApiError
+
+    session = ScreeningSession(
+        candidate_id=candidate.id,
+        recruiter_id=recruiter_user.id,
+        status=ScreeningStatus.done,
+    )
+    db.add(session)
+    await db.commit()
+
+    with pytest.raises(ApiError) as no_audio:
+        await screening_service.retranscribe(db, recruiter_user, session.id)
+    assert no_audio.value.detail["code"] == "no_audio"
+
+    file = File(
+        id=uuid.uuid4(),
+        file_key=f"screening/{session.id}/rec.webm",
+        original_name="rec.webm",
+        mime="audio/webm",
+        size=2048,
+        entity_type=FileEntityType.screening,
+        entity_id=session.id,
+        owner_user_id=recruiter_user.id,
+        scan_status=ScanStatus.clean,
+    )
+    db.add(file)
+    session.audio_file_id = file.id
+    session.status = ScreeningStatus.live
+    await db.commit()
+
+    # Идущая встреча: перераспознавать нечего, запись ещё пишется.
+    with pytest.raises(ApiError) as live:
+        await screening_service.retranscribe(db, recruiter_user, session.id)
+    assert live.value.detail["code"] == "session_not_finished"

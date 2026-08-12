@@ -2483,6 +2483,33 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ApiError' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /screenings/{id}/retranscribe:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [screenings]
+      summary: Распознать прикреплённую запись заново
+      description: >
+        Ставит офлайн-STT по уже привязанной записи, даже если транскрипт есть:
+        текст и AI-отчёт перезаписываются результатом нового прогона. Пустой
+        результат распознавания старый транскрипт не стирает.
+      responses:
+        '200':
+          description: ScreeningSession (обычно уже в статусе processing)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScreeningSession' }
+        '400':
+          description: no_audio — к сессии не привязана запись
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '409':
+          description: session_not_finished — встреча ещё не завершена
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /screenings/{id}/questions:
     parameters:
       - $ref: '#/components/parameters/UuidPathId'

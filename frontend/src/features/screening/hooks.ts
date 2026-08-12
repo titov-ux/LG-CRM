@@ -130,6 +130,15 @@ export function useAttachScreeningAudio() {
   );
 }
 
+/**
+ * «Распознать заново»: бэк ставит офлайн-STT с заменой транскрипта и отчёта.
+ * Сегменты живут отдельным запросом — их инвалидирует вызывающий (в комнате
+ * это `retranscribeAttached`), как и после привязки записи.
+ */
+export function useRetranscribeScreening() {
+  return useSessionMutation((id: UUID) => screeningsApi.retranscribe(id));
+}
+
 export function useDeleteScreening() {
   const queryClient = useQueryClient();
   return useMutation({

@@ -59,6 +59,7 @@ import {
   useFinishScreening,
   useRegenerateQuestions,
   useRemoveQuestion,
+  useRetranscribeScreening,
   useScreening,
   useScreeningSegments,
   useStartScreening,
@@ -432,6 +433,7 @@ export function ScreeningRoomPage() {
   const finishSession = useFinishScreening();
   const deleteSession = useDeleteScreening();
   const attachAudio = useAttachScreeningAudio();
+  const retranscribe = useRetranscribeScreening();
   const addQuestion = useAddQuestion();
   const updateQuestion = useUpdateQuestion();
   const removeQuestion = useRemoveQuestion();
@@ -460,6 +462,8 @@ export function ScreeningRoomPage() {
   const [telemostEditing, setTelemostEditing] = useState(false);
   const [aiPulse, setAiPulse] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  /** Подтверждение «распознать заново», когда транскрипт уже есть. */
+  const [retranscribeOpen, setRetranscribeOpen] = useState(false);
   /** Тик раз в секунду только для перерисовки часов. */
   const [nowTs, setNowTs] = useState(() => Date.now());
 
@@ -630,19 +634,22 @@ export function ScreeningRoomPage() {
     }
   };
 
-  /** Повторно привязать уже сохранённый файл → бэкенд запустит офлайн-STT. */
+  /**
+   * Прогнать распознавание сохранённой записи заново.
+   *
+   * Отдельный эндпоинт, а не повторный attach: он работает и когда транскрипт
+   * уже есть (первый прогон дал мусор / обрезанную запись) — старый текст и
+   * отчёт заменяются результатом нового прогона.
+   */
   const retranscribeAttached = async () => {
     if (!session?.audioFileId) return;
-    setUploading(true);
     try {
-      await attachAudio.mutateAsync({ id, fileId: session.audioFileId });
+      await retranscribe.mutateAsync(id);
       toast.success('Запущено распознавание записи');
       await queryClient.invalidateQueries({ queryKey: screeningKeys.byId(id) });
       await queryClient.invalidateQueries({ queryKey: screeningKeys.segments(id) });
     } catch {
       toast.error('Не удалось запустить распознавание');
-    } finally {
-      setUploading(false);
     }
   };
 
@@ -1462,25 +1469,36 @@ export function ScreeningRoomPage() {
                         )}
                         {/* Пока сегменты не загрузились, `undefined` — это «ещё не
                             знаем», а не «их нет»: раньше кнопка успевала мигнуть
-                            до прихода ответа. */}
-                        {canControl && storedSegments !== undefined && storedSegments.length === 0 && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={uploading || attachAudio.isPending}
-                              onClick={() => void retranscribeAttached()}
-                            >
-                              <RefreshCw
-                                className={cn(
-                                  'mr-1.5 h-3.5 w-3.5',
-                                  (uploading || attachAudio.isPending) && 'animate-spin',
-                                )}
-                              />
-                              {session.status === 'processing'
+                            до прихода ответа. Транскрипт уже есть — кнопка не
+                            прячется, а спрашивает подтверждение: перераспознать
+                            запись нужно как раз тогда, когда текст получился
+                            плохим. */}
+                        {canControl && storedSegments !== undefined && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={uploading || retranscribe.isPending}
+                            onClick={() => {
+                              if (storedSegments.length > 0) {
+                                setRetranscribeOpen(true);
+                                return;
+                              }
+                              void retranscribeAttached();
+                            }}
+                          >
+                            <RefreshCw
+                              className={cn(
+                                'mr-1.5 h-3.5 w-3.5',
+                                (uploading || retranscribe.isPending) && 'animate-spin',
+                              )}
+                            />
+                            {storedSegments.length > 0
+                              ? 'Распознать заново'
+                              : session.status === 'processing'
                                 ? 'Повторить распознавание'
                                 : 'Распознать запись'}
-                            </Button>
-                          )}
+                          </Button>
+                        )}
                       </div>
                     ) : (
                       <div className="space-y-2">
@@ -1754,6 +1772,43 @@ export function ScreeningRoomPage() {
             >
               <Trash2 className="mr-1.5 h-3.5 w-3.5" />
               {deleteSession.isPending ? 'Удаление…' : 'Удалить'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={retranscribeOpen}
+        onOpenChange={(o) => !retranscribe.isPending && setRetranscribeOpen(o)}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Распознать запись заново?</DialogTitle>
+            <DialogDescription>
+              Текущий транскрипт и AI-отчёт будут заменены результатом нового прогона.
+              Сама запись останется на месте. Если распознавание не даст текста, старый
+              транскрипт сохранится.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setRetranscribeOpen(false)}
+              disabled={retranscribe.isPending}
+            >
+              Отмена
+            </Button>
+            <Button
+              disabled={retranscribe.isPending}
+              onClick={async () => {
+                await retranscribeAttached();
+                setRetranscribeOpen(false);
+              }}
+            >
+              <RefreshCw
+                className={cn('mr-1.5 h-3.5 w-3.5', retranscribe.isPending && 'animate-spin')}
+              />
+              {retranscribe.isPending ? 'Запускаем…' : 'Распознать заново'}
             </Button>
           </DialogFooter>
         </DialogContent>

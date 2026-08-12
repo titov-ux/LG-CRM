@@ -114,6 +114,9 @@ export const screeningsApi = {
     api.post(`screenings/${id}/finish`, { json: { durationSec } }).json<ScreeningSession>(),
   attachAudio: (id: UUID, fileId: UUID) =>
     api.post(`screenings/${id}/audio`, { json: { fileId } }).json<ScreeningSession>(),
+  /** Прогнать распознавание прикреплённой записи заново (транскрипт+отчёт перезапишутся). */
+  retranscribe: (id: UUID) =>
+    api.post(`screenings/${id}/retranscribe`).json<ScreeningSession>(),
   segments: (id: UUID) => api.get(`screenings/${id}/segments`).json<ScreeningSegment[]>(),
   transcript: (id: UUID) =>
     api.get(`screenings/${id}/transcript`).json<ScreeningTranscriptResponse>(),

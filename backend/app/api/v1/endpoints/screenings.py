@@ -199,6 +199,19 @@ async def attach_audio(
 
 
 @router.post(
+    "/{session_id}/retranscribe",
+    response_model=ScreeningSessionResponse,
+    summary="Распознать запись заново (перезаписывает транскрипт и отчёт)",
+)
+async def retranscribe_screening(
+    session_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ScreeningSessionResponse:
+    return await service.retranscribe(db, user, session_id)
+
+
+@router.post(
     "/{session_id}/questions",
     response_model=ScreeningSessionResponse,
     summary="Добавить вопрос в чек-лист",

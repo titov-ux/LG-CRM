@@ -2073,6 +2073,30 @@ export const handlers = [
     s.updatedAt = new Date().toISOString();
     return HttpResponse.json(enrichScreening(s));
   }),
+  http.post(url('/screenings/:id/retranscribe'), ({ params }) => {
+    const s = screeningsDb.find((x) => x.id === params.id);
+    if (!s) return new HttpResponse(null, { status: 404 });
+    if (!s.audioFileId) {
+      return HttpResponse.json(
+        { code: 'no_audio', message: 'К сессии не привязана запись разговора' },
+        { status: 400 },
+      );
+    }
+    if (s.status === 'draft' || s.status === 'live') {
+      return HttpResponse.json(
+        {
+          code: 'session_not_finished',
+          message: 'Распознать заново можно только после завершения встречи',
+        },
+        { status: 409 },
+      );
+    }
+    // Реальный бэк уходит в очередь и отвечает processing — мок делает так же,
+    // транскрипт остаётся прежним (STT в моках нет).
+    s.status = 'processing';
+    s.updatedAt = new Date().toISOString();
+    return HttpResponse.json(enrichScreening(s));
+  }),
   http.get(url('/screenings/:id/segments'), ({ params }) => {
     const s = getScreening(String(params.id));
     if (!s) return new HttpResponse(null, { status: 404 });

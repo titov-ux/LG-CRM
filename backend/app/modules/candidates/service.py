@@ -25,6 +25,7 @@ from app.modules.audit.models import ActivityEntityType, ActivityKind
 from app.modules.candidates.models import Candidate, CandidateStatus
 from app.modules.notifications import service as notify_service
 from app.modules.notifications.models import NotificationEntityType, NotificationKind
+from app.modules.permissions import service as permissions_service
 from app.modules.candidates.schemas import (
     CandidateKanbanUpdate,
     ChangeCandidateStatusRequest,
@@ -70,18 +71,35 @@ def _days_in_status(cand: Candidate) -> int:
     return max(int(delta.total_seconds() // 86400), 0)
 
 
-def _ensure_can_mutate(user: User) -> None:
-    if user.role not in (Role.admin, Role.recruiter):
-        # account_manager по дефолту не редактирует кандидатов (см. permissions matrix)
-        raise ApiError(status.HTTP_403_FORBIDDEN, "forbidden", "Нет прав на редактирование кандидата")
+ACTION_CREATE = "candidate:create"
+ACTION_EDIT = "candidate:edit"
+ACTION_CHANGE_STATUS = "candidate:change_status"
+ACTION_ARCHIVE = "candidate:archive"
+ACTION_DELETE_PERMANENT = "candidate:delete_permanent"
+
+_ACTION_MESSAGES = {
+    ACTION_CREATE: "Нет прав на создание кандидата",
+    ACTION_EDIT: "Нет прав на редактирование кандидата",
+    ACTION_CHANGE_STATUS: "Нет прав на смену статуса кандидата",
+    ACTION_ARCHIVE: "Нет прав убирать кандидата с канбан-доски",
+    ACTION_DELETE_PERMANENT: "Нет прав на полное удаление кандидата",
+}
 
 
-def _ensure_can_permanent_delete(user: User) -> None:
-    if user.role != Role.admin:
+async def _ensure_can(db: AsyncSession, user: User, action: str) -> None:
+    """Проверка права по permissions_matrix, а не по захардкоженной роли.
+
+    Раньше здесь стояло `user.role not in (admin, recruiter)`: матрица прав в
+    админке ни на что не влияла, и account_manager получал 403 даже когда админ
+    включал ему галочку «Кандидаты → Создание / редактирование». Теперь
+    источник правды один — матрица (как в модуле screening).
+    """
+    if not await permissions_service.user_has_action(db, user, action):
         raise ApiError(
             status.HTTP_403_FORBIDDEN,
             "forbidden",
-            "Полное удаление кандидата — только админ",
+            _ACTION_MESSAGES.get(action, "Недостаточно прав"),
+            details={"action": action},
         )
 
 
@@ -273,7 +291,7 @@ async def get_candidate(
 async def create_candidate(
     db: AsyncSession, user: User, payload: CreateCandidateRequest
 ) -> tuple[Candidate, list[uuid.UUID]]:
-    _ensure_can_mutate(user)
+    await _ensure_can(db, user, ACTION_CREATE)
     # Рекрутер опционален — кандидата можно завести без ответственного.
     if payload.recruiter_id is not None:
         await _ensure_valid_recruiter_id(db, payload.recruiter_id)
@@ -370,7 +388,7 @@ async def create_candidate(
 async def update_candidate(
     db: AsyncSession, user: User, cand_id: uuid.UUID, payload: UpdateCandidateRequest
 ) -> tuple[Candidate, list[uuid.UUID]]:
-    _ensure_can_mutate(user)
+    await _ensure_can(db, user, ACTION_EDIT)
     cand, _ = await get_candidate(db, cand_id)
     data = payload.model_dump(exclude_unset=True)
 
@@ -423,7 +441,7 @@ async def update_candidate(
 async def archive_candidate(
     db: AsyncSession, user: User, cand_id: uuid.UUID, reason: str | None
 ) -> tuple[Candidate, list[uuid.UUID]]:
-    _ensure_can_mutate(user)
+    await _ensure_can(db, user, ACTION_ARCHIVE)
     cand, vids = await get_candidate(db, cand_id)
     cand.archived = True
     cand.archived_at = datetime.now(timezone.utc)
@@ -438,7 +456,7 @@ async def archive_candidate(
 async def restore_candidate(
     db: AsyncSession, user: User, cand_id: uuid.UUID
 ) -> tuple[Candidate, list[uuid.UUID]]:
-    _ensure_can_mutate(user)
+    await _ensure_can(db, user, ACTION_ARCHIVE)
     cand, vids = await get_candidate(db, cand_id)
     cand.archived = False
     cand.archived_at = None
@@ -454,7 +472,7 @@ async def delete_candidate(
     db: AsyncSession, user: User, cand_id: uuid.UUID, *, permanent: bool
 ) -> None:
     if permanent:
-        _ensure_can_permanent_delete(user)
+        await _ensure_can(db, user, ACTION_DELETE_PERMANENT)
         cand, _ = await get_candidate(db, cand_id)
         await db.delete(cand)
         await db.commit()
@@ -476,7 +494,7 @@ async def change_status(
     cand_id: uuid.UUID,
     payload: ChangeCandidateStatusRequest,
 ) -> tuple[Candidate, list[uuid.UUID]]:
-    _ensure_can_mutate(user)
+    await _ensure_can(db, user, ACTION_CHANGE_STATUS)
     cand, _ = await get_candidate(db, cand_id)
     if cand.status != payload.status:
         before_status = cand.status.value
@@ -535,7 +553,7 @@ async def change_status(
 async def reorder_kanban(
     db: AsyncSession, user: User, updates: list[CandidateKanbanUpdate]
 ) -> tuple[list[Candidate], dict[uuid.UUID, list[uuid.UUID]]]:
-    _ensure_can_mutate(user)
+    await _ensure_can(db, user, ACTION_CHANGE_STATUS)
     ids = [u.id for u in updates]
     if not ids:
         return [], {}

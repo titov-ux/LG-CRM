@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react';
-import { Check, ChevronsUpDown, FileDown, Loader2 } from 'lucide-react';
+import { Check, ChevronsUpDown, FileDown, Loader2, Plus, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
@@ -184,6 +184,16 @@ export function OffersPage() {
   }, [clientsPage]);
 
   const patch = (part: Partial<OfferModel>) => setOffer((prev) => ({ ...prev, ...part }));
+
+  const addExtra = () =>
+    setOffer((prev) => ({ ...prev, extras: [...prev.extras, { label: '', value: '' }] }));
+  const removeExtra = (index: number) =>
+    setOffer((prev) => ({ ...prev, extras: prev.extras.filter((_, i) => i !== index) }));
+  const updateExtra = (index: number, part: Partial<OfferModel['extras'][number]>) =>
+    setOffer((prev) => ({
+      ...prev,
+      extras: prev.extras.map((x, i) => (i === index ? { ...x, ...part } : x)),
+    }));
 
   const candidateOptions: PickOption[] = useMemo(
     () =>
@@ -485,14 +495,43 @@ export function OffersPage() {
                   />
                 </Field>
               </div>
-              <Field label="Премия (свободный текст, опционально)">
-                <Textarea
-                  value={offer.bonus}
-                  onChange={(e) => patch({ bonus: e.target.value })}
-                  rows={2}
-                  placeholder="% от оборота по new business…"
-                />
-              </Field>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">
+                  Дополнительные строки (название + значение, пустые не печатаются)
+                </Label>
+                <div className="space-y-2">
+                  {offer.extras.map((extra, i) => (
+                    <div key={i} className="grid grid-cols-[1fr_1.6fr_auto] items-start gap-2">
+                      <Input
+                        value={extra.label}
+                        onChange={(e) => updateExtra(i, { label: e.target.value })}
+                        placeholder="Премия"
+                      />
+                      <Textarea
+                        value={extra.value}
+                        onChange={(e) => updateExtra(i, { value: e.target.value })}
+                        rows={1}
+                        placeholder="% от оборота по new business…"
+                        className="min-h-9"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-9 w-9 shrink-0 text-muted-foreground"
+                        onClick={() => removeExtra(i)}
+                        aria-label="Удалить строку"
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+                <Button type="button" variant="outline" size="sm" onClick={addExtra}>
+                  <Plus className="mr-1.5 h-3.5 w-3.5" />
+                  Добавить строку
+                </Button>
+              </div>
               <Field label="Соцпакет (по пункту на строку)">
                 <Textarea
                   value={offer.benefits.join('\n')}

@@ -7,6 +7,13 @@
  * POST /files/render-pdf (Playwright).
  */
 
+export interface OfferExtra {
+  /** Название строки, напр. «Премия», «Опцион», «Компенсация техники». */
+  label: string;
+  /** Значение — свободный текст. */
+  value: string;
+}
+
 export interface OfferModel {
   /** Номер документа, напр. «ОФ150926-1». */
   offerNumber: string;
@@ -36,8 +43,8 @@ export interface OfferModel {
   salaryNet: number | undefined;
   /** Оклад после испытательного срока на руки, ₽ (опционально). */
   salaryAfterProbation: number | undefined;
-  /** Премия — свободный текст (опционально). */
-  bonus: string;
+  /** Дополнительные строки в блоке вознаграждения: название + значение (что угодно). */
+  extras: OfferExtra[];
   /** Соцпакет: по пункту на строку. */
   benefits: string[];
   /** Оффер действителен до, ISO YYYY-MM-DD. */
@@ -102,7 +109,7 @@ export function emptyOffer(): OfferModel {
     startDate: '',
     salaryNet: undefined,
     salaryAfterProbation: undefined,
-    bonus: '',
+    extras: [{ label: 'Премия', value: '' }],
     benefits: ['Отпуск 28 календарных дней'],
     validUntil: isoPlusDays(7),
     signerName: '',

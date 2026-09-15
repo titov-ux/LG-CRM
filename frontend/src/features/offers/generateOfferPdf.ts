@@ -86,8 +86,11 @@ export function buildOfferHtml(model: OfferModel): string {
         : `<li>Оклад после испытательного срока <b>${formatMoneyRub(model.salaryAfterProbation)}&nbsp;₽ на руки</b></li>`,
     );
   }
-  if (model.bonus.trim()) {
-    compItems.push(`<li>Премия <b>${escapeHtml(model.bonus.trim())}</b></li>`);
+  for (const extra of model.extras) {
+    const label = extra.label.trim();
+    const value = extra.value.trim();
+    if (!label || !value) continue;
+    compItems.push(`<li>${escapeHtml(label)} <b>${escapeHtml(value)}</b></li>`);
   }
 
   const benefits = model.benefits.map((b) => b.trim()).filter(Boolean);

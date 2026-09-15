@@ -20,15 +20,33 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { MoneyInput } from '@/components/forms/MoneyInput';
 import { cn } from '@/lib/utils';
-import type { Candidate, Vacancy } from '@/api/types';
+import type { Candidate, User, Vacancy } from '@/api/types';
 import { useAuthStore } from '@/stores/auth';
-import { useCandidatesList, useVacanciesList } from '@/features/calendar/pickers';
+import { useCandidatesList, useUsersList, useVacanciesList } from '@/features/calendar/pickers';
 import { useClients } from '@/features/clients/hooks';
 import { buildOfferHtml, downloadOfferPdf } from './generateOfferPdf';
 import { emptyOffer, offerNumberForDate, type OfferModel } from './offerModel';
+
+const OFFER_GRADES = ['Lead', 'Senior', 'Middle+', 'Middle', 'Junior'] as const;
+const OFFER_EMPLOYMENTS = ['ТК РФ', 'ИП', 'СМЗ'] as const;
+const OFFER_WORK_FORMATS = ['Удаленно', 'В офисе', 'Гибрид'] as const;
+
+/** WorkFormat вакансии → значение формата в оффере. */
+const WORK_FORMAT_FROM_VACANCY: Record<string, string> = {
+  'Удалённо': 'Удаленно',
+  Офис: 'В офисе',
+  Гибрид: 'Гибрид',
+};
 
 type PickOption = {
   value: string;
@@ -144,12 +162,13 @@ export function OffersPage() {
   const user = useAuthStore((s) => s.user);
   const { data: candidates = [], isLoading: candidatesLoading } = useCandidatesList();
   const { data: vacancies = [], isLoading: vacanciesLoading } = useVacanciesList();
+  const { data: users = [], isLoading: usersLoading } = useUsersList();
   const { data: clientsPage } = useClients({ pageSize: 200 });
 
   const [candidateId, setCandidateId] = useState('');
   const [vacancyId, setVacancyId] = useState('');
   const [offer, setOffer] = useState<OfferModel>(() => emptyOffer());
-  const [signerTouched, setSignerTouched] = useState(false);
+  const [signerId, setSignerId] = useState('');
   const [downloading, setDownloading] = useState(false);
 
   const clientNameById = useMemo(() => {
@@ -182,6 +201,14 @@ export function OffersPage() {
     [vacancies, clientNameById],
   );
 
+  const signerOptions: PickOption[] = useMemo(
+    () =>
+      users
+        .filter((u: User) => u.isActive !== false)
+        .map((u: User) => ({ value: u.id, label: u.fullName, keywords: u.email })),
+    [users],
+  );
+
   const applyCandidate = (id: string) => {
     setCandidateId(id);
     const c = candidates.find((x: Candidate) => x.id === id);
@@ -190,7 +217,9 @@ export function OffersPage() {
       fullName: c.fullName,
       firstName: c.fullName.trim().split(/\s+/)[0] ?? '',
       salaryNet: c.rateMonth || undefined,
+      grade: c.grade,
     });
+    applyEmployment(c.employmentType);
   };
 
   const applyVacancy = (id: string) => {
@@ -201,13 +230,41 @@ export function OffersPage() {
     const projectParts = [clientName, v.project].filter(Boolean);
     patch({
       position: v.title,
-      workFormat: v.format,
+      workFormat: WORK_FORMAT_FROM_VACANCY[v.format] ?? v.format,
       project: projectParts.join(', '),
     });
   };
 
-  // Подписант: предзаполняем текущим пользователем, пока поле не трогали.
-  const effectiveSignerName = signerTouched || offer.signerName ? offer.signerName : (user?.fullName ?? '');
+  /**
+   * ИП и СМЗ - не трудовые отношения: документ становится «Приглашением
+   * к исполнению услуг», а трудовые поля (испытательный срок, отпуск по ТК)
+   * при переключении вычищаются из дефолтов.
+   */
+  const applyEmployment = (value: string) => {
+    const services = value === 'ИП' || value === 'СМЗ';
+    setOffer((prev) => ({
+      ...prev,
+      employment: value,
+      probation: services ? '' : prev.probation || '3 месяца',
+      benefits:
+        services && prev.benefits.join('\n') === 'Отпуск 28 календарных дней'
+          ? []
+          : !services && prev.benefits.length === 0
+            ? ['Отпуск 28 календарных дней']
+            : prev.benefits,
+    }));
+  };
+
+  // Подписант: по умолчанию — текущий пользователь, пока не выбран другой.
+  const effectiveSignerId = signerId || user?.id || '';
+  const effectiveSignerName =
+    offer.signerName || users.find((u: User) => u.id === effectiveSignerId)?.fullName || (user?.fullName ?? '');
+
+  const applySigner = (id: string) => {
+    setSignerId(id);
+    const u = users.find((x: User) => x.id === id);
+    if (u) patch({ signerName: u.fullName });
+  };
   const model: OfferModel = useMemo(
     () => ({ ...offer, signerName: effectiveSignerName }),
     [offer, effectiveSignerName],
@@ -222,7 +279,7 @@ export function OffersPage() {
     } catch (error) {
       console.error('offer pdf failed', error);
       toast.error('Не удалось сгенерировать PDF', {
-        description: 'Проверьте соединение и попробуйте ещё раз.',
+        description: 'Проверьте соединение и попробуйте еще раз.',
       });
     } finally {
       setDownloading(false);
@@ -237,7 +294,7 @@ export function OffersPage() {
         <div>
           <h1 className="text-xl font-semibold">Офферы</h1>
           <p className="text-sm text-muted-foreground">
-            Предложение о работе в фирменном стиле — выберите кандидата и вакансию, поправьте
+            Предложение о работе (для ИП и СМЗ - приглашение к исполнению услуг): выберите кандидата и вакансию, поправьте
             условия и скачайте PDF.
           </p>
         </div>
@@ -320,25 +377,52 @@ export function OffersPage() {
                 />
               </Field>
               <div className="grid grid-cols-2 gap-3">
-                <Field label="Подчинение">
-                  <Input
-                    value={offer.reportsTo}
-                    onChange={(e) => patch({ reportsTo: e.target.value })}
-                  />
+                <Field label="Грейд">
+                  <Select value={offer.grade} onValueChange={(value) => patch({ grade: value })}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Выберите грейд" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {OFFER_GRADES.map((g) => (
+                        <SelectItem key={g} value={g}>
+                          {g}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </Field>
                 <Field label="Формат работы">
-                  <Input
+                  <Select
                     value={offer.workFormat}
-                    onChange={(e) => patch({ workFormat: e.target.value })}
-                  />
+                    onValueChange={(value) => patch({ workFormat: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Выберите формат" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {OFFER_WORK_FORMATS.map((f) => (
+                        <SelectItem key={f} value={f}>
+                          {f}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </Field>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Оформление">
-                  <Input
-                    value={offer.employment}
-                    onChange={(e) => patch({ employment: e.target.value })}
-                  />
+                  <Select value={offer.employment} onValueChange={applyEmployment}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Выберите оформление" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {OFFER_EMPLOYMENTS.map((e) => (
+                        <SelectItem key={e} value={e}>
+                          {e}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </Field>
                 <Field label="Испытательный срок">
                   <Input
@@ -396,7 +480,7 @@ export function OffersPage() {
                   placeholder="% от оборота по new business…"
                 />
               </Field>
-              <Field label="Соцпакет — по пункту на строку">
+              <Field label="Соцпакет (по пункту на строку)">
                 <Textarea
                   value={offer.benefits.join('\n')}
                   onChange={(e) => patch({ benefits: e.target.value.split('\n') })}
@@ -441,12 +525,13 @@ export function OffersPage() {
               </Field>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Подписант">
-                  <Input
-                    value={effectiveSignerName}
-                    onChange={(e) => {
-                      setSignerTouched(true);
-                      patch({ signerName: e.target.value });
-                    }}
+                  <SearchablePick
+                    value={effectiveSignerId}
+                    onChange={applySigner}
+                    options={signerOptions}
+                    placeholder="Выберите сотрудника"
+                    searchPlaceholder="Поиск по имени или email…"
+                    loading={usersLoading}
                   />
                 </Field>
                 <Field label="Роль подписанта">

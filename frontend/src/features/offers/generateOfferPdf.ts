@@ -11,8 +11,16 @@ import { filesApi } from '@/api/files';
 import { formatMoneyRub } from '@/lib/utils';
 import { offerDateRu, offerFileName, type OfferModel } from './offerModel';
 
-function escapeHtml(text: string): string {
+/** В документе не должно быть длинных тире и буквы «ё» (правило шаблонов LG). */
+function normalizeText(text: string): string {
   return text
+    .replace(/\s*[—–]\s*/g, ' - ')
+    .replace(/ё/g, 'е')
+    .replace(/Ё/g, 'Е');
+}
+
+function escapeHtml(text: string): string {
+  return normalizeText(text)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -25,37 +33,57 @@ const LOGO_SVG = `<svg width="30" height="30" viewBox="0 0 37 37" fill="none" xm
   <path d="M10.5714 26.4286L10.5714 0L37 0V5.28571L15.8571 5.28571L15.8571 21.1429H31.7143V15.8571H21.1429V10.5714H37V26.4286L10.5714 26.4286Z" fill="currentColor"/>
 </svg>`;
 
+/** Короткое значение из формы → полная подпись в документе. */
+const EMPLOYMENT_LABELS: Record<string, string> = {
+  'ТК РФ': 'Трудовой договор, ТК РФ',
+  ИП: 'Договор с ИП',
+  СМЗ: 'Договор с самозанятым (СМЗ)',
+};
+
 function termRow(dt: string, dd: string, note?: string): string {
   const noteHtml = note ? `<span class="note">${escapeHtml(note)}</span>` : '';
   return `<div><dt>${escapeHtml(dt)}</dt><dd>${escapeHtml(dd)}${noteHtml}</dd></div>`;
 }
 
+/**
+ * ИП и СМЗ - не трудовые отношения: им нельзя отправлять «Предложение о работе»,
+ * только «Приглашение к исполнению услуг». Режим меняет заголовки и формулировки.
+ */
+export function isServicesOffer(model: OfferModel): boolean {
+  return model.employment === 'ИП' || model.employment === 'СМЗ';
+}
+
 export function buildOfferHtml(model: OfferModel): string {
+  const services = isServicesOffer(model);
+  const docTitle = services ? 'Приглашение к исполнению услуг' : 'Предложение о работе';
   const dateLabel = offerDateRu(model.date);
   const startLabel = offerDateRu(model.startDate);
   const validLabel = offerDateRu(model.validUntil);
 
   const terms: string[] = [];
-  if (model.fullName) terms.push(termRow('Кандидат', model.fullName));
-  if (model.position) terms.push(termRow('Должность', model.position));
+  if (model.fullName) terms.push(termRow(services ? 'Исполнитель' : 'Кандидат', model.fullName));
+  if (model.position) terms.push(termRow(services ? 'Роль' : 'Должность', model.position));
   if (model.project) terms.push(termRow('Проект', model.project));
-  if (model.reportsTo) terms.push(termRow('Подчинение', model.reportsTo));
+  if (model.grade) terms.push(termRow('Грейд', model.grade));
   if (model.workFormat) terms.push(termRow('Формат работы', model.workFormat));
   if (model.employment) {
     terms.push(
       termRow(
         'Оформление',
-        model.employment,
-        model.probation ? `Испытательный срок: ${model.probation}` : undefined,
+        EMPLOYMENT_LABELS[model.employment] ?? model.employment,
+        // Испытательный срок - понятие ТК РФ, в услугах его не бывает.
+        !services && model.probation ? `Испытательный срок: ${model.probation}` : undefined,
       ),
     );
   }
-  if (startLabel) terms.push(termRow('Дата выхода', startLabel));
+  if (startLabel) terms.push(termRow(services ? 'Дата начала' : 'Дата выхода', startLabel));
 
   const compItems: string[] = [];
   if (model.salaryAfterProbation) {
     compItems.push(
-      `<li>Оклад после испытательного срока <b>${formatMoneyRub(model.salaryAfterProbation)}&nbsp;₽ на руки</b></li>`,
+      services
+        ? `<li>Вознаграждение после первых месяцев сотрудничества <b>${formatMoneyRub(model.salaryAfterProbation)}&nbsp;₽</b></li>`
+        : `<li>Оклад после испытательного срока <b>${formatMoneyRub(model.salaryAfterProbation)}&nbsp;₽ на руки</b></li>`,
     );
   }
   if (model.bonus.trim()) {
@@ -70,7 +98,7 @@ export function buildOfferHtml(model: OfferModel): string {
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<title>Предложение о работе — Lachevsky Group</title>
+<title>${docTitle} - Lachevsky Group</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&display=swap">
 <style>
@@ -83,7 +111,9 @@ export function buildOfferHtml(model: OfferModel): string {
     --sans: 'Golos Text', 'Segoe UI', Arial, sans-serif;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  @page { size: A4; margin: 0; }
+  /* Поля на каждой странице PDF: контент, не влезающий по высоте,
+     переносится на следующую страницу уже внутри этих полей. */
+  @page { size: A4; margin: 14mm 17mm 16mm; }
   html, body { background: var(--paper); }
   body {
     color: var(--ink);
@@ -93,7 +123,10 @@ export function buildOfferHtml(model: OfferModel): string {
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
-  .sheet { padding: 16mm 17mm 18mm; }
+  .sheet { padding: 2mm 0 0; }
+
+  /* Заголовки не отрываются от своего содержимого. */
+  h1, h2, h3 { break-after: avoid; }
 
   header {
     display: flex;
@@ -127,7 +160,8 @@ export function buildOfferHtml(model: OfferModel): string {
   .terms dd { font-weight: 500; }
   .terms dd .note { display: block; font-weight: 400; font-size: 13px; color: var(--muted); margin-top: 2px; }
 
-  .comp { margin-top: 48px; padding: 30px 32px 26px; border: 3px solid var(--ink); break-inside: avoid; }
+  /* Блок вознаграждения всегда открывает вторую страницу. */
+  .comp { break-before: page; margin-top: 6mm; padding: 30px 32px 26px; border: 3px solid var(--ink); break-inside: avoid; }
   .comp h2 { margin-bottom: 4px; }
   .comp .gross { font-size: 12.5px; color: var(--muted); margin-bottom: 16px; }
   .comp .amount {
@@ -149,6 +183,7 @@ export function buildOfferHtml(model: OfferModel): string {
   }
   .comp li b { font-weight: 600; text-align: right; max-width: 60%; }
 
+  section { break-inside: avoid; }
   .benefits { columns: 2; column-gap: 44px; list-style: none; }
   .benefits li { break-inside: avoid; padding: 9px 0 9px 18px; position: relative; font-size: 14.5px; }
   .benefits li::before {
@@ -197,14 +232,14 @@ export function buildOfferHtml(model: OfferModel): string {
   <header>
     <div class="brand">${LOGO_SVG}</div>
     <div class="doc-meta">
-      Предложение о работе<br>
+      ${docTitle}<br>
       № ${escapeHtml(model.offerNumber)}
     </div>
   </header>
 
   <div class="lead">
     <p class="date">${escapeHtml(model.city)}${model.city && dateLabel ? ', ' : ''}${escapeHtml(dateLabel)}</p>
-    <h1>${escapeHtml(greetName)}${greetName ? ', п' : 'П'}риглашаем вас присоединиться к команде Lachevsky&nbsp;Group.</h1>
+    <h1>${escapeHtml(greetName)}${greetName ? ', п' : 'П'}риглашаем вас ${services ? 'к сотрудничеству с' : 'присоединиться к команде'} Lachevsky&nbsp;Group.</h1>
     <p class="intro">${escapeHtml(model.intro)}</p>
   </div>
 
@@ -217,8 +252,8 @@ export function buildOfferHtml(model: OfferModel): string {
 
   <div class="comp">
     <h2>Вознаграждение</h2>
-    <p class="gross">оклад в месяц, на руки (после вычета НДФЛ)</p>
-    <div class="amount">${model.salaryNet ? formatMoneyRub(model.salaryNet) : '—'}<small>₽</small></div>
+    <p class="gross">${services ? 'вознаграждение за услуги в месяц' : 'оклад в месяц, на руки (после вычета НДФЛ)'}</p>
+    <div class="amount">${model.salaryNet ? formatMoneyRub(model.salaryNet) : '-'}<small>₽</small></div>
     ${compItems.length ? `<ul>\n      ${compItems.join('\n      ')}\n    </ul>` : ''}
   </div>
 
@@ -236,11 +271,11 @@ export function buildOfferHtml(model: OfferModel): string {
   <div class="validity">
     <div>
       <h3>Срок действия</h3>
-      <p>Предложение действительно до <span class="until">${escapeHtml(validLabel || '—')}</span> включительно. После этой даты условия могут быть пересмотрены.</p>
+      <p>${services ? 'Приглашение' : 'Предложение'} действительно до <span class="until">${escapeHtml(validLabel || '-')}</span> включительно. После этой даты условия могут быть пересмотрены.</p>
     </div>
     <div>
       <h3>Как принять</h3>
-      <p>Ответьте на письмо с этим предложением или свяжитесь с нами любым удобным способом — и мы подготовим документы к вашей дате выхода.</p>
+      <p>Ответьте на письмо с этим предложением или свяжитесь с нами любым удобным способом - и мы подготовим документы к ${services ? 'дате начала сотрудничества' : 'вашей дате выхода'}.</p>
     </div>
   </div>
 
@@ -255,7 +290,11 @@ export function buildOfferHtml(model: OfferModel): string {
     </div>
   </div>
 
-  <p class="confidential">Это предложение носит конфиденциальный характер и адресовано лично кандидату. Оно не является офертой в смысле ст.&nbsp;435 ГК&nbsp;РФ; трудовые отношения возникают с момента заключения трудового договора.</p>
+  <p class="confidential">${
+    services
+      ? 'Это приглашение носит конфиденциальный характер и адресовано лично получателю. Оно не является офертой в смысле ст.&nbsp;435 ГК&nbsp;РФ; отношения сторон возникают с момента заключения договора об оказании услуг.'
+      : 'Это предложение носит конфиденциальный характер и адресовано лично кандидату. Оно не является офертой в смысле ст.&nbsp;435 ГК&nbsp;РФ; трудовые отношения возникают с момента заключения трудового договора.'
+  }</p>
 
 </div>
 </body>

@@ -21,12 +21,12 @@ export interface OfferModel {
   /** Вступительный абзац под заголовком. */
   intro: string;
   position: string;
-  /** Кому подчиняется, напр. «Генеральному директору». */
-  reportsTo: string;
+  /** Грейд: Lead / Senior / Middle+ / Middle / Junior. */
+  grade: string;
   /** Проект/клиент — опциональная строка условий. */
   project: string;
   workFormat: string;
-  /** Оформление, напр. «Трудовой договор, ТК РФ». */
+  /** Оформление: 'ТК РФ' | 'ИП' | 'СМЗ' (в PDF разворачивается в полную подпись). */
   employment: string;
   /** Испытательный срок, напр. «3 месяца». Пусто — строка не выводится. */
   probation: string;
@@ -78,7 +78,7 @@ export function offerNumberForDate(iso: string): string {
 }
 
 export const DEFAULT_INTRO =
-  'Мы обсудили вашу кандидатуру по итогам всех этапов и единогласно приняли решение сделать вам предложение. Ниже — условия, на которых мы готовы начать работать вместе.';
+  'Мы обсудили вашу кандидатуру по итогам всех этапов и единогласно приняли решение сделать вам предложение. Ниже - условия, на которых мы готовы начать работать вместе.';
 
 export function emptyOffer(): OfferModel {
   const date = isoToday();
@@ -90,10 +90,10 @@ export function emptyOffer(): OfferModel {
     fullName: '',
     intro: DEFAULT_INTRO,
     position: '',
-    reportsTo: 'Генеральному директору',
+    grade: '',
     project: '',
     workFormat: 'Удаленно',
-    employment: 'Трудовой договор, ТК РФ',
+    employment: 'ТК РФ',
     probation: '3 месяца',
     startDate: '',
     salaryNet: undefined,
@@ -118,8 +118,9 @@ export function offerDateRu(iso: string): string {
     .replace(/\s*г\.\s*$/, '');
 }
 
-/** Имя файла: «Оффер_Рафаэль_Саркисян.pdf». */
+/** Имя файла: «Оффер_Рафаэль_Саркисян.pdf», для ИП/СМЗ - «Приглашение_…». */
 export function offerFileName(model: OfferModel): string {
   const base = (model.fullName || 'кандидат').trim().replace(/\s+/g, '_');
-  return `Оффер_${base}.pdf`;
+  const services = model.employment === 'ИП' || model.employment === 'СМЗ';
+  return `${services ? 'Приглашение' : 'Оффер'}_${base}.pdf`;
 }

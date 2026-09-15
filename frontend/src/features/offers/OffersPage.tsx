@@ -356,14 +356,14 @@ export function OffersPage() {
                   <Input
                     value={offer.firstName}
                     onChange={(e) => patch({ firstName: e.target.value })}
-                    placeholder="Рафаэль"
+                    placeholder="Иван"
                   />
                 </Field>
                 <Field label="ФИО кандидата">
                   <Input
                     value={offer.fullName}
                     onChange={(e) => patch({ fullName: e.target.value })}
-                    placeholder="Рафаэль Саркисян"
+                    placeholder="Иван Иванов"
                   />
                 </Field>
               </div>
@@ -474,14 +474,14 @@ export function OffersPage() {
                   <MoneyInput
                     value={offer.salaryNet}
                     onChange={(value) => patch({ salaryNet: value })}
-                    placeholder="300 000"
+                    placeholder="100 000"
                   />
                 </Field>
                 <Field label="После испытательного, ₽/мес">
                   <MoneyInput
                     value={offer.salaryAfterProbation}
                     onChange={(value) => patch({ salaryAfterProbation: value })}
-                    placeholder="330 000"
+                    placeholder="110 000"
                   />
                 </Field>
               </div>

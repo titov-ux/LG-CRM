@@ -117,6 +117,21 @@ fi
 step "rebuilding and restarting services"
 $COMPOSE up -d --build $SERVICES
 
+# nginx обязан перечитать конфиг ПОСЛЕ пересоздания backend.
+#
+# compose не трогает nginx, если его образ и конфиг не менялись, — контейнер
+# продолжает жить со старым IP бэкенда в кеше резолвера. Пересозданный backend
+# получает новый адрес, и весь /api/ начинает отдавать 502 при полностью
+# здоровом приложении (статика SPA при этом раздаётся — снаружи выглядит как
+# «сайт открывается, но войти нельзя»). Так прод лёг после деплоя 13.08.2026.
+# Reload дешёвый (воркеры переподнимаются без разрыва соединений) и
+# идемпотентный, поэтому делаем его безусловно.
+step "reloading nginx (пере-резолв IP пересозданных контейнеров)"
+if ! $COMPOSE exec -T nginx nginx -s reload 2>/dev/null; then
+  warn "nginx -s reload не сработал, перезапускаю контейнер"
+  $COMPOSE restart nginx
+fi
+
 if [[ "$SKIP_MIGRATE" -eq 0 ]]; then
   step "running migrations"
   $COMPOSE exec -T backend alembic upgrade head
@@ -144,7 +159,18 @@ if ! curl "${CURL_HEALTH_OPTS[@]}" "$HEALTHCHECK_URL" >/dev/null; then
   # действительно не поднялось.
   if $COMPOSE exec -T backend python -c \
     "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=5).status == 200 else 1)"; then
-    warn "health check через nginx не прошёл ($HEALTHCHECK_URL), но бэкенд отвечает напрямую — проверьте server_name / HEALTHCHECK_HOST"
+    # ВНИМАНИЕ: это НЕ «всё хорошо». Именно этот warn замаскировал падение
+    # прода 13.08.2026 — бэкенд отвечал напрямую, а снаружи весь /api/ отдавал
+    # 502 из-за протухшего IP в nginx. Пробуем перезапустить nginx и повторить
+    # проверку; если и это не помогло — значит дело в server_name/HEALTHCHECK_HOST.
+    warn "health check через nginx не прошёл ($HEALTHCHECK_URL), бэкенд жив — перезапускаю nginx и пробую ещё раз"
+    $COMPOSE restart nginx
+    sleep 3
+    if curl "${CURL_HEALTH_OPTS[@]}" "$HEALTHCHECK_URL" >/dev/null 2>&1; then
+      warn "после перезапуска nginx health check прошёл — причиной был протухший upstream"
+    else
+      warn "через nginx по-прежнему не отвечает — проверьте server_name / HEALTHCHECK_HOST в infra/nginx.conf"
+    fi
   else
     die "backend health check failed ($HEALTHCHECK_URL)"
   fi

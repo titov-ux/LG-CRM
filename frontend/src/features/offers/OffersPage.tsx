@@ -39,6 +39,7 @@ import {
   DEFAULT_INTRO,
   DEFAULT_INTRO_SERVICES,
   emptyOffer,
+  isoPlusDays,
   offerNumberForDate,
   type OfferModel,
 } from './offerModel';
@@ -554,7 +555,13 @@ export function OffersPage() {
                     type="date"
                     value={offer.date}
                     onChange={(e) =>
-                      patch({ date: e.target.value, offerNumber: offerNumberForDate(e.target.value) })
+                      // От даты оффера зависят номер, дата выхода (+7 дней) и срок действия (+7 дней).
+                      patch({
+                        date: e.target.value,
+                        offerNumber: offerNumberForDate(e.target.value),
+                        startDate: isoPlusDays(e.target.value, 7),
+                        validUntil: isoPlusDays(e.target.value, 7),
+                      })
                     }
                   />
                 </Field>

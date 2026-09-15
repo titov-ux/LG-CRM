@@ -63,8 +63,10 @@ function isoToday(): string {
   return `${d.getFullYear()}-${mm}-${dd}`;
 }
 
-function isoPlusDays(days: number): string {
-  const d = new Date();
+/** iso + days дней; при пустой/битой дате отсчитываем от сегодня. */
+export function isoPlusDays(iso: string, days: number): string {
+  const base = iso ? new Date(`${iso}T00:00:00`) : new Date();
+  const d = Number.isNaN(base.getTime()) ? new Date() : base;
   d.setDate(d.getDate() + days);
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   const dd = String(d.getDate()).padStart(2, '0');
@@ -106,12 +108,12 @@ export function emptyOffer(): OfferModel {
     workFormat: 'Удаленно',
     employment: 'ТК РФ',
     probation: '3 месяца',
-    startDate: '',
+    startDate: isoPlusDays(date, 7),
     salaryNet: undefined,
     salaryAfterProbation: undefined,
     extras: [{ label: 'Премия', value: '' }],
     benefits: ['Отпуск 28 календарных дней'],
-    validUntil: isoPlusDays(7),
+    validUntil: isoPlusDays(date, 7),
     signerName: '',
     signerRole: 'ООО «ЛГ Интеграция»',
     contactEmail: 'hello@lachevsky.group',

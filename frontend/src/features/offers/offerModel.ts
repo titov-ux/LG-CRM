@@ -64,12 +64,16 @@ function isoPlusDays(days: number): string {
   return `${d.getFullYear()}-${mm}-${dd}`;
 }
 
-/** «ОФ» + ддммгг + «-1»: ОФ150926-1. */
-export function defaultOfferNumber(): string {
-  const d = new Date();
-  const dd = String(d.getDate()).padStart(2, '0');
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const yy = String(d.getFullYear()).slice(-2);
+/**
+ * Номер оффера из его даты: «ОФ» + ддммгг + «-1», напр. 2026-09-15 → ОФ150926-1.
+ * При смене даты в форме номер пересчитывается автоматически.
+ */
+export function offerNumberForDate(iso: string): string {
+  const d = iso ? new Date(`${iso}T00:00:00`) : new Date();
+  const safe = Number.isNaN(d.getTime()) ? new Date() : d;
+  const dd = String(safe.getDate()).padStart(2, '0');
+  const mm = String(safe.getMonth() + 1).padStart(2, '0');
+  const yy = String(safe.getFullYear()).slice(-2);
   return `ОФ${dd}${mm}${yy}-1`;
 }
 
@@ -77,10 +81,11 @@ export const DEFAULT_INTRO =
   'Мы обсудили вашу кандидатуру по итогам всех этапов и единогласно приняли решение сделать вам предложение. Ниже — условия, на которых мы готовы начать работать вместе.';
 
 export function emptyOffer(): OfferModel {
+  const date = isoToday();
   return {
-    offerNumber: defaultOfferNumber(),
+    offerNumber: offerNumberForDate(date),
     city: 'Москва',
-    date: isoToday(),
+    date,
     firstName: '',
     fullName: '',
     intro: DEFAULT_INTRO,

@@ -28,7 +28,7 @@ import { useAuthStore } from '@/stores/auth';
 import { useCandidatesList, useVacanciesList } from '@/features/calendar/pickers';
 import { useClients } from '@/features/clients/hooks';
 import { buildOfferHtml, downloadOfferPdf } from './generateOfferPdf';
-import { emptyOffer, type OfferModel } from './offerModel';
+import { emptyOffer, offerNumberForDate, type OfferModel } from './offerModel';
 
 type PickOption = {
   value: string;
@@ -232,7 +232,7 @@ export function OffersPage() {
   const canDownload = Boolean(model.fullName && model.position && model.salaryNet);
 
   return (
-    <div className="space-y-4 p-4 md:p-6">
+    <div className="flex-1 space-y-4 overflow-auto px-4 pb-8 pt-5 md:px-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold">Офферы</h1>
@@ -413,16 +413,25 @@ export function OffersPage() {
             </CardHeader>
             <CardContent className="grid gap-3">
               <div className="grid grid-cols-2 gap-3">
-                <Field label="Номер оффера">
+                <Field label="Дата оффера">
+                  <Input
+                    type="date"
+                    value={offer.date}
+                    onChange={(e) =>
+                      patch({ date: e.target.value, offerNumber: offerNumberForDate(e.target.value) })
+                    }
+                  />
+                </Field>
+                <Field label="Номер (из даты, можно править)">
                   <Input
                     value={offer.offerNumber}
                     onChange={(e) => patch({ offerNumber: e.target.value })}
                   />
                 </Field>
-                <Field label="Город">
-                  <Input value={offer.city} onChange={(e) => patch({ city: e.target.value })} />
-                </Field>
               </div>
+              <Field label="Город">
+                <Input value={offer.city} onChange={(e) => patch({ city: e.target.value })} />
+              </Field>
               <Field label="Вступительный абзац">
                 <Textarea
                   value={offer.intro}

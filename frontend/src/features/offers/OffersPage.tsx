@@ -35,7 +35,13 @@ import { useAuthStore } from '@/stores/auth';
 import { useCandidatesList, useUsersList, useVacanciesList } from '@/features/calendar/pickers';
 import { useClients } from '@/features/clients/hooks';
 import { buildOfferHtml, downloadOfferPdf } from './generateOfferPdf';
-import { emptyOffer, offerNumberForDate, type OfferModel } from './offerModel';
+import {
+  DEFAULT_INTRO,
+  DEFAULT_INTRO_SERVICES,
+  emptyOffer,
+  offerNumberForDate,
+  type OfferModel,
+} from './offerModel';
 
 const OFFER_GRADES = ['Lead', 'Senior', 'Middle+', 'Middle', 'Junior'] as const;
 const OFFER_EMPLOYMENTS = ['ТК РФ', 'ИП', 'СМЗ'] as const;
@@ -246,6 +252,13 @@ export function OffersPage() {
       ...prev,
       employment: value,
       probation: services ? '' : prev.probation || '3 месяца',
+      // Вступление меняем только если пользователь его не редактировал.
+      intro:
+        services && prev.intro === DEFAULT_INTRO
+          ? DEFAULT_INTRO_SERVICES
+          : !services && prev.intro === DEFAULT_INTRO_SERVICES
+            ? DEFAULT_INTRO
+            : prev.intro,
       benefits:
         services && prev.benefits.join('\n') === 'Отпуск 28 календарных дней'
           ? []
@@ -506,16 +519,10 @@ export function OffersPage() {
                     }
                   />
                 </Field>
-                <Field label="Номер (из даты, можно править)">
-                  <Input
-                    value={offer.offerNumber}
-                    onChange={(e) => patch({ offerNumber: e.target.value })}
-                  />
+                <Field label="Город">
+                  <Input value={offer.city} onChange={(e) => patch({ city: e.target.value })} />
                 </Field>
               </div>
-              <Field label="Город">
-                <Input value={offer.city} onChange={(e) => patch({ city: e.target.value })} />
-              </Field>
               <Field label="Вступительный абзац">
                 <Textarea
                   value={offer.intro}

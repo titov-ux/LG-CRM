@@ -17,6 +17,7 @@ import { FunnelChart } from './FunnelChart';
 import { TimeToHireCard } from './TimeToHireCard';
 import { AttentionList } from './AttentionList';
 import { WeeklyActivityCard } from './WeeklyActivityCard';
+import { InterviewStatsCard } from './InterviewStatsCard';
 import { RecruitersTable } from './RecruitersTable';
 import { ClientsTable } from './ClientsTable';
 import {
@@ -97,6 +98,9 @@ export function DashboardPage() {
 
       {/* Итоги недели: новые вакансии + поданные кандидаты */}
       <WeeklyActivityCard />
+
+      {/* Собеседования: назначены и проведены за выбранный период */}
+      <InterviewStatsCard params={queryParams} />
 
       {/* Тренды */}
       <Card>

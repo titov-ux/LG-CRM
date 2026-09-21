@@ -1600,6 +1600,20 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/TrendsResponse' }
+  /analytics/interview-stats:
+    get:
+      tags: [analytics]
+      summary: Собеседования по бакетам — назначены (scheduled/no_show) и проведены (held), окно по startsAt, canceled исключаются
+      parameters:
+        - { in: query, name: from,        schema: { type: string, format: date-time } }
+        - { in: query, name: to,          schema: { type: string, format: date-time } }
+        - { in: query, name: granularity, schema: { $ref: '#/components/schemas/Granularity' } }
+      responses:
+        '200':
+          description: InterviewStatsResponse
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InterviewStatsResponse' }
   /analytics/funnel-v2:
     get:
       tags: [analytics]
@@ -3581,6 +3595,26 @@ components:
         granularity: { type: string, enum: [day, week, month] }
         period:      { $ref: '#/components/schemas/PeriodWindow' }
         series:      { $ref: '#/components/schemas/TrendsSeries' }
+    InterviewStatsSeries:
+      type: object
+      required: [scheduled, held]
+      properties:
+        scheduled: { type: array, items: { $ref: '#/components/schemas/TrendsPoint' } }
+        held:      { type: array, items: { $ref: '#/components/schemas/TrendsPoint' } }
+    InterviewStatsTotals:
+      type: object
+      required: [scheduled, held]
+      properties:
+        scheduled: { type: integer }
+        held:      { type: integer }
+    InterviewStatsResponse:
+      type: object
+      required: [granularity, period, series, totals]
+      properties:
+        granularity: { type: string, enum: [day, week, month] }
+        period:      { $ref: '#/components/schemas/PeriodWindow' }
+        series:      { $ref: '#/components/schemas/InterviewStatsSeries' }
+        totals:      { $ref: '#/components/schemas/InterviewStatsTotals' }
     FunnelStage:
       type: object
       required: [status, count, conversionPct, dropOff]

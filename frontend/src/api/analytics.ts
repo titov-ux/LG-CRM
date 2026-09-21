@@ -59,6 +59,16 @@ export interface TrendsResponse {
   };
 }
 
+export interface InterviewStatsResponse {
+  granularity: Exclude<Granularity, 'auto'>;
+  period: PeriodWindow;
+  series: {
+    scheduled: TrendsPoint[];
+    held: TrendsPoint[];
+  };
+  totals: { scheduled: number; held: number };
+}
+
 export interface SummaryParams {
   from?: string;
   to?: string;
@@ -354,6 +364,12 @@ export const analyticsApi = {
         searchParams: toSearchParams(params as Record<string, unknown>),
       })
       .json<TrendsResponse>(),
+  interviewStats: (params: TrendsParams = {}) =>
+    api
+      .get('analytics/interview-stats', {
+        searchParams: toSearchParams(params as Record<string, unknown>),
+      })
+      .json<InterviewStatsResponse>(),
   funnelV2: (params: PeriodParams = {}) =>
     api
       .get('analytics/funnel-v2', {

@@ -1713,6 +1713,76 @@ export const handlers = [
     });
   }),
 
+  http.get(url('/analytics/interview-stats'), ({ request }) => {
+    const u = new URL(request.url);
+    const fromParam = u.searchParams.get('from');
+    const toParam = u.searchParams.get('to');
+    const granParam = (u.searchParams.get('granularity') ?? 'auto') as
+      | 'auto' | 'day' | 'week' | 'month';
+    const now = new Date();
+    const periodFrom = fromParam ? new Date(fromParam) : new Date(now.getFullYear(), now.getMonth(), 1);
+    const periodTo = toParam ? new Date(toParam) : now;
+
+    const days = Math.max(1, Math.ceil((periodTo.getTime() - periodFrom.getTime()) / 86400_000));
+    const gran: 'day' | 'week' | 'month' =
+      granParam !== 'auto'
+        ? granParam
+        : days <= 31 ? 'day' : days <= 180 ? 'week' : 'month';
+
+    const buckets: Date[] = [];
+    const cursor = new Date(periodFrom);
+    cursor.setHours(0, 0, 0, 0);
+    if (gran === 'week') {
+      const dow = (cursor.getDay() + 6) % 7; // понедельник = 0
+      cursor.setDate(cursor.getDate() - dow);
+    } else if (gran === 'month') {
+      cursor.setDate(1);
+    }
+    while (cursor < periodTo) {
+      buckets.push(new Date(cursor));
+      if (gran === 'day') cursor.setDate(cursor.getDate() + 1);
+      else if (gran === 'week') cursor.setDate(cursor.getDate() + 7);
+      else cursor.setMonth(cursor.getMonth() + 1);
+    }
+
+    // Реальные собесы из calendarDb: окно по startsAt, canceled исключаются,
+    // «назначены» = scheduled/no_show, «проведены» = held (как в weekly-activity).
+    const windowEvents = calendarDb.filter(
+      (e) =>
+        e.type === 'interview' &&
+        e.status !== 'canceled' &&
+        new Date(e.startsAt) >= periodFrom &&
+        new Date(e.startsAt) < periodTo,
+    );
+    const bucketOf = (iso: string): number => {
+      const t = new Date(iso).getTime();
+      for (let i = buckets.length - 1; i >= 0; i -= 1) {
+        if (t >= buckets[i].getTime()) return i;
+      }
+      return 0;
+    };
+    const scheduledCounts = buckets.map(() => 0);
+    const heldCounts = buckets.map(() => 0);
+    for (const e of windowEvents) {
+      const i = bucketOf(e.startsAt);
+      if (e.status === 'held') heldCounts[i] += 1;
+      else scheduledCounts[i] += 1;
+    }
+
+    return HttpResponse.json({
+      granularity: gran,
+      period: { from: periodFrom.toISOString(), to: periodTo.toISOString() },
+      series: {
+        scheduled: buckets.map((b, i) => ({ bucket: b.toISOString(), value: scheduledCounts[i] })),
+        held: buckets.map((b, i) => ({ bucket: b.toISOString(), value: heldCounts[i] })),
+      },
+      totals: {
+        scheduled: scheduledCounts.reduce((a, v) => a + v, 0),
+        held: heldCounts.reduce((a, v) => a + v, 0),
+      },
+    });
+  }),
+
   http.get(url('/analytics/weekly-activity'), ({ request }) => {
     const u = new URL(request.url);
     const now = new Date();

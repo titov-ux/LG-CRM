@@ -22,6 +22,7 @@ from app.modules.analytics.schemas import (
     DashboardSummary,
     FunnelBucket,
     FunnelResponse,
+    InterviewStatsResponse,
     RecruiterLoad,
     RecruiterPerformanceResponse,
     TimeToHireResponse,
@@ -108,6 +109,27 @@ async def trends(
     period = service.resolve_period(from_dt, to_dt)
     data = await service.trends(db, period=period, granularity=granularity)
     return TrendsResponse.model_validate(data)
+
+
+@router.get(
+    "/interview-stats",
+    response_model=InterviewStatsResponse,
+    summary="Собеседования по бакетам: назначены (scheduled/no_show) и проведены (held)",
+)
+async def interview_stats(
+    from_dt: datetime | None = Query(None, alias="from"),
+    to_dt: datetime | None = Query(None, alias="to"),
+    granularity: Literal["auto", "day", "week", "month"] = Query(
+        "auto",
+        description="Гранулярность бакетов. auto: до 31 дня → day, до 180 → week, иначе → month.",
+    ),
+    _: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> InterviewStatsResponse:
+    period = service.resolve_period(from_dt, to_dt)
+    data = await service.interview_stats(db, period=period, granularity=granularity)
+    return InterviewStatsResponse.model_validate(data)
+
 
 
 @router.get(

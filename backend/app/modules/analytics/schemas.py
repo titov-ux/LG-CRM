@@ -78,6 +78,26 @@ class TrendsResponse(CamelModel):
     series: TrendsSeries
 
 
+# ─── Interview stats («Собеседования: назначены/проведены») ──────────────
+
+
+class InterviewStatsSeries(CamelModel):
+    scheduled: list[TrendsPoint]
+    held: list[TrendsPoint]
+
+
+class InterviewStatsTotals(CamelModel):
+    scheduled: int
+    held: int
+
+
+class InterviewStatsResponse(CamelModel):
+    granularity: Literal["day", "week", "month"]
+    period: PeriodWindow
+    series: InterviewStatsSeries
+    totals: InterviewStatsTotals
+
+
 # ─── Funnel v2 ───────────────────────────────────────────────────────────
 
 

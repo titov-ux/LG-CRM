@@ -1457,6 +1457,66 @@ async def trends(
     }
 
 
+async def interview_stats(
+    db: AsyncSession,
+    *,
+    period: Period,
+    granularity: Granularity = "auto",
+) -> dict:
+    """Собеседования по бакетам: «назначены» (scheduled/no_show) и «проведены» (held).
+
+    Окно — по ``starts_at`` (когда собес проходит, а не когда создан),
+    canceled исключаются вовсе — та же семантика, что в «Итогах недели»
+    (weekly_activity).
+    """
+    gran = _resolve_granularity(period, granularity)
+    buckets = _bucket_starts(period, gran)
+
+    scheduled = await _count_by_bucket(
+        db,
+        table=CalendarEvent,
+        ts_col=CalendarEvent.starts_at,
+        extra_filters=[
+            CalendarEvent.type == EventType.interview,
+            CalendarEvent.status.in_([EventStatus.scheduled, EventStatus.no_show]),
+        ],
+        period=period,
+        gran=gran,
+    )
+    held = await _count_by_bucket(
+        db,
+        table=CalendarEvent,
+        ts_col=CalendarEvent.starts_at,
+        extra_filters=[
+            CalendarEvent.type == EventType.interview,
+            CalendarEvent.status == EventStatus.held,
+        ],
+        period=period,
+        gran=gran,
+    )
+
+    def _series(src: dict[datetime, int]) -> list[dict]:
+        return [
+            {"bucket": b.isoformat(), "value": src.get(b, 0)} for b in buckets
+        ]
+
+    return {
+        "granularity": gran,
+        "period": {
+            "from": period.from_dt.isoformat(),
+            "to": period.to_dt.isoformat(),
+        },
+        "series": {
+            "scheduled": _series(scheduled),
+            "held": _series(held),
+        },
+        "totals": {
+            "scheduled": sum(scheduled.values()),
+            "held": sum(held.values()),
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # Weekly activity («Итоги недели»)
 # ---------------------------------------------------------------------------

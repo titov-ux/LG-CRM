@@ -12,6 +12,8 @@ export const analyticsKeys = {
   funnel: ['analytics', 'funnel'] as const,
   recruiterLoad: ['analytics', 'recruiter-load'] as const,
   trends: (p: TrendsParams = {}) => ['analytics', 'trends', p] as const,
+  interviewStats: (p: TrendsParams = {}) =>
+    ['analytics', 'interview-stats', p] as const,
   funnelV2: (p: PeriodParams = {}) => ['analytics', 'funnel-v2', p] as const,
   timeToHire: (p: PeriodParams = {}) => ['analytics', 'time-to-hire', p] as const,
   attention: (top: number) => ['analytics', 'attention', top] as const,
@@ -52,6 +54,13 @@ export function useTrends(params: TrendsParams = {}) {
   return useQuery({
     queryKey: analyticsKeys.trends(params),
     queryFn: () => analyticsApi.trends(params),
+  });
+}
+
+export function useInterviewStats(params: TrendsParams = {}) {
+  return useQuery({
+    queryKey: analyticsKeys.interviewStats(params),
+    queryFn: () => analyticsApi.interviewStats(params),
   });
 }
 

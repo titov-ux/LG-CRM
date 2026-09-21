@@ -7,9 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useForceLightTheme } from '@/lib/theme';
 import { apiErrorMessage } from '@/lib/utils';
-import { authApi } from '@/api/auth';
 import { useLogin } from './useAuth';
-import { useLoginCamera } from './useLoginCamera';
 import { BubbleBackdrop } from './BubbleBackdrop';
 
 export function LoginPage() {
@@ -18,9 +16,6 @@ export function LoginPage() {
   const router = useRouter();
   const { redirect } = useSearch({ from: '/login' });
   const login = useLogin();
-  // Камера безопасности: живое превью (прозрачность сбора) + кадр при входе.
-  // Сотрудники уведомлены и дали письменные согласия.
-  const camera = useLoginCamera();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   // Реальный текст ошибки от бэкенда (lockout / rate-limit / inactive / 500),
@@ -30,16 +25,8 @@ export function LoginPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
-    // Кадр снимаем ДО логина, пока превью гарантированно живое. Если камера не
-    // готова — фиксируем причину (denied/no_camera/error), вход не блокируем.
-    const blob = camera.ready ? await camera.capture() : null;
     try {
       await login.mutateAsync({ email, password });
-      // Снимок отправляем ПОСЛЕ успешного логина: нужен access-токен. Любая
-      // ошибка загрузки не должна мешать входу — поэтому catch-глушилка.
-      void authApi
-        .uploadLoginSnapshot(blob ? 'ok' : camera.reason, blob)
-        .catch(() => undefined);
       // Возвращаемся на исходный deep-link, если он был; иначе на главную.
       // history.push принимает произвольный внутренний path+search+hash (redirect
       // валидируется в routes/login.tsx). Через navigate({ href }) переход молча
@@ -52,17 +39,6 @@ export function LoginPage() {
       );
     }
   };
-
-  const cameraHint =
-    camera.status === 'denied'
-      ? 'Доступ к камере отклонён — вход будет отмечен без снимка.'
-      : camera.status === 'no_camera'
-        ? 'Камера не найдена — вход будет отмечен без снимка.'
-        : camera.status === 'error'
-          ? 'Не удалось включить камеру — вход будет отмечен без снимка.'
-          : camera.status === 'starting'
-            ? 'Включаем камеру…'
-            : null;
 
   return (
     <BubbleBackdrop>
@@ -79,35 +55,6 @@ export function LoginPage() {
           </div>
         </CardHeader>
         <CardContent>
-          {/* Превью камеры безопасности. Видимое — сотрудник знает, что при входе
-              делается снимок (соответствует полученным письменным согласиям). */}
-          <div className="mb-4 space-y-1.5">
-            <div className="relative aspect-video w-full overflow-hidden rounded-lg border border-white/60 bg-slate-900/90">
-              <video
-                ref={camera.videoRef}
-                autoPlay
-                muted
-                playsInline
-                className="h-full w-full object-cover"
-                style={{ transform: 'scaleX(-1)' }}
-              />
-              {camera.status !== 'ready' && (
-                <div className="absolute inset-0 flex items-center justify-center px-3 text-center text-[11px] text-white/80">
-                  {cameraHint}
-                </div>
-              )}
-              {camera.status === 'ready' && (
-                <div className="absolute left-2 top-2 flex items-center gap-1 rounded-full bg-black/45 px-2 py-0.5 text-[10px] font-medium text-white">
-                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" />
-                  REC
-                </div>
-              )}
-            </div>
-            <p className="text-[10.5px] leading-tight text-muted-foreground">
-              В целях безопасности при входе делается снимок с веб-камеры.
-            </p>
-          </div>
-
           <form onSubmit={handleSubmit} className="space-y-3">
             <div className="space-y-1.5">
               <Label htmlFor="email">Email</Label>

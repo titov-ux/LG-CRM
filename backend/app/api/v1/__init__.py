@@ -20,7 +20,6 @@ from app.api.v1.endpoints import (
     permissions,
     realtime,
     screening_ws,
-    security,
     screenings,
     telegram,
     tenders,
@@ -44,7 +43,6 @@ api_router.include_router(notifications.router)
 api_router.include_router(files.router)
 api_router.include_router(audit.router)
 api_router.include_router(audit.activity_router)
-api_router.include_router(security.router)
 api_router.include_router(analytics.router)
 api_router.include_router(permissions.router)
 api_router.include_router(chat.router)

@@ -45,7 +45,6 @@ from app.modules.calendar.models import (  # noqa: F401
     CalendarEventAttendee,
 )
 from app.modules.analytics.worklog_models import WorkSession  # noqa: F401
-from app.modules.login_snapshots.models import LoginSnapshot  # noqa: F401
 from app.modules.screening.models import (  # noqa: F401
     ScreeningQuestion,
     ScreeningReport,

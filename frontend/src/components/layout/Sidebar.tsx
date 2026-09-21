@@ -6,7 +6,6 @@ import {
   Building2,
   Calculator,
   Calendar,
-  Camera,
   ContactRound,
   Database,
   FileSignature,
@@ -94,7 +93,6 @@ const GROUPS: NavGroup[] = [
     label: 'Администрирование',
     items: [
       { to: '/roles', label: 'Роли и доступы', icon: ShieldCheck },
-      { to: '/login-snapshots', label: 'Снимки входов', icon: Camera, adminOnly: true },
       { to: '/settings', label: 'Настройки', icon: Settings },
     ],
   },

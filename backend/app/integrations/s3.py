@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Protocol
@@ -63,6 +64,7 @@ class PresignedPost:
 class S3Adapter(Protocol):
     def presign_post(self, *, file_key: str, mime: str, max_bytes: int) -> PresignedPost: ...
     def presign_get(self, *, file_key: str, expires_in: int = 300) -> str: ...
+    def upload_bytes(self, *, file_key: str, data: bytes, mime: str) -> None: ...
     def download_bytes(self, *, file_key: str) -> bytes: ...
     def delete(self, *, file_key: str) -> None: ...
 
@@ -106,6 +108,20 @@ class BotoS3Adapter:
             ExpiresIn=expires_in,
         )
 
+    def upload_bytes(self, *, file_key: str, data: bytes, mime: str) -> None:
+        """Прямая server-side загрузка байтов в S3.
+
+        Используется для мелких объектов, которые формирует сам бэкенд
+        (например, снимок веб-камеры при входе), где presigned-POST из браузера
+        избыточен. Объект кладётся приватным (bucket без public-ACL).
+        """
+        self._client.put_object(
+            Bucket=self._bucket,
+            Key=file_key,
+            Body=data,
+            ContentType=mime,
+        )
+
     def download_bytes(self, *, file_key: str) -> bytes:
         obj = self._client.get_object(Bucket=self._bucket, Key=file_key)
         body = obj["Body"].read()
@@ -123,6 +139,19 @@ def make_file_key(*, entity_type: str, entity_id: uuid.UUID, original_name: str)
     rand = uuid.uuid4().hex[:12]
     safe = "".join(ch for ch in original_name if ch.isalnum() or ch in "._-") or "file"
     return f"{entity_type}/{entity_id}/{rand}-{safe}"
+
+
+def make_login_snapshot_key(*, user_id: uuid.UUID, taken_at: "datetime") -> str:
+    """Путь снимка входа: `login-snapshots/{user_id}/{YYYY/MM/DD}/{ts}-{rand}.jpg`.
+
+    Разбивка по датам упрощает выгрузку/ретеншн по периодам и точечное удаление.
+    """
+    d = taken_at.astimezone(timezone.utc)
+    rand = uuid.uuid4().hex[:10]
+    return (
+        f"login-snapshots/{user_id}/"
+        f"{d:%Y/%m/%d}/{int(d.timestamp())}-{rand}.jpg"
+    )
 
 
 @lru_cache(maxsize=1)

@@ -3,6 +3,11 @@
 export const APP_TITLE = import.meta.env.VITE_APP_TITLE ?? 'ЛГ Интеграция · SaaS';
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api/v1';
 export const USE_MOCKS = import.meta.env.VITE_USE_MOCKS === 'true';
+/**
+ * Раздел «Кадры» (кадровый ЭДО) пока скрыт: пункты меню, страницы /my-docs и
+ * /hr-docs, кнопка «Оформить сотрудника». Включается VITE_HR_EDO_ENABLED=true.
+ */
+export const HR_EDO_ENABLED = import.meta.env.VITE_HR_EDO_ENABLED === 'true';
 
 /**
  * WebSocket-URL realtime-канала (см. backend `/ws/events`).

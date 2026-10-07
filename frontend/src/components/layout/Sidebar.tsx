@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Link, useRouterState } from '@tanstack/react-router';
+import { HR_EDO_ENABLED } from '@/lib/constants';
 import { cn } from '@/lib/utils';
 import { useNotifications } from '@/features/notifications/hooks';
 import { useMyHr } from '@/features/hrEdo/hooks';
@@ -52,6 +53,8 @@ type NavAction = 'screening:run' | 'screening:view_report' | 'hr_edo:view_own' |
 
 interface NavGroup {
   label?: string;
+  /** Группа скрыта целиком (функция выключена флагом). */
+  hidden?: boolean;
   items: NavItem[];
 }
 
@@ -85,6 +88,7 @@ const GROUPS: NavGroup[] = [
   },
   {
     label: 'Кадры',
+    hidden: !HR_EDO_ENABLED,
     items: [
       { to: '/my-docs', label: 'Мои документы', icon: FileCheck2, anyAction: ['hr_edo:view_own'] },
       { to: '/hr-docs', label: 'Кадровые документы', icon: Stamp, anyAction: ['hr_edo:manage'] },
@@ -156,7 +160,11 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
       </AppInfoPopover>
 
       <nav className="flex-1 space-y-4 overflow-y-auto px-2 py-2">
-        {GROUPS.map((group, gi) => ({ group, gi, visible: group.items.filter(isVisible) }))
+        {GROUPS.map((group, gi) => ({
+          group,
+          gi,
+          visible: group.hidden ? [] : group.items.filter(isVisible),
+        }))
           .filter(({ visible }) => visible.length > 0)
           .map(({ group, gi, visible }) => (
             <div key={gi}>

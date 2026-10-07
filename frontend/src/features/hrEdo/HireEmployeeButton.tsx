@@ -7,6 +7,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { Loader2, UserCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { HR_EDO_ENABLED } from '@/lib/constants';
 import { useCan } from '@/lib/permissions';
 import { useCreateFromCandidate } from './hooks';
 import { apiErrorCode, apiErrorMessage } from './statuses';
@@ -15,7 +16,7 @@ export function HireEmployeeButton({ candidateId, status }: { candidateId: strin
   const canManage = useCan('hr_edo:manage');
   const create = useCreateFromCandidate();
   const navigate = useNavigate();
-  if (!canManage || status !== 'hired') return null;
+  if (!HR_EDO_ENABLED || !canManage || status !== 'hired') return null;
 
   const handle = async () => {
     try {

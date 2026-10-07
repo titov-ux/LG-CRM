@@ -9,7 +9,7 @@ import {
   type UpdateHrEmployeePayload,
 } from '@/api/hrEdo';
 import type { UUID } from '@/api/types';
-import { QUERY_DEFAULTS } from '@/lib/constants';
+import { HR_EDO_ENABLED, QUERY_DEFAULTS } from '@/lib/constants';
 import { useCan } from '@/lib/permissions';
 
 export const hrKeys = {
@@ -103,7 +103,7 @@ export function useMyHr() {
   return useQuery({
     queryKey: hrKeys.my(),
     queryFn: hrEdoApi.my,
-    enabled: canViewOwn,
+    enabled: HR_EDO_ENABLED && canViewOwn,
     ...QUERY_DEFAULTS,
     retry: false,
     refetchInterval: 60_000,

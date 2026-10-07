@@ -1,6 +1,7 @@
 import { useNavigate } from '@tanstack/react-router';
 import { useChatStore } from '@/features/chat/store';
 import type { Notification, UUID } from '@/api/types';
+import { HR_EDO_ENABLED } from '@/lib/constants';
 
 /**
  * Куда ведёт уведомление. Возвращает `false`, если перехода нет (например,
@@ -19,8 +20,9 @@ export function notificationHasTarget(n: Notification): boolean {
     case 'chat_message':
       return !!conversationIdOf(n);
     case 'event':
-    case 'hr_document':
       return true;
+    case 'hr_document':
+      return HR_EDO_ENABLED;
     default:
       return false;
   }

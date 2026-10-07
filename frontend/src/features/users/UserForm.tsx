@@ -28,6 +28,7 @@ export const ROLE_LABEL: Record<Role, string> = {
   recruiter: 'Рекрутер',
   viewer: 'Наблюдатель',
   accountant: 'Бухгалтер',
+  sales_manager: 'Менеджер по продажам',
 };
 
 export const ROLE_DESCRIPTION: Record<Role, string> = {
@@ -36,13 +37,14 @@ export const ROLE_DESCRIPTION: Record<Role, string> = {
   recruiter: 'Работает с кандидатами и вакансиями, ведёт воронку подбора.',
   viewer: 'Только просмотр данных без права редактирования.',
   accountant: 'Ведёт кадровый электронный документооборот: сотрудники, согласия, документы на подпись.',
+  sales_manager: 'Ведёт лиды — будущих клиентов: контакты, этапы сделки, перевод в клиенты.',
 };
 
 const schema = z.object({
   fullName: z.string().min(2, 'Минимум 2 символа').max(120),
   email: z.string().email('Введите корректный email'),
   telegram: z.string(),
-  role: z.enum(['admin', 'account_manager', 'recruiter', 'viewer', 'accountant']),
+  role: z.enum(['admin', 'account_manager', 'recruiter', 'viewer', 'accountant', 'sales_manager']),
   // Пароль необязателен: пустая строка = invite-flow (письмо со ссылкой).
   // Если введено хоть что-то — валидируем «нормальный» пароль.
   password: z

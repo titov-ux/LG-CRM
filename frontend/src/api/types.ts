@@ -9,7 +9,13 @@ export type UUID = string;
 export type { FileResponse };
 
 // === Users ===
-export type Role = 'admin' | 'account_manager' | 'recruiter' | 'viewer' | 'accountant';
+export type Role =
+  | 'admin'
+  | 'account_manager'
+  | 'recruiter'
+  | 'viewer'
+  | 'accountant'
+  | 'sales_manager';
 
 export interface User {
   id: UUID;

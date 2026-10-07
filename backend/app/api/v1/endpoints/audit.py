@@ -19,6 +19,7 @@ from app.modules.audit import service as audit_service
 from app.modules.audit.models import ActivityEntityType
 from app.modules.audit.schemas import ActivityResponse, AuditResponse
 from app.modules.auth.dependencies import get_current_user, require_roles
+from app.modules.leads import service as leads_service
 from app.modules.users.models import Role, User
 
 router = APIRouter(prefix="/audit", tags=["audit"])
@@ -139,7 +140,9 @@ async def tender_activity(
 )
 async def lead_activity(
     entity_id: uuid.UUID,
-    _: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[ActivityResponse]:
+    # Та же проверка, что у карточки лида: право lead:access + видимость своих.
+    await leads_service.get_lead(db, user, entity_id)
     return await _activity_for(db, ActivityEntityType.lead, entity_id)

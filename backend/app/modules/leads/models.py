@@ -31,6 +31,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, SoftDeleteMixin, TimestampsMixin
+
 # Переиспользуем общий enum приоритета (тот же тип `priority` в БД).
 from app.modules.vacancies.models import Priority
 

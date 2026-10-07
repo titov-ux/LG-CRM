@@ -27,6 +27,9 @@ class Role(str, enum.Enum):
     # Добавлено миграцией 0036_hr_edo — бухгалтер/кадровик: ведёт кадровый ЭДО
     # (раздел «Кадровые документы», право `hr_edo:manage`).
     accountant = "accountant"
+    # Добавлено миграцией 0039_sales_manager_role — ведёт лиды (вкладка «Лиды»,
+    # право `lead:access`); вне лидов по умолчанию права как у viewer.
+    sales_manager = "sales_manager"
 
 
 class User(Base, TimestampsMixin):

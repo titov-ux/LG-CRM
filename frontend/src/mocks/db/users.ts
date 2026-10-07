@@ -8,4 +8,5 @@ export const usersDb: User[] = [
   { id: 'u5', email: 'vasiliev@lg-integration.ru', telegram: '@igor_vasiliev_hr', fullName: 'Игорь Васильев', initials: 'ИВ', role: 'recruiter', color: '#ea580c', isActive: true },
   { id: 'u6', email: 'morozova@lg-integration.ru', telegram: '@elena_morozova_hr', fullName: 'Елена Морозова', initials: 'ЕМ', role: 'recruiter', color: '#16a34a', isActive: true },
   { id: 'u7', email: 'belova@lg-integration.ru', telegram: '@olga_belova_buh', fullName: 'Ольга Белова', initials: 'ОБ', role: 'accountant', color: '#d97706', isActive: true },
+  { id: 'u8', email: 'zaitsev@lg-integration.ru', telegram: '@pavel_zaitsev_sales', fullName: 'Павел Зайцев', initials: 'ПЗ', role: 'sales_manager', color: '#0284c7', isActive: true },
 ];

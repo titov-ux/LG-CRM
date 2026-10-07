@@ -52,6 +52,7 @@ import { PriorityBadge } from '@/components/common/PriorityBadge';
 import { KanbanStatusSelect } from '@/components/kanban/KanbanStatusSelect';
 import { CommentsSection } from '@/features/comments/CommentsSection';
 import { useUsers } from '@/features/users/hooks';
+import { useCan } from '@/lib/permissions';
 import { clientKeys } from '@/features/clients/hooks';
 import { clientsApi } from '@/api/clients';
 import { apiErrorMessage, formatDateRu, formatMoneyRub } from '@/lib/utils';
@@ -120,6 +121,8 @@ export function LeadCardPage() {
   const createLead = useCreateLead();
   const changeStatus = useChangeLeadStatus();
   const deleteLead = useDeleteLead();
+  // Перевод в клиенты создаёт клиента — нужно право на создание клиентов.
+  const canCreateClient = useCan('client:create');
 
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -293,7 +296,7 @@ export function LeadCardPage() {
                     <Share2 className="mr-2 h-3.5 w-3.5" />
                     Поделиться
                   </DropdownMenuItem>
-                  {lead && !lead.clientId && (
+                  {lead && !lead.clientId && canCreateClient && (
                     <DropdownMenuItem onSelect={() => setConvertOpen(true)}>
                       <UserPlus className="mr-2 h-3.5 w-3.5" />
                       Перевести в клиенты
@@ -368,7 +371,8 @@ export function LeadCardPage() {
                   </Link>
                 </div>
               ) : (
-                lead.status === 'won' && (
+                lead.status === 'won' &&
+                canCreateClient && (
                   <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/40 px-3.5 py-2.5 text-[13px]">
                     <span>Сделка закрыта — заведите клиента в CRM.</span>
                     <Button size="sm" className="h-7 gap-1" onClick={() => setConvertOpen(true)}>

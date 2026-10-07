@@ -1,4 +1,4 @@
-import type { LeadStatus, Priority } from '@/api/types';
+import type { LeadStatus, Priority, Role } from '@/api/types';
 import type { KanbanStatusDescriptor } from '@/components/kanban/types';
 
 // Колонки канбана лидов. Пайплайн:
@@ -45,3 +45,13 @@ export const LEAD_PRIORITY_COLOR: Record<Priority, string> = {
   medium: '#94a3b8',
   low: '#cbd5e1',
 };
+
+/** Роли, которых можно назначить ответственным за лид. */
+export const LEAD_OWNER_ROLES: readonly Role[] = ['admin', 'account_manager', 'sales_manager'];
+
+/**
+ * Роли, работающие только со своими лидами: бэкенд показывает им лиды, где они
+ * ответственные, и при создании ставит ответственным их самих
+ * (см. backend/app/modules/leads/service.py: _OWN_ONLY_ROLES).
+ */
+export const LEAD_OWN_ONLY_ROLES: readonly Role[] = ['account_manager', 'sales_manager'];

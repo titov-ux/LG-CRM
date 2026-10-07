@@ -49,7 +49,12 @@ interface NavItem {
 }
 
 /** Действия матрицы доступов, которыми гейтятся пункты меню. */
-type NavAction = 'screening:run' | 'screening:view_report' | 'hr_edo:view_own' | 'hr_edo:manage';
+type NavAction =
+  | 'screening:run'
+  | 'screening:view_report'
+  | 'hr_edo:view_own'
+  | 'hr_edo:manage'
+  | 'lead:access';
 
 interface NavGroup {
   label?: string;
@@ -65,7 +70,7 @@ const GROUPS: NavGroup[] = [
     items: [
       { to: '/vacancies', label: 'Вакансии', icon: Briefcase },
       { to: '/candidates', label: 'Кандидаты', icon: Users },
-      { to: '/leads', label: 'Лиды', icon: Target },
+      { to: '/leads', label: 'Лиды', icon: Target, anyAction: ['lead:access'] },
       { to: '/clients', label: 'Клиенты', icon: Building2 },
       { to: '/tenders', label: 'Тендеры', icon: Gavel },
       { to: '/contacts', label: 'Контакты', icon: ContactRound },
@@ -128,6 +133,7 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const canViewScreeningReport = useCan('screening:view_report');
   const canViewOwnHr = useCan('hr_edo:view_own');
   const canManageHr = useCan('hr_edo:manage');
+  const canAccessLeads = useCan('lead:access');
   // Бейдж «Мои документы» — число документов, которые ждут подписи.
   const { data: myHr } = useMyHr();
   const myDocsPending = myHr?.employee?.pendingCount ?? 0;
@@ -136,6 +142,7 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
     'screening:view_report': canViewScreeningReport,
     'hr_edo:view_own': canViewOwnHr,
     'hr_edo:manage': canManageHr,
+    'lead:access': canAccessLeads,
   };
   const isVisible = (item: NavItem) =>
     (!item.adminOnly || isAdmin) &&

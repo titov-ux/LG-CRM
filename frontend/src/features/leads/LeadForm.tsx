@@ -22,7 +22,7 @@ import {
 import { DateField } from '@/components/forms/DateField';
 import { useUsers } from '@/features/users/hooks';
 import type { Priority } from '@/api/types';
-import { LEAD_SOURCES } from './statuses';
+import { LEAD_OWNER_ROLES, LEAD_SOURCES } from './statuses';
 
 const PRIORITIES: { id: Priority; label: string }[] = [
   { id: 'low', label: 'Низкий' },
@@ -76,7 +76,7 @@ export function LeadForm({
 }: Props) {
   const { data: users } = useUsers();
   const accountManagers = (users ?? []).filter(
-    (u) => (u.role === 'account_manager' || u.role === 'admin') && u.isActive,
+    (u) => LEAD_OWNER_ROLES.includes(u.role) && u.isActive,
   );
 
   const form = useForm<LeadFormValues>({

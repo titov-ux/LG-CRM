@@ -1,7 +1,9 @@
 """Сервис лидов: CRUD, фильтры, kanban-операции, переходы статусов.
 
-Видимость по ролям зеркалит tenders-сервис: account_manager видит только
-лиды, где он — `account_manager_id`; остальные роли видят все.
+Доступ — по праву `lead:access` матрицы доступов (по умолчанию admin,
+account_manager, sales_manager). Аккаунт-менеджер и менеджер по продажам
+видят только лиды, где они — ответственный (`account_manager_id`); админ и
+остальные роли с правом видят все.
 """
 from __future__ import annotations
 
@@ -24,6 +26,7 @@ from app.modules.leads.schemas import (
     KanbanUpdate,
     UpdateLeadRequest,
 )
+from app.modules.permissions.service import require_action
 from app.modules.users.models import Role, User
 from app.modules.vacancies.models import Priority
 from app.realtime.events import publish_lead_changed
@@ -54,24 +57,26 @@ def _clean(value: str | None) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+# Роли, которые работают только со своими лидами (ответственный = он сам).
+_OWN_ONLY_ROLES: frozenset[Role] = frozenset({Role.account_manager, Role.sales_manager})
+
+
+def _own_only(user: User) -> bool:
+    return user.role in _OWN_ONLY_ROLES
+
+
+async def ensure_access(db: AsyncSession, user: User) -> None:
+    await require_action(db, user, "lead:access", message="Нет доступа к лидам")
+
+
 def _scope(q: Select, user: User) -> Select:
-    if user.role == Role.account_manager:
+    if _own_only(user):
         q = q.where(Lead.account_manager_id == user.id)
     return q
 
 
-def _ensure_can_mutate(user: User) -> None:
-    if user.role not in (Role.admin, Role.account_manager, Role.recruiter):
-        raise ApiError(status.HTTP_403_FORBIDDEN, "forbidden", "Нет прав на изменение лидов")
-
-
-def _ensure_can_delete(user: User) -> None:
-    if user.role not in (Role.admin, Role.account_manager):
-        raise ApiError(status.HTTP_403_FORBIDDEN, "forbidden", "Удаление лидов — admin/AM")
-
-
 def _ensure_can_see(lead: Lead, user: User) -> None:
-    if user.role == Role.account_manager and lead.account_manager_id != user.id:
+    if _own_only(user) and lead.account_manager_id != user.id:
         raise ApiError(status.HTTP_403_FORBIDDEN, "forbidden", "Нет доступа к лиду")
 
 
@@ -102,7 +107,7 @@ async def _next_order(db: AsyncSession, user: User, target_status: LeadStatus) -
         .where(Lead.deleted_at.is_(None))
         .where(Lead.status == target_status)
     )
-    if user.role == Role.account_manager:
+    if _own_only(user):
         max_q = max_q.where(Lead.account_manager_id == user.id)
     max_order = (await db.execute(max_q)).scalar()
     return (max_order + 1) if isinstance(max_order, int) else 0
@@ -120,6 +125,7 @@ async def list_leads(
     page: int = 1,
     page_size: int = 50,
 ) -> tuple[list[Lead], int]:
+    await ensure_access(db, user)
     q = _scope(_base_query(), user)
     if status_ is not None:
         q = q.where(Lead.status == status_)
@@ -151,6 +157,7 @@ async def list_leads(
 
 
 async def get_lead(db: AsyncSession, user: User, lead_id: uuid.UUID) -> Lead:
+    await ensure_access(db, user)
     lead = (await db.execute(_base_query().where(Lead.id == lead_id))).scalar_one_or_none()
     if lead is None:
         raise ApiError(status.HTTP_404_NOT_FOUND, "not_found", "Лид не найден")
@@ -159,17 +166,18 @@ async def get_lead(db: AsyncSession, user: User, lead_id: uuid.UUID) -> Lead:
 
 
 async def create_lead(db: AsyncSession, user: User, payload: CreateLeadRequest) -> Lead:
-    _ensure_can_mutate(user)
+    await ensure_access(db, user)
     account_manager_id = payload.account_manager_id
-    if user.role == Role.account_manager:
-        # AM не указал ответственного — назначаем его самого; чужого назначить нельзя.
+    if _own_only(user):
+        # AM / менеджер по продажам не указал ответственного — назначаем его
+        # самого; чужого назначить нельзя.
         if account_manager_id is None:
             account_manager_id = user.id
         elif account_manager_id != user.id:
             raise ApiError(
                 status.HTTP_403_FORBIDDEN,
                 "forbidden",
-                "Аккаунт-менеджер может создавать лиды только на себя",
+                "Можно создавать лиды только на себя",
             )
     order = await _next_order(db, user, payload.status)
     lead = Lead(
@@ -206,7 +214,6 @@ async def create_lead(db: AsyncSession, user: User, payload: CreateLeadRequest) 
 async def update_lead(
     db: AsyncSession, user: User, lead_id: uuid.UUID, payload: UpdateLeadRequest
 ) -> Lead:
-    _ensure_can_mutate(user)
     lead = await get_lead(db, user, lead_id)
     data = payload.model_dump(exclude_unset=True)
 
@@ -232,7 +239,7 @@ async def update_lead(
 
     if "account_manager_id" in data:
         new_am = data["account_manager_id"]
-        if user.role == Role.account_manager and new_am != user.id:
+        if _own_only(user) and new_am != user.id:
             raise ApiError(
                 status.HTTP_403_FORBIDDEN, "forbidden", "Сменить ответственного может только админ"
             )
@@ -245,7 +252,6 @@ async def update_lead(
 
 
 async def delete_lead(db: AsyncSession, user: User, lead_id: uuid.UUID) -> None:
-    _ensure_can_delete(user)
     lead = await get_lead(db, user, lead_id)
     lead.deleted_at = datetime.now(timezone.utc)
     await db.commit()
@@ -282,7 +288,6 @@ async def _record_status_change(
 async def change_status(
     db: AsyncSession, user: User, lead_id: uuid.UUID, payload: ChangeStatusRequest
 ) -> Lead:
-    _ensure_can_mutate(user)
     lead = await get_lead(db, user, lead_id)
     if not transitions.is_allowed(lead.status, payload.status):
         raise ApiError(
@@ -321,7 +326,7 @@ async def change_status(
 
 
 async def reorder_kanban(db: AsyncSession, user: User, updates: list[KanbanUpdate]) -> list[Lead]:
-    _ensure_can_mutate(user)
+    await ensure_access(db, user)
     ids = [u.id for u in updates]
     if not ids:
         return []

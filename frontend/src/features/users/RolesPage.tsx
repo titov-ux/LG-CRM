@@ -57,9 +57,18 @@ const ROLE_BADGE_CLASS: Record<Role, string> = {
     'bg-slate-100 text-slate-700 hover:bg-slate-100 dark:bg-slate-800/60 dark:text-slate-300 dark:hover:bg-slate-800/60',
   accountant:
     'bg-amber-100 text-amber-800 hover:bg-amber-100 dark:bg-amber-950/40 dark:text-amber-300 dark:hover:bg-amber-950/40',
+  sales_manager:
+    'bg-sky-100 text-sky-700 hover:bg-sky-100 dark:bg-sky-950/40 dark:text-sky-300 dark:hover:bg-sky-950/40',
 };
 
-const ROLES_ORDER: Role[] = ['admin', 'account_manager', 'recruiter', 'accountant', 'viewer'];
+const ROLES_ORDER: Role[] = [
+  'admin',
+  'account_manager',
+  'sales_manager',
+  'recruiter',
+  'accountant',
+  'viewer',
+];
 
 export function RolesPage() {
   const [tab, setTab] = useState<'users' | 'roles'>('users');
@@ -100,6 +109,7 @@ export function RolesPage() {
       recruiter: 0,
       viewer: 0,
       accountant: 0,
+      sales_manager: 0,
     };
     (users ?? []).forEach((u) => {
       counts[u.role] = (counts[u.role] ?? 0) + 1;

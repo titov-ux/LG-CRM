@@ -35,6 +35,8 @@ export type Action =
   | 'hr_edo:sign_employer'
   /** Кадровый ЭДО: выгрузка подписей и пакетов. */
   | 'hr_edo:export'
+  /** Вкладка «Лиды»: видеть, заводить и вести лиды. */
+  | 'lead:access'
   | 'user:manage';
 
 /** Одна строка матрицы доступов. `id` — стабильный slug, под него завязаны мутации. */
@@ -59,7 +61,14 @@ export const DEFAULT_PERMISSIONS: MatrixPermission[] = [
     permission: 'Просмотр карточек клиентов',
     description: 'Доступ к списку и карточкам клиентов.',
     actions: [],
-    matrix: { admin: true, account_manager: true, recruiter: true, viewer: true, accountant: true },
+    matrix: {
+      admin: true,
+      account_manager: true,
+      recruiter: true,
+      viewer: true,
+      accountant: true,
+      sales_manager: true,
+    },
   },
   {
     id: 'clients.create_edit',
@@ -67,7 +76,14 @@ export const DEFAULT_PERMISSIONS: MatrixPermission[] = [
     permission: 'Создание и редактирование',
     description: 'Создавать, изменять данные клиентов и контакты.',
     actions: ['client:create', 'client:edit'],
-    matrix: { admin: true, account_manager: true, recruiter: false, viewer: false, accountant: false },
+    matrix: {
+      admin: true,
+      account_manager: true,
+      recruiter: false,
+      viewer: false,
+      accountant: false,
+      sales_manager: false,
+    },
   },
   {
     id: 'clients.delete',
@@ -75,7 +91,30 @@ export const DEFAULT_PERMISSIONS: MatrixPermission[] = [
     permission: 'Удаление / архив',
     description: 'Перевод клиентов в архив или удаление.',
     actions: [],
-    matrix: { admin: true, account_manager: false, recruiter: false, viewer: false, accountant: false },
+    matrix: {
+      admin: true,
+      account_manager: false,
+      recruiter: false,
+      viewer: false,
+      accountant: false,
+      sales_manager: false,
+    },
+  },
+  {
+    id: 'leads.access',
+    group: 'Лиды',
+    permission: 'Доступ к лидам',
+    description:
+      'Вкладка «Лиды»: видеть, заводить и вести потенциальных клиентов. Аккаунт-менеджер и менеджер по продажам видят только свои лиды.',
+    actions: ['lead:access'],
+    matrix: {
+      admin: true,
+      account_manager: true,
+      recruiter: false,
+      viewer: false,
+      accountant: false,
+      sales_manager: true,
+    },
   },
   {
     id: 'vacancies.view_all',
@@ -83,7 +122,14 @@ export const DEFAULT_PERMISSIONS: MatrixPermission[] = [
     permission: 'Просмотр всех вакансий',
     description: 'Видеть все вакансии компании, а не только свои.',
     actions: [],
-    matrix: { admin: true, account_manager: true, recruiter: true, viewer: true, accountant: true },
+    matrix: {
+      admin: true,
+      account_manager: true,
+      recruiter: true,
+      viewer: true,
+      accountant: true,
+      sales_manager: true,
+    },
   },
   {
     id: 'vacancies.create_edit',
@@ -91,7 +137,14 @@ export const DEFAULT_PERMISSIONS: MatrixPermission[] = [
     permission: 'Создание / редактирование',
     description: 'Заводить новые вакансии и менять их статусы.',
     actions: ['vacancy:create', 'vacancy:edit', 'vacancy:change_status'],
-    matrix: { admin: true, account_manager: true, recruiter: true, viewer: false, accountant: false },
+    matrix: {
+      admin: true,
+      account_manager: true,
+      recruiter: true,
+      viewer: false,
+      accountant: false,
+      sales_manager: false,
+    },
   },
   {
     id: 'vacancies.assign_recruiter',
@@ -99,7 +152,14 @@ export const DEFAULT_PERMISSIONS: MatrixPermission[] = [
     permission: 'Назначение рекрутера',
     description: 'Распределять рекрутеров по вакансиям.',
     actions: ['vacancy:assign_recruiter'],
-    matrix: { admin: true, account_manager: true, recruiter: true, viewer: false, accountant: false },
+    matrix: {
+      admin: true,
+      account_manager: true,
+      recruiter: true,
+      viewer: false,
+      accountant: false,
+      sales_manager: false,
+    },
   },
   {
     id: 'candidates.view',
@@ -107,7 +167,14 @@ export const DEFAULT_PERMISSIONS: MatrixPermission[] = [
     permission: 'Просмотр базы кандидатов',
     description: 'Поиск и фильтрация кандидатов.',
     actions: [],
-    matrix: { admin: true, account_manager: true, recruiter: true, viewer: true, accountant: true },
+    matrix: {
+      admin: true,
+      account_manager: true,
+      recruiter: true,
+      viewer: true,
+      accountant: true,
+      sales_manager: true,
+    },
   },
   {
     id: 'candidates.create_edit',
@@ -115,7 +182,14 @@ export const DEFAULT_PERMISSIONS: MatrixPermission[] = [
     permission: 'Создание / редактирование',
     description: 'Добавлять и редактировать карточки кандидатов.',
     actions: ['candidate:create', 'candidate:edit', 'candidate:change_status'],
-    matrix: { admin: true, account_manager: false, recruiter: true, viewer: false, accountant: false },
+    matrix: {
+      admin: true,
+      account_manager: false,
+      recruiter: true,
+      viewer: false,
+      accountant: false,
+      sales_manager: false,
+    },
   },
   {
     id: 'candidates.present',
@@ -123,7 +197,14 @@ export const DEFAULT_PERMISSIONS: MatrixPermission[] = [
     permission: 'Презентация клиенту',
     description: 'Отправлять подборку кандидатов клиенту.',
     actions: [],
-    matrix: { admin: true, account_manager: true, recruiter: true, viewer: false, accountant: false },
+    matrix: {
+      admin: true,
+      account_manager: true,
+      recruiter: true,
+      viewer: false,
+      accountant: false,
+      sales_manager: false,
+    },
   },
   {
     id: 'candidates.archive',
@@ -132,7 +213,14 @@ export const DEFAULT_PERMISSIONS: MatrixPermission[] = [
     description:
       'Скрыть кандидата с канбан-доски. Кандидат остаётся в общей «Базе кандидатов».',
     actions: ['candidate:archive'],
-    matrix: { admin: true, account_manager: true, recruiter: true, viewer: false, accountant: false },
+    matrix: {
+      admin: true,
+      account_manager: true,
+      recruiter: true,
+      viewer: false,
+      accountant: false,
+      sales_manager: false,
+    },
   },
   {
     id: 'candidates.delete_permanent',
@@ -141,7 +229,14 @@ export const DEFAULT_PERMISSIONS: MatrixPermission[] = [
     description:
       'Полное удаление кандидата из базы без возможности восстановления. Действует поверх «убрать с доски».',
     actions: ['candidate:delete_permanent'],
-    matrix: { admin: true, account_manager: false, recruiter: false, viewer: false, accountant: false },
+    matrix: {
+      admin: true,
+      account_manager: false,
+      recruiter: false,
+      viewer: false,
+      accountant: false,
+      sales_manager: false,
+    },
   },
   {
     id: 'calendar.view',
@@ -149,7 +244,14 @@ export const DEFAULT_PERMISSIONS: MatrixPermission[] = [
     permission: 'Доступ к календарю',
     description: 'Видеть события календаря и собеседования.',
     actions: [],
-    matrix: { admin: true, account_manager: true, recruiter: true, viewer: true, accountant: true },
+    matrix: {
+      admin: true,
+      account_manager: true,
+      recruiter: true,
+      viewer: true,
+      accountant: true,
+      sales_manager: true,
+    },
   },
   {
     id: 'calendar.manage',
@@ -157,7 +259,14 @@ export const DEFAULT_PERMISSIONS: MatrixPermission[] = [
     permission: 'Создание / редактирование событий',
     description: 'Назначать собеседования, переносить и отмечать их исход.',
     actions: ['event:create', 'event:edit', 'event:set_outcome'],
-    matrix: { admin: true, account_manager: true, recruiter: true, viewer: false, accountant: false },
+    matrix: {
+      admin: true,
+      account_manager: true,
+      recruiter: true,
+      viewer: false,
+      accountant: false,
+      sales_manager: false,
+    },
   },
   {
     id: 'calendar.delete',
@@ -165,7 +274,14 @@ export const DEFAULT_PERMISSIONS: MatrixPermission[] = [
     permission: 'Удаление событий',
     description: 'Удалять события календаря.',
     actions: ['event:delete'],
-    matrix: { admin: true, account_manager: true, recruiter: false, viewer: false, accountant: false },
+    matrix: {
+      admin: true,
+      account_manager: true,
+      recruiter: false,
+      viewer: false,
+      accountant: false,
+      sales_manager: false,
+    },
   },
   {
     id: 'analytics.view',
@@ -173,7 +289,14 @@ export const DEFAULT_PERMISSIONS: MatrixPermission[] = [
     permission: 'Доступ к аналитике',
     description: 'Доступ к разделу «Аналитика» и выгрузкам.',
     actions: ['analytics:view'],
-    matrix: { admin: true, account_manager: true, recruiter: false, viewer: true, accountant: false },
+    matrix: {
+      admin: true,
+      account_manager: true,
+      recruiter: false,
+      viewer: true,
+      accountant: false,
+      sales_manager: true,
+    },
   },
   {
     id: 'screening.run',
@@ -181,7 +304,14 @@ export const DEFAULT_PERMISSIONS: MatrixPermission[] = [
     permission: 'Проведение скрининга',
     description: 'Создавать сессии AI-скрининга и вести видеоинтервью с записью.',
     actions: ['screening:run'],
-    matrix: { admin: true, account_manager: true, recruiter: true, viewer: false, accountant: false },
+    matrix: {
+      admin: true,
+      account_manager: true,
+      recruiter: true,
+      viewer: false,
+      accountant: false,
+      sales_manager: false,
+    },
   },
   {
     id: 'screening.view_report',
@@ -189,7 +319,14 @@ export const DEFAULT_PERMISSIONS: MatrixPermission[] = [
     permission: 'Просмотр отчётов',
     description: 'Доступ к транскриптам, записям и AI-отчётам скрининга.',
     actions: ['screening:view_report'],
-    matrix: { admin: true, account_manager: true, recruiter: true, viewer: false, accountant: false },
+    matrix: {
+      admin: true,
+      account_manager: true,
+      recruiter: true,
+      viewer: false,
+      accountant: false,
+      sales_manager: false,
+    },
   },
   {
     id: 'hr_edo.view_own',
@@ -197,7 +334,14 @@ export const DEFAULT_PERMISSIONS: MatrixPermission[] = [
     permission: 'Мои кадровые документы',
     description: 'Видеть и подписывать свои кадровые документы в разделе «Мои документы».',
     actions: ['hr_edo:view_own'],
-    matrix: { admin: true, account_manager: true, recruiter: true, viewer: true, accountant: true },
+    matrix: {
+      admin: true,
+      account_manager: true,
+      recruiter: true,
+      viewer: true,
+      accountant: true,
+      sales_manager: true,
+    },
   },
   {
     id: 'hr_edo.manage',
@@ -206,7 +350,14 @@ export const DEFAULT_PERMISSIONS: MatrixPermission[] = [
     description:
       'Раздел «Кадровые документы»: реестр сотрудников, согласия на КЭДО, формирование и отправка документов на подпись.',
     actions: ['hr_edo:manage'],
-    matrix: { admin: true, account_manager: false, recruiter: false, viewer: false, accountant: true },
+    matrix: {
+      admin: true,
+      account_manager: false,
+      recruiter: false,
+      viewer: false,
+      accountant: true,
+      sales_manager: false,
+    },
   },
   {
     id: 'hr_edo.sign_employer',
@@ -214,7 +365,14 @@ export const DEFAULT_PERMISSIONS: MatrixPermission[] = [
     permission: 'Подпись работодателя',
     description: 'Подписывать кадровые документы от имени работодателя (УКЭП директора).',
     actions: ['hr_edo:sign_employer'],
-    matrix: { admin: true, account_manager: false, recruiter: false, viewer: false, accountant: false },
+    matrix: {
+      admin: true,
+      account_manager: false,
+      recruiter: false,
+      viewer: false,
+      accountant: false,
+      sales_manager: false,
+    },
   },
   {
     id: 'hr_edo.export',
@@ -222,7 +380,14 @@ export const DEFAULT_PERMISSIONS: MatrixPermission[] = [
     permission: 'Выгрузка пакетов',
     description: 'Скачивать подписи, листы подписания и пакеты доказательств.',
     actions: ['hr_edo:export'],
-    matrix: { admin: true, account_manager: false, recruiter: false, viewer: false, accountant: true },
+    matrix: {
+      admin: true,
+      account_manager: false,
+      recruiter: false,
+      viewer: false,
+      accountant: true,
+      sales_manager: false,
+    },
   },
   {
     id: 'audit.view',
@@ -230,7 +395,14 @@ export const DEFAULT_PERMISSIONS: MatrixPermission[] = [
     permission: 'Журнал действий',
     description: 'Просмотр аудит-логов изменений.',
     actions: ['audit:view'],
-    matrix: { admin: true, account_manager: false, recruiter: false, viewer: false, accountant: false },
+    matrix: {
+      admin: true,
+      account_manager: false,
+      recruiter: false,
+      viewer: false,
+      accountant: false,
+      sales_manager: false,
+    },
   },
   {
     id: 'users.manage',
@@ -238,7 +410,14 @@ export const DEFAULT_PERMISSIONS: MatrixPermission[] = [
     permission: 'Управление пользователями',
     description: 'Создание сотрудников, выдача ролей и доступов.',
     actions: ['user:manage'],
-    matrix: { admin: true, account_manager: false, recruiter: false, viewer: false, accountant: false },
+    matrix: {
+      admin: true,
+      account_manager: false,
+      recruiter: false,
+      viewer: false,
+      accountant: false,
+      sales_manager: false,
+    },
   },
 ];
 

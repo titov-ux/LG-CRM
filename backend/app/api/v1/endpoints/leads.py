@@ -10,7 +10,8 @@ from app.db.session import get_db
 from app.modules.auth.dependencies import get_current_user
 from app.modules.auth.schemas import OkResponse
 from app.modules.leads import service, transitions
-from app.modules.leads.models import Lead as LeadModel, LeadStatus
+from app.modules.leads.models import Lead as LeadModel
+from app.modules.leads.models import LeadStatus
 from app.modules.leads.schemas import (
     ChangeStatusRequest,
     CreateLeadRequest,

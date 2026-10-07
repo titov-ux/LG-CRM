@@ -21,6 +21,8 @@ import { useAuthStore } from '@/stores/auth';
 import { useUsers } from '@/features/users/hooks';
 import type { Lead, LeadStatus, Priority } from '@/api/types';
 import {
+  LEAD_OWNER_ROLES,
+  LEAD_OWN_ONLY_ROLES,
   LEAD_PRIORITY_COLOR,
   LEAD_SOURCES,
   isFinalLeadStatus,
@@ -86,7 +88,7 @@ export function LeadsKanbanPage() {
     [usersData],
   );
   const accountManagers = useMemo(
-    () => (usersData ?? []).filter((u) => u.role === 'account_manager' || u.role === 'admin'),
+    () => (usersData ?? []).filter((u) => LEAD_OWNER_ROLES.includes(u.role)),
     [usersData],
   );
 
@@ -286,7 +288,7 @@ export function LeadsKanbanPage() {
               isPending={createLead.isPending}
               submitLabel="Создать лид"
               defaultValues={
-                currentUser?.role === 'account_manager'
+                currentUser && LEAD_OWN_ONLY_ROLES.includes(currentUser.role)
                   ? { accountManagerId: currentUser.id }
                   : undefined
               }

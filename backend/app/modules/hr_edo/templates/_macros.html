@@ -1,0 +1,31 @@
+{% macro place_date(company, doc_date) %}
+<div class="place-date">
+  <span>г. {{ company.city | t }}</span>
+  <span>{{ doc_date | date_ru }}</span>
+</div>
+{% endmacro %}
+
+{% macro employer_requisites(company) %}
+<div class="req">
+  {{ company.name | t }}<br>
+  {% if company.inn %}ИНН {{ company.inn }}{% endif %}{% if company.ogrn %}, ОГРН {{ company.ogrn }}{% endif %}<br>
+  {{ company.address | t }}
+</div>
+{% endmacro %}
+
+{% macro signs(company, employee, employer=True, employee_label="Работник", employee_line="подписано электронной подписью") %}
+<div class="signs">
+  {% if employer %}
+  <div>
+    <h3>Работодатель</h3>
+    {{ employer_requisites(company) }}
+    <div class="line">{{ company.director_position | t }}{% if company.director_name %} {{ company.director_name | t }}{% endif %} · подписано электронной подписью</div>
+  </div>
+  {% endif %}
+  <div>
+    <h3>{{ employee_label | t }}</h3>
+    <div class="req">{{ employee.full_name | t }}{% if employee.position %}<br>{{ employee.position | t }}{% endif %}</div>
+    <div class="line">{{ employee_line | t }}</div>
+  </div>
+</div>
+{% endmacro %}

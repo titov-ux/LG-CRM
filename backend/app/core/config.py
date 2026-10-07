@@ -209,6 +209,52 @@ class Settings(BaseSettings):
     # infra/docker-compose.prod.yml (там же напоминание про обязательный worker).
     screening_analysis_eager: bool = True
 
+    # ── Кадровый ЭДО (docs/plan-hr-edo.md) ──────────────────
+    # Включён ли модуль. Пусто — включён только в ENV=dev: так мерж модуля не
+    # роняет staging/prod, где ещё не настроены SMS и crypto-service. На
+    # контуре включается явно HR_EDO_ENABLED=true — и тогда стартовая проверка
+    # (validate_hr_edo_settings) требует боевых SMS и crypto-service.
+    hr_edo_enabled: bool | None = None
+    # SMS-провайдер для одноразовых кодов подписи. `log` — только ENV=dev:
+    # SMS не уходит, текст попадает в dev-outbox (GET /hr-edo/dev/sms-outbox),
+    # а в лог пишется маскированная версия без кода. На staging/prod `log`
+    # запрещён — приложение не стартует (см. validate_hr_edo_settings).
+    #   SMS_PROVIDER=smsc  + SMS_LOGIN / SMS_PASSWORD (или SMS_API_KEY)
+    sms_provider: Literal["log", "smsc"] = "log"
+    sms_login: str = ""
+    sms_password: str = ""
+    sms_api_key: str = ""
+    sms_sender: str = "LGIntegr"
+    sms_api_base: str = "https://smsc.ru"
+    sms_timeout_seconds: float = 10.0
+
+    # crypto-service (Java + КриптоПро JCP) во внутренней сети. Пусто — no-op
+    # режим «тестовая подпись», допустим только в ENV=dev.
+    #   prod: http://crypto:8090
+    crypto_service_url: str = ""
+    crypto_service_timeout_seconds: float = 15.0
+
+    # Секреты кадрового ЭДО. Отдельные от JWT: утечка одного не ломает другое.
+    # HMAC одноразовых кодов (код в открытом виде нигде не хранится).
+    hr_edo_otp_secret: str = Field(default="change-me-hr-otp")
+    # Подпись activation_token для crypto-service (JWT на 60 с). Тот же секрет
+    # задаётся crypto-service — он проверяет токен на своей стороне.
+    hr_edo_activation_secret: str = Field(default="change-me-hr-activation")
+    # Срок жизни ссылки на портал подписания (дни) и сессии портала (мин).
+    hr_edo_link_ttl_days: int = 7
+    hr_edo_portal_session_minutes: int = 30
+    # Сколько дней у сотрудника на подпись документа по умолчанию.
+    hr_edo_sign_due_days: int = 7
+    # Реквизиты работодателя для шаблонов кадровых документов.
+    hr_edo_company_name: str = "ООО «ЛГ Интеграция»"
+    hr_edo_company_short: str = "ЛГ Интеграция"
+    hr_edo_company_inn: str = ""
+    hr_edo_company_ogrn: str = ""
+    hr_edo_company_address: str = "г. Москва"
+    hr_edo_director_name: str = ""
+    hr_edo_director_position: str = "Генеральный директор"
+    hr_edo_city: str = "Москва"
+
     # ── Сеть ────────────────────────────────────────────────
     # У контейнера есть IPv6-адрес, но нет маршрута наружу (типично для YC-VM
     # без публичного IPv6). DNS отдаёт и A, и AAAA (напр. api.telegram.org),
@@ -218,6 +264,33 @@ class Settings(BaseSettings):
     # весь исходящий трафик процесса идёт по IPv4. Выключить можно, если на
     # хосте появится рабочий IPv6.
     force_ipv4_egress: bool = True
+
+
+def hr_edo_is_enabled(settings: Settings) -> bool:
+    if settings.hr_edo_enabled is None:
+        return settings.env == "dev"
+    return settings.hr_edo_enabled
+
+
+def validate_hr_edo_settings(settings: Settings) -> None:
+    """Запрет dev-заглушек кадрового ЭДО вне dev.
+
+    SMS в режиме `log` и crypto-service в no-op режиме дают «подпись» без
+    реального кода с телефона и без СКЗИ — на staging/prod это недопустимо,
+    поэтому падаем при старте, а не тихо деградируем.
+    """
+    if settings.env == "dev" or not hr_edo_is_enabled(settings):
+        return
+    problems: list[str] = []
+    if settings.sms_provider == "log":
+        problems.append("SMS_PROVIDER=log допустим только при ENV=dev")
+    if not settings.crypto_service_url:
+        problems.append("CRYPTO_SERVICE_URL обязателен вне ENV=dev (no-op подпись запрещена)")
+    for name in ("hr_edo_otp_secret", "hr_edo_activation_secret"):
+        if getattr(settings, name).startswith("change-me"):
+            problems.append(f"{name.upper()} не задан")
+    if problems:
+        raise RuntimeError("Кадровый ЭДО: " + "; ".join(problems))
 
 
 @lru_cache(maxsize=1)

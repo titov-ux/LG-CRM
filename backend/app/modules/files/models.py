@@ -34,6 +34,10 @@ class FileEntityType(str, enum.Enum):
     # Добавлено миграцией 0034_screening — записи разговоров AI-скрининга;
     # entity_id ссылается на screening_sessions.id.
     screening = "screening"
+    # Добавлено миграцией 0036_hr_edo — файлы кадрового ЭДО (PDF, .sig, сканы,
+    # листы подписания); entity_id ссылается на hr_documents.id. Доступ только
+    # через /hr-edo/*: общий /files для них закрыт (см. files/service.py).
+    hr_document = "hr_document"
 
 
 class ScanStatus(str, enum.Enum):

@@ -3369,6 +3369,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/analytics/interview-stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Собеседования по бакетам — назначены (scheduled/no_show) и проведены (held), окно по startsAt, canceled исключаются */
+        get: {
+            parameters: {
+                query?: {
+                    from?: string;
+                    to?: string;
+                    granularity?: components["schemas"]["Granularity"];
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description InterviewStatsResponse */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["InterviewStatsResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/analytics/funnel-v2": {
         parameters: {
             query?: never;
@@ -5440,6 +5480,68 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/screenings/{id}/retranscribe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Распознать прикреплённую запись заново
+         * @description Ставит офлайн-STT по уже привязанной записи, даже если транскрипт есть: текст и AI-отчёт перезаписываются результатом нового прогона. Пустой результат распознавания старый транскрипт не стирает.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description ScreeningSession (обычно уже в статусе processing) */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ScreeningSession"];
+                    };
+                };
+                /** @description no_audio — к сессии не привязана запись */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+                /** @description session_not_finished — встреча ещё не завершена */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/screenings/{id}/questions": {
         parameters: {
             query?: never;
@@ -5573,6 +5675,1721 @@ export interface paths {
         };
         trace?: never;
     };
+    "/hr-edo/doc-types": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Матрица типов кадровых документов (read-only) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Типы документов */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrDocType"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/hr-edo/employees": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Реестр сотрудников КЭДО (hr_edo:manage) */
+        get: {
+            parameters: {
+                query?: {
+                    q?: string;
+                    edoStatus?: components["schemas"]["HrEdoStatus"];
+                    employmentType?: components["schemas"]["EmploymentType"];
+                    status?: components["schemas"]["HrEmployeeStatus"];
+                    page?: components["parameters"]["Page"];
+                    pageSize?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Страница сотрудников */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrEmployeePage"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+            };
+        };
+        put?: never;
+        /** Завести сотрудника */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CreateHrEmployeeRequest"];
+                };
+            };
+            responses: {
+                /** @description HrEmployee */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrEmployee"];
+                    };
+                };
+                /** @description employee_user_taken */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/hr-edo/employees/from-candidate/{candidateId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                candidateId: components["schemas"]["UUID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Оформить сотрудника из кандидата (только статус hired) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    candidateId: components["schemas"]["UUID"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description HrEmployee */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrEmployee"];
+                    };
+                };
+                /** @description candidate_not_hired | employee_exists */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/hr-edo/employees/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        /** Карточка сотрудника */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description HrEmployee */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrEmployee"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Изменить карточку (телефон после приглашения — только через /phone) */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["UpdateHrEmployeeRequest"];
+                };
+            };
+            responses: {
+                /** @description HrEmployee */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrEmployee"];
+                    };
+                };
+                /** @description phone_locked */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/hr-edo/employees/{id}/invite": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Пригласить в КЭДО — сформировать пакет согласия и ссылку на портал */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Приглашение */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrInviteResponse"];
+                    };
+                };
+                /** @description phone_missing | already_consented | gph_contour */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/hr-edo/employees/{id}/consent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Зарегистрировать подписанный пакет согласия (скан или .sig) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "multipart/form-data": {
+                        sigType: components["schemas"]["HrSigType"];
+                        note?: string;
+                        /** Format: binary */
+                        file: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description HrEmployee */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrEmployee"];
+                    };
+                };
+                /** @description sig_type_not_allowed (УНЭП ЛГ для согласия запрещена) | signature_invalid */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/hr-edo/employees/{id}/refuse": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Отказ от КЭДО — бумажный контур */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        note?: string | null;
+                    };
+                };
+            };
+            responses: {
+                /** @description HrEmployee */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrEmployee"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/hr-edo/employees/{id}/keys/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Отозвать ключ УНЭП ЛГ */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["HrReasonRequest"];
+                };
+            };
+            responses: {
+                /** @description HrEmployee */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrEmployee"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/hr-edo/employees/{id}/phone": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Сменить телефон (отзыв ключа, новый ключ по подтверждению нового номера) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        phone: string;
+                        reason: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description HrEmployee */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrEmployee"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/hr-edo/documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Кадровые документы */
+        get: {
+            parameters: {
+                query?: {
+                    q?: string;
+                    status?: components["schemas"]["HrDocStatus"];
+                    typeCode?: string;
+                    employeeId?: components["schemas"]["UUID"];
+                    awaitingEmployer?: boolean;
+                    page?: components["parameters"]["Page"];
+                    pageSize?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Страница документов */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrDocumentPage"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Создать документ(ы) по шаблону — по одному на сотрудника */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CreateHrDocumentsRequest"];
+                };
+            };
+            responses: {
+                /** @description Созданные документы */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrDocument"][];
+                    };
+                };
+                /** @description fields_required | upload_only | consent_via_invite | gph_contour */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/hr-edo/documents/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** HTML-предпросмотр документа по шаблону */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["HrPreviewRequest"];
+                };
+            };
+            responses: {
+                /** @description HTML */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/html": string;
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/hr-edo/documents/upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Загрузить готовый PDF (upload_only) или скан бумажного (paper_only) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "multipart/form-data": {
+                        employeeId: components["schemas"]["UUID"];
+                        typeCode: string;
+                        title?: string;
+                        /** Format: date */
+                        docDate?: string;
+                        /** Format: binary */
+                        file: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description HrDocument */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrDocument"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/hr-edo/documents/send": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Отправить документы на подпись (одно письмо на сотрудника) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        ids: components["schemas"]["UUID"][];
+                    };
+                };
+            };
+            responses: {
+                /** @description Отправлено */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrSendResponse"];
+                    };
+                };
+                /** @description employee_not_ready | employer_signature_required | invalid_status */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description paper_only */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/hr-edo/documents/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        /** Документ */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description HrDocument */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrDocument"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Изменить черновик */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        fields?: {
+                            [key: string]: unknown;
+                        } | null;
+                        title?: string | null;
+                        /** Format: date */
+                        docDate?: string | null;
+                    };
+                };
+            };
+            responses: {
+                /** @description HrDocument */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrDocument"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/hr-edo/documents/{id}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        /** HTML документа по шаблону */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description HTML */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/html": string;
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/hr-edo/documents/{id}/freeze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Сформировать PDF, посчитать SHA-256 и Стрибог, заморозить */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description HrDocument */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrDocument"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/hr-edo/documents/{id}/send": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Отправить документ сотруднику */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Отправлено */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrSendResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/hr-edo/documents/{id}/remind": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Напомнить сотруднику о подписи */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Напоминание отправлено */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrSendResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/hr-edo/documents/{id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Отменить документ (до подписи) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["HrReasonRequest"];
+                };
+            };
+            responses: {
+                /** @description HrDocument */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrDocument"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/hr-edo/documents/{id}/employer-signature": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Загрузить УКЭП директора (.sig) — hr_edo:sign_employer */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "multipart/form-data": {
+                        /** Format: binary */
+                        file: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description HrDocument */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrDocument"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/hr-edo/documents/{id}/paper-signed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Отметить подписанным на бумаге (скан оригинала) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "multipart/form-data": {
+                        /** Format: binary */
+                        file: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description HrDocument */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrDocument"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/hr-edo/documents/{id}/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        /** PDF документа (исходник с проверкой хеша или с листом подписания) */
+        get: {
+            parameters: {
+                query?: {
+                    kind?: "source" | "stamped";
+                    download?: boolean;
+                };
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description PDF */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/pdf": string;
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/hr-edo/documents/{id}/signatures/{signatureId}/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+                signatureId: components["schemas"]["UUID"];
+            };
+            cookie?: never;
+        };
+        /** Файл подписи (.sig) или скан — hr_edo:export */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                    signatureId: components["schemas"]["UUID"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Файл */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/octet-stream": string;
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/hr-edo/documents/{id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        /** Протокол документа */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description События */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrEvent"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/hr-edo/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Журнал кадрового ЭДО */
+        get: {
+            parameters: {
+                query?: {
+                    documentId?: components["schemas"]["UUID"];
+                    employeeId?: components["schemas"]["UUID"];
+                    kind?: string;
+                    page?: components["parameters"]["Page"];
+                    pageSize?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Страница событий */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrEventPage"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/hr-edo/events/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Сверка хеш-цепочки протокола */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Результат */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrChainCheck"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/hr-edo/dev/sms-outbox": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** (только ENV=dev, SMS_PROVIDER=log) последние SMS */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description SMS */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrDevSms"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/hr-edo/my": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Мой статус в КЭДО (hr_edo:view_own) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Сотрудник или null, если аккаунт не привязан */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrMyOverview"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/hr-edo/my/documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Мои кадровые документы */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Документы */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrPortalDocument"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/hr-edo/my/documents/{id}/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        /** PDF моего документа */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description PDF */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/pdf": string;
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/hr-edo/my/documents/{id}/viewed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Отметка просмотра (toEnd — прокручен до конца) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /** @default false */
+                        toEnd?: boolean;
+                    };
+                };
+            };
+            responses: {
+                /** @description Документ */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrPortalDocument"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/hr-edo/my/documents/{id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Отказаться подписывать (с причиной) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["HrReasonRequest"];
+                };
+            };
+            responses: {
+                /** @description Документ */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrPortalDocument"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/hr-edo/my/key/otp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** SMS-код для выпуска подписи */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Челлендж */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrChallenge"];
+                    };
+                };
+                /** @description consent_required | key_already_issued */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                429: components["responses"]["RateLimited"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/hr-edo/my/key/issue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Выпустить подпись по коду из SMS */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["HrChallengeConfirm"];
+                };
+            };
+            responses: {
+                /** @description Ключ */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrSigningKey"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/hr-edo/my/challenges": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** SMS-код для подписи набора документов */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        documentIds: components["schemas"]["UUID"][];
+                    };
+                };
+            };
+            responses: {
+                /** @description Челлендж */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrChallenge"];
+                    };
+                };
+                429: components["responses"]["RateLimited"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/hr-edo/my/challenges/{id}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["UuidPathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Подписать кодом из SMS */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["parameters"]["UuidPathId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        code: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Подписанные документы */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrSignResult"];
+                    };
+                };
+                /** @description otp_invalid (details.attemptsLeft) */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description otp_locked */
+                423: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -5605,7 +7422,7 @@ export interface components {
             password: string;
         };
         /** @enum {string} */
-        Role: "admin" | "account_manager" | "recruiter" | "viewer";
+        Role: "admin" | "account_manager" | "recruiter" | "viewer" | "accountant";
         User: {
             id: components["schemas"]["UUID"];
             /** Format: email */
@@ -6124,10 +7941,10 @@ export interface components {
             id: components["schemas"]["UUID"];
             userId: components["schemas"]["UUID"];
             /** @enum {string} */
-            kind: "mention" | "status_change" | "system" | "assignment" | "comment" | "chat_message";
+            kind: "mention" | "status_change" | "system" | "assignment" | "comment" | "chat_message" | "hr_document";
             text: string;
             /** @enum {string|null} */
-            entityType?: "vacancy" | "candidate" | "client" | "contact" | "chat_message" | "event" | null;
+            entityType?: "vacancy" | "candidate" | "client" | "contact" | "chat_message" | "event" | "tender" | "hr_document" | null;
             entityId?: components["schemas"]["UUID"] | null;
             /** @description Доп. данные для построения ссылки-перехода. Например, у chat_message entityId указывает на сообщение, а conversationId диалога лежит в payload.conversationId. */
             payload?: {
@@ -6215,6 +8032,21 @@ export interface components {
             granularity: "day" | "week" | "month";
             period: components["schemas"]["PeriodWindow"];
             series: components["schemas"]["TrendsSeries"];
+        };
+        InterviewStatsSeries: {
+            scheduled: components["schemas"]["TrendsPoint"][];
+            held: components["schemas"]["TrendsPoint"][];
+        };
+        InterviewStatsTotals: {
+            scheduled: number;
+            held: number;
+        };
+        InterviewStatsResponse: {
+            /** @enum {string} */
+            granularity: "day" | "week" | "month";
+            period: components["schemas"]["PeriodWindow"];
+            series: components["schemas"]["InterviewStatsSeries"];
+            totals: components["schemas"]["InterviewStatsTotals"];
         };
         FunnelStage: {
             status: components["schemas"]["MatchStatus"];
@@ -6425,7 +8257,7 @@ export interface components {
             durationSeconds?: number | null;
         };
         /** @enum {string} */
-        FileEntityType: "candidate" | "vacancy" | "client" | "contact" | "document";
+        FileEntityType: "candidate" | "vacancy" | "client" | "contact" | "document" | "hr_document";
         /** @enum {string} */
         ScanStatus: "pending" | "clean" | "infected" | "error";
         FileResponse: {
@@ -6785,6 +8617,316 @@ export interface components {
         UpdateScreeningRequest: {
             telemostUrl?: string | null;
             consentConfirmed?: boolean | null;
+        };
+        /** @enum {string} */
+        HrEmployeeStatus: "active" | "dismissed";
+        /** @enum {string} */
+        HrEdoStatus: "not_invited" | "notified" | "consent_signed" | "active" | "refused" | "key_revoked";
+        /** @enum {string} */
+        HrDocStatus: "draft" | "frozen" | "awaiting_employer" | "sent" | "viewed" | "signed" | "rejected" | "expired" | "cancelled" | "archived_paper";
+        /** @enum {string} */
+        HrSigType: "unep_lg" | "gosklyuch" | "ukep" | "paper";
+        HrDocTypeField: {
+            key: string;
+            label: string;
+            /** @enum {string} */
+            type: "text" | "textarea" | "date" | "money" | "number" | "select";
+            required: boolean;
+            defaultFrom?: string | null;
+            default?: string | null;
+            options: string[];
+            placeholder?: string | null;
+            hint?: string | null;
+        };
+        HrDocType: {
+            code: string;
+            title: string;
+            numberPrefix: string;
+            /** @enum {string} */
+            contour: "labor" | "gph";
+            /** @enum {string} */
+            employeeAction: "none" | "acknowledge" | "sign";
+            employeeSig: components["schemas"]["HrSigType"][];
+            /** @enum {string} */
+            employerSig: "none" | "ukep";
+            /** @enum {string} */
+            signOrder: "employer_first" | "employee_first" | "parallel";
+            retentionYears: number;
+            uploadOnly: boolean;
+            paperOnly: boolean;
+            strictGroup: boolean;
+            stage: number;
+            description: string;
+            fields: components["schemas"]["HrDocTypeField"][];
+        };
+        HrSigningKey: {
+            id: components["schemas"]["UUID"];
+            /** @description Стрибог-256 открытого ключа, hex */
+            fingerprint: string;
+            algorithm: string;
+            /** Format: date-time */
+            issuedAt: string;
+            /** Format: date-time */
+            revokedAt?: string | null;
+            revokeReason?: string | null;
+            phoneMasked: string;
+            /** @description true — no-op crypto-service (dev) */
+            isTest: boolean;
+        };
+        HrEmployee: {
+            id: components["schemas"]["UUID"];
+            userId?: components["schemas"]["UUID"];
+            userName?: string | null;
+            candidateId?: components["schemas"]["UUID"];
+            fullName: string;
+            position: string;
+            employmentType: components["schemas"]["EmploymentType"];
+            /** @description E.164 */
+            phone?: string | null;
+            phoneMasked?: string | null;
+            /** Format: date-time */
+            phoneVerifiedAt?: string | null;
+            email?: string | null;
+            /** Format: date */
+            hiredAt?: string | null;
+            /** Format: date */
+            dismissedAt?: string | null;
+            status: components["schemas"]["HrEmployeeStatus"];
+            edoStatus: components["schemas"]["HrEdoStatus"];
+            edoConsentDocId?: components["schemas"]["UUID"];
+            activeKey?: components["schemas"]["HrSigningKey"] | null;
+            pendingDocuments: number;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        HrEmployeePage: {
+            items: components["schemas"]["HrEmployee"][];
+            total: number;
+            page: number;
+            pageSize: number;
+        };
+        CreateHrEmployeeRequest: {
+            fullName: string;
+            position?: string;
+            employmentType?: components["schemas"]["EmploymentType"];
+            phone?: string | null;
+            email?: string | null;
+            /** Format: date */
+            hiredAt?: string | null;
+            userId?: components["schemas"]["UUID"];
+            candidateId?: components["schemas"]["UUID"];
+        };
+        UpdateHrEmployeeRequest: {
+            fullName?: string | null;
+            position?: string | null;
+            employmentType?: components["schemas"]["EmploymentType"];
+            phone?: string | null;
+            email?: string | null;
+            /** Format: date */
+            hiredAt?: string | null;
+            /** Format: date */
+            dismissedAt?: string | null;
+            status?: components["schemas"]["HrEmployeeStatus"];
+            userId?: components["schemas"]["UUID"];
+        };
+        HrReasonRequest: {
+            reason: string;
+        };
+        HrSignature: {
+            id: components["schemas"]["UUID"];
+            /** @enum {string} */
+            signerRole: "employer" | "employee";
+            signerName: string;
+            sigType: components["schemas"]["HrSigType"];
+            /** Format: date-time */
+            signedAt: string;
+            /** Format: date-time */
+            tspTime?: string | null;
+            fingerprint?: string | null;
+            phoneMasked?: string | null;
+            certSubject?: string | null;
+            certIssuer?: string | null;
+            certSerial?: string | null;
+            hasFile: boolean;
+            isTest: boolean;
+            verification: {
+                [key: string]: unknown;
+            };
+        };
+        HrDocument: {
+            id: components["schemas"]["UUID"];
+            employeeId: components["schemas"]["UUID"];
+            employeeName: string;
+            typeCode: string;
+            title: string;
+            number?: string | null;
+            /** Format: date */
+            docDate: string;
+            status: components["schemas"]["HrDocStatus"];
+            fields: {
+                [key: string]: unknown;
+            };
+            contentSha256?: string | null;
+            contentStreebog256?: string | null;
+            /** Format: date-time */
+            frozenAt?: string | null;
+            /** Format: date-time */
+            sentAt?: string | null;
+            /** Format: date-time */
+            viewedAt?: string | null;
+            /** Format: date-time */
+            signedAt?: string | null;
+            /** Format: date-time */
+            dueAt?: string | null;
+            batchId?: components["schemas"]["UUID"];
+            hasSource: boolean;
+            hasStamped: boolean;
+            cancelReason?: string | null;
+            rejectReason?: string | null;
+            createdBy?: components["schemas"]["UUID"];
+            createdByName?: string | null;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+            signatures: components["schemas"]["HrSignature"][];
+        };
+        HrDocumentPage: {
+            items: components["schemas"]["HrDocument"][];
+            total: number;
+            page: number;
+            pageSize: number;
+        };
+        CreateHrDocumentsRequest: {
+            typeCode: string;
+            employeeIds: components["schemas"]["UUID"][];
+            fields?: {
+                [key: string]: unknown;
+            };
+            title?: string | null;
+            /** Format: date */
+            docDate?: string | null;
+            /**
+             * @description true — сразу сформировать PDF
+             * @default false
+             */
+            freeze: boolean;
+        };
+        HrPreviewRequest: {
+            typeCode: string;
+            employeeId?: components["schemas"]["UUID"];
+            fields?: {
+                [key: string]: unknown;
+            };
+            title?: string | null;
+            /** Format: date */
+            docDate?: string | null;
+        };
+        HrSendResponse: {
+            items: components["schemas"]["HrDocument"][];
+            /** @description employeeId → ссылка на портал, если письмо не ушло (нет email / SMTP) */
+            portalLinks: {
+                [key: string]: string;
+            };
+        };
+        HrInviteResponse: {
+            employee: components["schemas"]["HrEmployee"];
+            document: components["schemas"]["HrDocument"];
+            emailSent: boolean;
+            portalUrl?: string | null;
+        };
+        HrEvent: {
+            id: number;
+            documentId?: components["schemas"]["UUID"];
+            documentTitle?: string | null;
+            employeeId?: components["schemas"]["UUID"];
+            employeeName?: string | null;
+            kind: string;
+            /** @enum {string} */
+            actorType: "user" | "employee" | "system";
+            actorName: string;
+            ip?: string | null;
+            payload: {
+                [key: string]: unknown;
+            };
+            /** Format: date-time */
+            createdAt: string;
+            hash: string;
+            prevHash: string;
+        };
+        HrEventPage: {
+            items: components["schemas"]["HrEvent"][];
+            total: number;
+            page: number;
+            pageSize: number;
+        };
+        HrChainCheck: {
+            ok: boolean;
+            checked: number;
+            brokenAtId?: number | null;
+            reason?: string | null;
+        };
+        HrDevSms: {
+            phone: string;
+            text: string;
+            /** Format: date-time */
+            sentAt: string;
+        };
+        HrChallenge: {
+            challengeId: components["schemas"]["UUID"];
+            phoneMasked: string;
+            /** Format: date-time */
+            expiresAt: string;
+            resendAfter: number;
+            documentIds: components["schemas"]["UUID"][];
+        };
+        HrChallengeConfirm: {
+            challengeId: components["schemas"]["UUID"];
+            code: string;
+        };
+        HrPortalDocument: {
+            id: components["schemas"]["UUID"];
+            typeCode: string;
+            title: string;
+            number?: string | null;
+            /** Format: date */
+            docDate: string;
+            status: components["schemas"]["HrDocStatus"];
+            /** @enum {string} */
+            employeeAction: "none" | "acknowledge" | "sign";
+            /** @enum {string} */
+            signMethod: "unep_lg" | "external" | "none";
+            canSign: boolean;
+            /** Format: date-time */
+            dueAt?: string | null;
+            /** Format: date-time */
+            sentAt?: string | null;
+            /** Format: date-time */
+            signedAt?: string | null;
+            /** Format: date-time */
+            viewedAt?: string | null;
+            contentStreebog256?: string | null;
+            signatures: components["schemas"]["HrSignature"][];
+        };
+        HrEmployeeSelf: {
+            id: components["schemas"]["UUID"];
+            fullName: string;
+            position: string;
+            edoStatus: components["schemas"]["HrEdoStatus"];
+            phoneMasked?: string | null;
+            email?: string | null;
+            key?: components["schemas"]["HrSigningKey"] | null;
+            companyName: string;
+            pendingCount: number;
+        };
+        HrMyOverview: {
+            employee?: components["schemas"]["HrEmployeeSelf"] | null;
+        };
+        HrSignResult: {
+            signed: components["schemas"]["UUID"][];
+            documents: components["schemas"]["HrPortalDocument"][];
         };
     };
     responses: {

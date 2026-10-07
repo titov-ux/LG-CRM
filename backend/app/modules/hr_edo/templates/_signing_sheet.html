@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Лист подписания</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&display=swap">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  @page { size: A4; margin: 14mm 15mm 16mm; }
+  body {
+    color: #14171A;
+    font-family: 'Golos Text', 'Segoe UI', Arial, sans-serif;
+    font-size: 11.5px;
+    line-height: 1.5;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  header { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 3px solid #14171A; padding-bottom: 10px; }
+  header h1 { font-size: 17px; font-weight: 600; }
+  header .meta { text-align: right; color: #5D6570; font-size: 10.5px; }
+  .doc { margin-top: 12px; display: grid; grid-template-columns: 150px 1fr; gap: 3px 12px; }
+  .doc dt { color: #5D6570; }
+  .doc dd { font-weight: 500; word-break: break-all; }
+  .mono { font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: 10px; }
+  .sig { margin-top: 12px; border: 1.5px solid #14171A; padding: 10px 12px; break-inside: avoid; }
+  .sig.test { border-color: #B45309; }
+  .sig h2 { font-size: 13px; font-weight: 600; display: flex; justify-content: space-between; gap: 10px; }
+  .sig h2 span { font-weight: 500; color: #5D6570; font-size: 11px; }
+  .sig dl { margin-top: 6px; display: grid; grid-template-columns: 150px 1fr; gap: 2px 12px; }
+  .sig dt { color: #5D6570; }
+  .sig dd { word-break: break-all; }
+  .warn { margin-top: 10px; padding: 7px 10px; background: #FFFBEB; border: 1.5px dashed #B45309; color: #92400E; font-weight: 600; font-size: 10.5px; }
+  .foot { margin-top: 14px; color: #5D6570; font-size: 10px; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Лист подписания электронного документа</h1>
+    <div class="meta">{{ company.name | t }}<br>сформирован {{ generated_at | dt_msk }}</div>
+  </header>
+
+  <dl class="doc">
+    <dt>Документ</dt><dd>{{ document.title | t }}{% if document.number %} № {{ document.number }}{% endif %} от {{ document.doc_date | date_short }}</dd>
+    <dt>ID документа</dt><dd class="mono">{{ document.id }}</dd>
+    <dt>SHA-256</dt><dd class="mono">{{ document.sha256 }}</dd>
+    <dt>ГОСТ Р 34.11-2012</dt><dd class="mono">{{ document.streebog256 }}</dd>
+  </dl>
+
+  {% if any_test %}
+  <div class="warn">ТЕСТОВАЯ ПОДПИСЬ: crypto-service не подключен (dev-контур). Юридической силы не имеет.</div>
+  {% endif %}
+
+  {% for s in signatures %}
+  <div class="sig{% if s.is_test %} test{% endif %}">
+    <h2>{{ s.role_label | t }}: {{ s.name | t }} <span>{{ s.signed_at | dt_msk }}</span></h2>
+    <dl>
+      <dt>Тип подписи</dt><dd>{{ s.type_label | t }}</dd>
+      {% if s.fingerprint %}<dt>Отпечаток ключа</dt><dd class="mono">{{ s.fingerprint }}</dd>{% endif %}
+      {% if s.phone %}<dt>Подтверждение</dt><dd>операция подтверждена кодом из SMS на {{ s.phone }}</dd>{% endif %}
+      {% if s.cert_subject %}<dt>Владелец сертификата</dt><dd>{{ s.cert_subject | t }}</dd>{% endif %}
+      {% if s.cert_issuer %}<dt>Издатель</dt><dd>{{ s.cert_issuer | t }}</dd>{% endif %}
+      {% if s.cert_serial %}<dt>Серийный номер</dt><dd class="mono">{{ s.cert_serial }}</dd>{% endif %}
+      {% if s.cert_valid %}<dt>Срок сертификата</dt><dd>{{ s.cert_valid }}</dd>{% endif %}
+      {% if s.tsp_time %}<dt>Метка времени</dt><dd>{{ s.tsp_time | dt_msk }}</dd>{% endif %}
+      {% if s.ip %}<dt>IP-адрес</dt><dd>{{ s.ip }}</dd>{% endif %}
+      <dt>ID подписи</dt><dd class="mono">{{ s.id }}</dd>
+    </dl>
+  </div>
+  {% endfor %}
+
+  <p class="foot">Лист подписания является визуализацией. Юридическую силу имеют электронный документ (PDF), файлы подписей (.sig) и протокол информационной системы. Проверка подписи: {{ verify_url }}</p>
+</body>
+</html>

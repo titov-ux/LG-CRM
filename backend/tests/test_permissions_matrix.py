@@ -95,6 +95,7 @@ def test_reset_restores_defaults(client: TestClient, admin_user) -> None:
         "account_manager": False,
         "recruiter": False,
         "viewer": False,
+        "accountant": False,
     }
 
 

@@ -101,6 +101,9 @@ async def list_files(
     _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[FileResponse]:
+    if entity_type == FileEntityType.hr_document:
+        # Кадровые файлы — только через /hr-edo/* (права + протокол).
+        return []
     rows = await service.list_for_entity(db, entity_type, entity_id)
     return [_to_dto(r) for r in rows]
 

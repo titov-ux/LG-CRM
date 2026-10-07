@@ -39,9 +39,20 @@ def _validate_upload(mime: str, size: int) -> None:
         )
 
 
+def _reject_hr_document(entity_type: FileEntityType) -> None:
+    """Файлы кадрового ЭДО кладёт только сервер (/hr-edo/*) — с хешами и протоколом."""
+    if entity_type == FileEntityType.hr_document:
+        raise ApiError(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "entity_type_forbidden",
+            "Файлы кадровых документов загружаются через раздел «Кадровые документы»",
+        )
+
+
 async def presign(
     s3: S3Adapter, payload: PresignRequest
 ) -> tuple[str, dict[str, str], str, int]:
+    _reject_hr_document(payload.entity_type)
     mime = _normalize_mime(payload.mime)
     _validate_upload(mime, payload.size)
     settings = get_settings()
@@ -59,6 +70,7 @@ async def presign(
 async def confirm(
     db: AsyncSession, user: User, payload: ConfirmRequest
 ) -> File:
+    _reject_hr_document(payload.entity_type)
     mime = _normalize_mime(payload.mime)
     _validate_upload(mime, payload.size)
     # Проверка, что file_key соответствует ожидаемому префиксу — анти-подмена.
@@ -119,7 +131,13 @@ async def ensure_can_read_file(
     участник conversation сообщения. Если файл «осиротел» (сообщение или
     его conversation_id отсутствуют) — отдаём 404, чтобы не палить
     существование файла.
+
+    Файлы кадрового ЭДО (entity_type=hr_document) через общий /files не
+    отдаются никому: у них своя выдача в /hr-edo/* с проверкой прав,
+    целостности и записью в протокол.
     """
+    if file.entity_type == FileEntityType.hr_document:
+        raise ApiError(status.HTTP_404_NOT_FOUND, "not_found", "Файл не найден")
     if file.entity_type != FileEntityType.chat_message:
         return
 
@@ -148,6 +166,13 @@ async def delete_file(
     db: AsyncSession, s3: S3Adapter, user: User, file_id: uuid.UUID
 ) -> None:
     file = await get_file(db, file_id)
+    if file.entity_type == FileEntityType.hr_document:
+        # Замороженные кадровые документы, подписи и сканы неизменны.
+        raise ApiError(
+            status.HTTP_409_CONFLICT,
+            "hr_document_immutable",
+            "Файлы кадрового ЭДО удалить нельзя",
+        )
     # Только владелец или admin может удалять.
     from app.modules.users.models import Role
 

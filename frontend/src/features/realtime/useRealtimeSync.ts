@@ -16,6 +16,7 @@ import { useAuthStore } from '@/stores/auth';
 import { candidateKeys } from '@/features/candidates/hooks';
 import { vacancyKeys } from '@/features/vacancies/hooks';
 import { tenderKeys } from '@/features/tenders/hooks';
+import { leadKeys } from '@/features/leads/hooks';
 import { matchKeys } from '@/features/matching/hooks';
 import { screeningKeys } from '@/features/screening/hooks';
 import {
@@ -82,7 +83,8 @@ export function useRealtimeSync(): void {
       if (
         event.type !== 'vacancy.changed' &&
         event.type !== 'candidate.changed' &&
-        event.type !== 'tender.changed'
+        event.type !== 'tender.changed' &&
+        event.type !== 'lead.changed'
       ) {
         return;
       }
@@ -92,6 +94,12 @@ export function useRealtimeSync(): void {
           // Дополнительно подёргаем карточку, если она открыта.
           queryClient.invalidateQueries({ queryKey: vacancyKeys.byId(event.id) });
           queryClient.invalidateQueries({ queryKey: vacancyKeys.activity(event.id) });
+        }
+      } else if (event.entity === 'lead') {
+        queryClient.invalidateQueries({ queryKey: leadKeys.all });
+        if (event.id) {
+          queryClient.invalidateQueries({ queryKey: leadKeys.byId(event.id) });
+          queryClient.invalidateQueries({ queryKey: leadKeys.activity(event.id) });
         }
       } else if (event.entity === 'tender') {
         queryClient.invalidateQueries({ queryKey: tenderKeys.all });

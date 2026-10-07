@@ -55,6 +55,14 @@ tags:
       AI-скрининг: видеоинтервью в Яндекс Телемосте с записью звука,
       чек-листом вопросов и (этапы 2–5) live-транскриптом и AI-отчётом.
       Захват звука — на стороне рекрутера (вкладка Телемоста + микрофон).
+  - name: hr-edo
+    description: |
+      Кадровый электронный документооборот (docs/plan-hr-edo.md): реестр
+      сотрудников, согласие на КЭДО, документы по шаблонам, подпись
+      работодателя, «Мои документы». Раздел «Кадровые документы» —
+      право `hr_edo:manage` (по умолчанию администратор и бухгалтер).
+      Публичный портал подписания `/sign/*` (ссылка + SMS, httpOnly-cookie)
+      в контракт не входит — как webhook Telegram.
   - name: documents
     description: |
       База знаний и хранилище документов команды: разделы (клиенты, регламенты, компания,
@@ -2590,6 +2598,678 @@ paths:
 
 
 # ───────────────────────────────────────────────────────────
+  # ─────────────── HR-EDO (кадровый ЭДО) ───────────────
+  /hr-edo/doc-types:
+    get:
+      tags: [hr-edo]
+      summary: Матрица типов кадровых документов (read-only)
+      responses:
+        '200':
+          description: Типы документов
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/HrDocType' } }
+  /hr-edo/employees:
+    get:
+      tags: [hr-edo]
+      summary: Реестр сотрудников КЭДО (hr_edo:manage)
+      parameters:
+        - { in: query, name: q, schema: { type: string } }
+        - { in: query, name: edoStatus, schema: { $ref: '#/components/schemas/HrEdoStatus' } }
+        - { in: query, name: employmentType, schema: { $ref: '#/components/schemas/EmploymentType' } }
+        - { in: query, name: status, schema: { $ref: '#/components/schemas/HrEmployeeStatus' } }
+        - $ref: '#/components/parameters/Page'
+        - { in: query, name: pageSize, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+      responses:
+        '200':
+          description: Страница сотрудников
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HrEmployeePage' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [hr-edo]
+      summary: Завести сотрудника
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateHrEmployeeRequest' }
+      responses:
+        '201':
+          description: HrEmployee
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HrEmployee' }
+        '409':
+          description: employee_user_taken
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+  /hr-edo/employees/from-candidate/{candidateId}:
+    parameters:
+      - { in: path, name: candidateId, required: true, schema: { $ref: '#/components/schemas/UUID' } }
+    post:
+      tags: [hr-edo]
+      summary: Оформить сотрудника из кандидата (только статус hired)
+      responses:
+        '201':
+          description: HrEmployee
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HrEmployee' }
+        '409':
+          description: candidate_not_hired | employee_exists
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+  /hr-edo/employees/{id}:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    get:
+      tags: [hr-edo]
+      summary: Карточка сотрудника
+      responses:
+        '200':
+          description: HrEmployee
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HrEmployee' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [hr-edo]
+      summary: Изменить карточку (телефон после приглашения — только через /phone)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateHrEmployeeRequest' }
+      responses:
+        '200':
+          description: HrEmployee
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HrEmployee' }
+        '409':
+          description: phone_locked
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+  /hr-edo/employees/{id}/invite:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [hr-edo]
+      summary: Пригласить в КЭДО — сформировать пакет согласия и ссылку на портал
+      responses:
+        '200':
+          description: Приглашение
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HrInviteResponse' }
+        '409':
+          description: phone_missing | already_consented | gph_contour
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+  /hr-edo/employees/{id}/consent:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [hr-edo]
+      summary: Зарегистрировать подписанный пакет согласия (скан или .sig)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [sigType, file]
+              properties:
+                sigType: { $ref: '#/components/schemas/HrSigType' }
+                note:    { type: string }
+                file:    { type: string, format: binary }
+      responses:
+        '200':
+          description: HrEmployee
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HrEmployee' }
+        '422':
+          description: sig_type_not_allowed (УНЭП ЛГ для согласия запрещена) | signature_invalid
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+  /hr-edo/employees/{id}/refuse:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [hr-edo]
+      summary: Отказ от КЭДО — бумажный контур
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string, nullable: true }
+      responses:
+        '200':
+          description: HrEmployee
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HrEmployee' }
+  /hr-edo/employees/{id}/keys/revoke:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [hr-edo]
+      summary: Отозвать ключ УНЭП ЛГ
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HrReasonRequest' }
+      responses:
+        '200':
+          description: HrEmployee
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HrEmployee' }
+  /hr-edo/employees/{id}/phone:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [hr-edo]
+      summary: Сменить телефон (отзыв ключа, новый ключ по подтверждению нового номера)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone, reason]
+              properties:
+                phone:  { type: string }
+                reason: { type: string, minLength: 3 }
+      responses:
+        '200':
+          description: HrEmployee
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HrEmployee' }
+  /hr-edo/documents:
+    get:
+      tags: [hr-edo]
+      summary: Кадровые документы
+      parameters:
+        - { in: query, name: q, schema: { type: string } }
+        - { in: query, name: status, schema: { $ref: '#/components/schemas/HrDocStatus' } }
+        - { in: query, name: typeCode, schema: { type: string } }
+        - { in: query, name: employeeId, schema: { $ref: '#/components/schemas/UUID' } }
+        - { in: query, name: awaitingEmployer, schema: { type: boolean } }
+        - $ref: '#/components/parameters/Page'
+        - { in: query, name: pageSize, schema: { type: integer, minimum: 1, maximum: 500, default: 50 } }
+      responses:
+        '200':
+          description: Страница документов
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HrDocumentPage' }
+    post:
+      tags: [hr-edo]
+      summary: Создать документ(ы) по шаблону — по одному на сотрудника
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateHrDocumentsRequest' }
+      responses:
+        '201':
+          description: Созданные документы
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/HrDocument' } }
+        '422':
+          description: fields_required | upload_only | consent_via_invite | gph_contour
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+  /hr-edo/documents/preview:
+    post:
+      tags: [hr-edo]
+      summary: HTML-предпросмотр документа по шаблону
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HrPreviewRequest' }
+      responses:
+        '200':
+          description: HTML
+          content:
+            text/html:
+              schema: { type: string }
+  /hr-edo/documents/upload:
+    post:
+      tags: [hr-edo]
+      summary: Загрузить готовый PDF (upload_only) или скан бумажного (paper_only)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [employeeId, typeCode, file]
+              properties:
+                employeeId: { $ref: '#/components/schemas/UUID' }
+                typeCode:   { type: string }
+                title:      { type: string }
+                docDate:    { type: string, format: date }
+                file:       { type: string, format: binary }
+      responses:
+        '201':
+          description: HrDocument
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HrDocument' }
+  /hr-edo/documents/send:
+    post:
+      tags: [hr-edo]
+      summary: Отправить документы на подпись (одно письмо на сотрудника)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              properties:
+                ids: { type: array, items: { $ref: '#/components/schemas/UUID' } }
+      responses:
+        '200':
+          description: Отправлено
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HrSendResponse' }
+        '409':
+          description: employee_not_ready | employer_signature_required | invalid_status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '422':
+          description: paper_only
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+  /hr-edo/documents/{id}:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    get:
+      tags: [hr-edo]
+      summary: Документ
+      responses:
+        '200':
+          description: HrDocument
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HrDocument' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [hr-edo]
+      summary: Изменить черновик
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                fields:  { type: object, additionalProperties: true, nullable: true }
+                title:   { type: string, nullable: true }
+                docDate: { type: string, format: date, nullable: true }
+      responses:
+        '200':
+          description: HrDocument
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HrDocument' }
+  /hr-edo/documents/{id}/preview:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    get:
+      tags: [hr-edo]
+      summary: HTML документа по шаблону
+      responses:
+        '200':
+          description: HTML
+          content:
+            text/html:
+              schema: { type: string }
+  /hr-edo/documents/{id}/freeze:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [hr-edo]
+      summary: Сформировать PDF, посчитать SHA-256 и Стрибог, заморозить
+      responses:
+        '200':
+          description: HrDocument
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HrDocument' }
+  /hr-edo/documents/{id}/send:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [hr-edo]
+      summary: Отправить документ сотруднику
+      responses:
+        '200':
+          description: Отправлено
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HrSendResponse' }
+  /hr-edo/documents/{id}/remind:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [hr-edo]
+      summary: Напомнить сотруднику о подписи
+      responses:
+        '200':
+          description: Напоминание отправлено
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HrSendResponse' }
+  /hr-edo/documents/{id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [hr-edo]
+      summary: Отменить документ (до подписи)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HrReasonRequest' }
+      responses:
+        '200':
+          description: HrDocument
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HrDocument' }
+  /hr-edo/documents/{id}/employer-signature:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [hr-edo]
+      summary: Загрузить УКЭП директора (.sig) — hr_edo:sign_employer
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '200':
+          description: HrDocument
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HrDocument' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /hr-edo/documents/{id}/paper-signed:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [hr-edo]
+      summary: Отметить подписанным на бумаге (скан оригинала)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '200':
+          description: HrDocument
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HrDocument' }
+  /hr-edo/documents/{id}/file:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    get:
+      tags: [hr-edo]
+      summary: PDF документа (исходник с проверкой хеша или с листом подписания)
+      parameters:
+        - { in: query, name: kind, schema: { type: string, enum: [source, stamped], default: source } }
+        - { in: query, name: download, schema: { type: boolean, default: false } }
+      responses:
+        '200':
+          description: PDF
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+  /hr-edo/documents/{id}/signatures/{signatureId}/file:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+      - { in: path, name: signatureId, required: true, schema: { $ref: '#/components/schemas/UUID' } }
+    get:
+      tags: [hr-edo]
+      summary: Файл подписи (.sig) или скан — hr_edo:export
+      responses:
+        '200':
+          description: Файл
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+  /hr-edo/documents/{id}/events:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    get:
+      tags: [hr-edo]
+      summary: Протокол документа
+      responses:
+        '200':
+          description: События
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/HrEvent' } }
+  /hr-edo/events:
+    get:
+      tags: [hr-edo]
+      summary: Журнал кадрового ЭДО
+      parameters:
+        - { in: query, name: documentId, schema: { $ref: '#/components/schemas/UUID' } }
+        - { in: query, name: employeeId, schema: { $ref: '#/components/schemas/UUID' } }
+        - { in: query, name: kind, schema: { type: string } }
+        - $ref: '#/components/parameters/Page'
+        - { in: query, name: pageSize, schema: { type: integer, minimum: 1, maximum: 500, default: 50 } }
+      responses:
+        '200':
+          description: Страница событий
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HrEventPage' }
+  /hr-edo/events/verify:
+    get:
+      tags: [hr-edo]
+      summary: Сверка хеш-цепочки протокола
+      responses:
+        '200':
+          description: Результат
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HrChainCheck' }
+  /hr-edo/dev/sms-outbox:
+    get:
+      tags: [hr-edo]
+      summary: (только ENV=dev, SMS_PROVIDER=log) последние SMS
+      responses:
+        '200':
+          description: SMS
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/HrDevSms' } }
+  /hr-edo/my:
+    get:
+      tags: [hr-edo]
+      summary: Мой статус в КЭДО (hr_edo:view_own)
+      responses:
+        '200':
+          description: Сотрудник или null, если аккаунт не привязан
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HrMyOverview' }
+  /hr-edo/my/documents:
+    get:
+      tags: [hr-edo]
+      summary: Мои кадровые документы
+      responses:
+        '200':
+          description: Документы
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/HrPortalDocument' } }
+  /hr-edo/my/documents/{id}/file:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    get:
+      tags: [hr-edo]
+      summary: PDF моего документа
+      responses:
+        '200':
+          description: PDF
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+  /hr-edo/my/documents/{id}/viewed:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [hr-edo]
+      summary: Отметка просмотра (toEnd — прокручен до конца)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                toEnd: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Документ
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HrPortalDocument' }
+  /hr-edo/my/documents/{id}/reject:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [hr-edo]
+      summary: Отказаться подписывать (с причиной)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HrReasonRequest' }
+      responses:
+        '200':
+          description: Документ
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HrPortalDocument' }
+  /hr-edo/my/key/otp:
+    post:
+      tags: [hr-edo]
+      summary: SMS-код для выпуска подписи
+      responses:
+        '200':
+          description: Челлендж
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HrChallenge' }
+        '409':
+          description: consent_required | key_already_issued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /hr-edo/my/key/issue:
+    post:
+      tags: [hr-edo]
+      summary: Выпустить подпись по коду из SMS
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HrChallengeConfirm' }
+      responses:
+        '200':
+          description: Ключ
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HrSigningKey' }
+  /hr-edo/my/challenges:
+    post:
+      tags: [hr-edo]
+      summary: SMS-код для подписи набора документов
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [documentIds]
+              properties:
+                documentIds: { type: array, items: { $ref: '#/components/schemas/UUID' } }
+      responses:
+        '200':
+          description: Челлендж
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HrChallenge' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /hr-edo/my/challenges/{id}/confirm:
+    parameters:
+      - $ref: '#/components/parameters/UuidPathId'
+    post:
+      tags: [hr-edo]
+      summary: Подписать кодом из SMS
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string }
+      responses:
+        '200':
+          description: Подписанные документы
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HrSignResult' }
+        '422':
+          description: otp_invalid (details.attemptsLeft)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '423':
+          description: otp_locked
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
 components:
   securitySchemes:
     bearerAuth:
@@ -2686,7 +3366,7 @@ components:
     # ─── Users ───
     Role:
       type: string
-      enum: [admin, account_manager, recruiter, viewer]
+      enum: [admin, account_manager, recruiter, viewer, accountant]
     User:
       type: object
       required: [id, email, fullName, role, initials, color, isActive]
@@ -3474,11 +4154,11 @@ components:
         userId:    { $ref: '#/components/schemas/UUID' }
         kind:
           type: string
-          enum: [mention, status_change, system, assignment, comment, chat_message]
+          enum: [mention, status_change, system, assignment, comment, chat_message, hr_document]
         text:      { type: string }
         entityType:
           type: string
-          enum: [vacancy, candidate, client, contact, chat_message, event]
+          enum: [vacancy, candidate, client, contact, chat_message, event, tender, hr_document]
           nullable: true
         entityId:
           allOf: [{ $ref: '#/components/schemas/UUID' }]
@@ -3903,7 +4583,7 @@ components:
     # ─── Files ───
     FileEntityType:
       type: string
-      enum: [candidate, vacancy, client, contact, document]
+      enum: [candidate, vacancy, client, contact, document, hr_document]
     ScanStatus:
       type: string
       enum: [pending, clean, infected, error]
@@ -4348,3 +5028,316 @@ components:
       properties:
         telemostUrl:      { type: string, nullable: true }
         consentConfirmed: { type: boolean, nullable: true }
+    # ─────────────── HR-EDO ───────────────
+    HrEmployeeStatus:
+      type: string
+      enum: [active, dismissed]
+    HrEdoStatus:
+      type: string
+      enum: [not_invited, notified, consent_signed, active, refused, key_revoked]
+    HrDocStatus:
+      type: string
+      enum: [draft, frozen, awaiting_employer, sent, viewed, signed, rejected, expired, cancelled, archived_paper]
+    HrSigType:
+      type: string
+      enum: [unep_lg, gosklyuch, ukep, paper]
+    HrDocTypeField:
+      type: object
+      required: [key, label, type, required, options]
+      properties:
+        key:         { type: string }
+        label:       { type: string }
+        type:        { type: string, enum: [text, textarea, date, money, number, select] }
+        required:    { type: boolean }
+        defaultFrom: { type: string, nullable: true }
+        default:     { type: string, nullable: true }
+        options:     { type: array, items: { type: string } }
+        placeholder: { type: string, nullable: true }
+        hint:        { type: string, nullable: true }
+    HrDocType:
+      type: object
+      required: [code, title, numberPrefix, contour, employeeAction, employeeSig, employerSig, signOrder, retentionYears, uploadOnly, paperOnly, strictGroup, stage, description, fields]
+      properties:
+        code:           { type: string }
+        title:          { type: string }
+        numberPrefix:   { type: string }
+        contour:        { type: string, enum: [labor, gph] }
+        employeeAction: { type: string, enum: [none, acknowledge, sign] }
+        employeeSig:    { type: array, items: { $ref: '#/components/schemas/HrSigType' } }
+        employerSig:    { type: string, enum: [none, ukep] }
+        signOrder:      { type: string, enum: [employer_first, employee_first, parallel] }
+        retentionYears: { type: integer }
+        uploadOnly:     { type: boolean }
+        paperOnly:      { type: boolean }
+        strictGroup:    { type: boolean }
+        stage:          { type: integer }
+        description:    { type: string }
+        fields:         { type: array, items: { $ref: '#/components/schemas/HrDocTypeField' } }
+    HrSigningKey:
+      type: object
+      required: [id, fingerprint, algorithm, issuedAt, phoneMasked, isTest]
+      properties:
+        id:           { $ref: '#/components/schemas/UUID' }
+        fingerprint:  { type: string, description: 'Стрибог-256 открытого ключа, hex' }
+        algorithm:    { type: string }
+        issuedAt:     { type: string, format: date-time }
+        revokedAt:    { type: string, format: date-time, nullable: true }
+        revokeReason: { type: string, nullable: true }
+        phoneMasked:  { type: string }
+        isTest:       { type: boolean, description: 'true — no-op crypto-service (dev)' }
+    HrEmployee:
+      type: object
+      required: [id, fullName, position, employmentType, status, edoStatus, pendingDocuments, createdAt, updatedAt]
+      properties:
+        id:              { $ref: '#/components/schemas/UUID' }
+        userId:          { $ref: '#/components/schemas/UUID', nullable: true }
+        userName:        { type: string, nullable: true }
+        candidateId:     { $ref: '#/components/schemas/UUID', nullable: true }
+        fullName:        { type: string }
+        position:        { type: string }
+        employmentType:  { $ref: '#/components/schemas/EmploymentType' }
+        phone:           { type: string, nullable: true, description: E.164 }
+        phoneMasked:     { type: string, nullable: true }
+        phoneVerifiedAt: { type: string, format: date-time, nullable: true }
+        email:           { type: string, nullable: true }
+        hiredAt:         { type: string, format: date, nullable: true }
+        dismissedAt:     { type: string, format: date, nullable: true }
+        status:          { $ref: '#/components/schemas/HrEmployeeStatus' }
+        edoStatus:       { $ref: '#/components/schemas/HrEdoStatus' }
+        edoConsentDocId: { $ref: '#/components/schemas/UUID', nullable: true }
+        activeKey:
+          nullable: true
+          allOf: [{ $ref: '#/components/schemas/HrSigningKey' }]
+        pendingDocuments: { type: integer }
+        createdAt:       { type: string, format: date-time }
+        updatedAt:       { type: string, format: date-time }
+    HrEmployeePage:
+      type: object
+      required: [items, total, page, pageSize]
+      properties:
+        items:    { type: array, items: { $ref: '#/components/schemas/HrEmployee' } }
+        total:    { type: integer }
+        page:     { type: integer }
+        pageSize: { type: integer }
+    CreateHrEmployeeRequest:
+      type: object
+      required: [fullName]
+      properties:
+        fullName:       { type: string, minLength: 2 }
+        position:       { type: string }
+        employmentType: { $ref: '#/components/schemas/EmploymentType' }
+        phone:          { type: string, nullable: true }
+        email:          { type: string, nullable: true }
+        hiredAt:        { type: string, format: date, nullable: true }
+        userId:         { $ref: '#/components/schemas/UUID', nullable: true }
+        candidateId:    { $ref: '#/components/schemas/UUID', nullable: true }
+    UpdateHrEmployeeRequest:
+      type: object
+      properties:
+        fullName:       { type: string, nullable: true }
+        position:       { type: string, nullable: true }
+        employmentType: { $ref: '#/components/schemas/EmploymentType' }
+        phone:          { type: string, nullable: true }
+        email:          { type: string, nullable: true }
+        hiredAt:        { type: string, format: date, nullable: true }
+        dismissedAt:    { type: string, format: date, nullable: true }
+        status:         { $ref: '#/components/schemas/HrEmployeeStatus' }
+        userId:         { $ref: '#/components/schemas/UUID', nullable: true }
+    HrReasonRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 3, maxLength: 1000 }
+    HrSignature:
+      type: object
+      required: [id, signerRole, signerName, sigType, signedAt, hasFile, isTest, verification]
+      properties:
+        id:           { $ref: '#/components/schemas/UUID' }
+        signerRole:   { type: string, enum: [employer, employee] }
+        signerName:   { type: string }
+        sigType:      { $ref: '#/components/schemas/HrSigType' }
+        signedAt:     { type: string, format: date-time }
+        tspTime:      { type: string, format: date-time, nullable: true }
+        fingerprint:  { type: string, nullable: true }
+        phoneMasked:  { type: string, nullable: true }
+        certSubject:  { type: string, nullable: true }
+        certIssuer:   { type: string, nullable: true }
+        certSerial:   { type: string, nullable: true }
+        hasFile:      { type: boolean }
+        isTest:       { type: boolean }
+        verification: { type: object, additionalProperties: true }
+    HrDocument:
+      type: object
+      required: [id, employeeId, employeeName, typeCode, title, docDate, status, fields, hasSource, hasStamped, createdAt, updatedAt, signatures]
+      properties:
+        id:                { $ref: '#/components/schemas/UUID' }
+        employeeId:        { $ref: '#/components/schemas/UUID' }
+        employeeName:      { type: string }
+        typeCode:          { type: string }
+        title:             { type: string }
+        number:            { type: string, nullable: true }
+        docDate:           { type: string, format: date }
+        status:            { $ref: '#/components/schemas/HrDocStatus' }
+        fields:            { type: object, additionalProperties: true }
+        contentSha256:     { type: string, nullable: true }
+        contentStreebog256: { type: string, nullable: true }
+        frozenAt:          { type: string, format: date-time, nullable: true }
+        sentAt:            { type: string, format: date-time, nullable: true }
+        viewedAt:          { type: string, format: date-time, nullable: true }
+        signedAt:          { type: string, format: date-time, nullable: true }
+        dueAt:             { type: string, format: date-time, nullable: true }
+        batchId:           { $ref: '#/components/schemas/UUID', nullable: true }
+        hasSource:         { type: boolean }
+        hasStamped:        { type: boolean }
+        cancelReason:      { type: string, nullable: true }
+        rejectReason:      { type: string, nullable: true }
+        createdBy:         { $ref: '#/components/schemas/UUID', nullable: true }
+        createdByName:     { type: string, nullable: true }
+        createdAt:         { type: string, format: date-time }
+        updatedAt:         { type: string, format: date-time }
+        signatures:        { type: array, items: { $ref: '#/components/schemas/HrSignature' } }
+    HrDocumentPage:
+      type: object
+      required: [items, total, page, pageSize]
+      properties:
+        items:    { type: array, items: { $ref: '#/components/schemas/HrDocument' } }
+        total:    { type: integer }
+        page:     { type: integer }
+        pageSize: { type: integer }
+    CreateHrDocumentsRequest:
+      type: object
+      required: [typeCode, employeeIds]
+      properties:
+        typeCode:    { type: string }
+        employeeIds: { type: array, minItems: 1, items: { $ref: '#/components/schemas/UUID' } }
+        fields:      { type: object, additionalProperties: true }
+        title:       { type: string, nullable: true }
+        docDate:     { type: string, format: date, nullable: true }
+        freeze:      { type: boolean, default: false, description: 'true — сразу сформировать PDF' }
+    HrPreviewRequest:
+      type: object
+      required: [typeCode]
+      properties:
+        typeCode:   { type: string }
+        employeeId: { $ref: '#/components/schemas/UUID', nullable: true }
+        fields:     { type: object, additionalProperties: true }
+        title:      { type: string, nullable: true }
+        docDate:    { type: string, format: date, nullable: true }
+    HrSendResponse:
+      type: object
+      required: [items, portalLinks]
+      properties:
+        items:       { type: array, items: { $ref: '#/components/schemas/HrDocument' } }
+        portalLinks:
+          type: object
+          additionalProperties: { type: string }
+          description: 'employeeId → ссылка на портал, если письмо не ушло (нет email / SMTP)'
+    HrInviteResponse:
+      type: object
+      required: [employee, document, emailSent]
+      properties:
+        employee:  { $ref: '#/components/schemas/HrEmployee' }
+        document:  { $ref: '#/components/schemas/HrDocument' }
+        emailSent: { type: boolean }
+        portalUrl: { type: string, nullable: true }
+    HrEvent:
+      type: object
+      required: [id, kind, actorType, actorName, payload, createdAt, hash, prevHash]
+      properties:
+        id:            { type: integer }
+        documentId:    { $ref: '#/components/schemas/UUID', nullable: true }
+        documentTitle: { type: string, nullable: true }
+        employeeId:    { $ref: '#/components/schemas/UUID', nullable: true }
+        employeeName:  { type: string, nullable: true }
+        kind:          { type: string }
+        actorType:     { type: string, enum: [user, employee, system] }
+        actorName:     { type: string }
+        ip:            { type: string, nullable: true }
+        payload:       { type: object, additionalProperties: true }
+        createdAt:     { type: string, format: date-time }
+        hash:          { type: string }
+        prevHash:      { type: string }
+    HrEventPage:
+      type: object
+      required: [items, total, page, pageSize]
+      properties:
+        items:    { type: array, items: { $ref: '#/components/schemas/HrEvent' } }
+        total:    { type: integer }
+        page:     { type: integer }
+        pageSize: { type: integer }
+    HrChainCheck:
+      type: object
+      required: [ok, checked]
+      properties:
+        ok:         { type: boolean }
+        checked:    { type: integer }
+        brokenAtId: { type: integer, nullable: true }
+        reason:     { type: string, nullable: true }
+    HrDevSms:
+      type: object
+      required: [phone, text, sentAt]
+      properties:
+        phone:  { type: string }
+        text:   { type: string }
+        sentAt: { type: string, format: date-time }
+    HrChallenge:
+      type: object
+      required: [challengeId, phoneMasked, expiresAt, resendAfter, documentIds]
+      properties:
+        challengeId: { $ref: '#/components/schemas/UUID' }
+        phoneMasked: { type: string }
+        expiresAt:   { type: string, format: date-time }
+        resendAfter: { type: integer }
+        documentIds: { type: array, items: { $ref: '#/components/schemas/UUID' } }
+    HrChallengeConfirm:
+      type: object
+      required: [challengeId, code]
+      properties:
+        challengeId: { $ref: '#/components/schemas/UUID' }
+        code:        { type: string }
+    HrPortalDocument:
+      type: object
+      required: [id, typeCode, title, docDate, status, employeeAction, signMethod, canSign, signatures]
+      properties:
+        id:             { $ref: '#/components/schemas/UUID' }
+        typeCode:       { type: string }
+        title:          { type: string }
+        number:         { type: string, nullable: true }
+        docDate:        { type: string, format: date }
+        status:         { $ref: '#/components/schemas/HrDocStatus' }
+        employeeAction: { type: string, enum: [none, acknowledge, sign] }
+        signMethod:     { type: string, enum: [unep_lg, external, none] }
+        canSign:        { type: boolean }
+        dueAt:          { type: string, format: date-time, nullable: true }
+        sentAt:         { type: string, format: date-time, nullable: true }
+        signedAt:       { type: string, format: date-time, nullable: true }
+        viewedAt:       { type: string, format: date-time, nullable: true }
+        contentStreebog256: { type: string, nullable: true }
+        signatures:     { type: array, items: { $ref: '#/components/schemas/HrSignature' } }
+    HrEmployeeSelf:
+      type: object
+      required: [id, fullName, position, edoStatus, companyName, pendingCount]
+      properties:
+        id:           { $ref: '#/components/schemas/UUID' }
+        fullName:     { type: string }
+        position:     { type: string }
+        edoStatus:    { $ref: '#/components/schemas/HrEdoStatus' }
+        phoneMasked:  { type: string, nullable: true }
+        email:        { type: string, nullable: true }
+        key:
+          nullable: true
+          allOf: [{ $ref: '#/components/schemas/HrSigningKey' }]
+        companyName:  { type: string }
+        pendingCount: { type: integer }
+    HrMyOverview:
+      type: object
+      properties:
+        employee:
+          nullable: true
+          allOf: [{ $ref: '#/components/schemas/HrEmployeeSelf' }]
+    HrSignResult:
+      type: object
+      required: [signed, documents]
+      properties:
+        signed:    { type: array, items: { $ref: '#/components/schemas/UUID' } }
+        documents: { type: array, items: { $ref: '#/components/schemas/HrPortalDocument' } }

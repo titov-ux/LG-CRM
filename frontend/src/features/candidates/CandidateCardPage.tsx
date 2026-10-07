@@ -67,6 +67,7 @@ import {
   useUpdateCandidate,
 } from './hooks';
 import { useCan } from '@/lib/permissions';
+import { HireEmployeeButton } from '@/features/hrEdo/HireEmployeeButton';
 import { Textarea } from '@/components/ui/textarea';
 import { useUsers } from '@/features/users/hooks';
 import { useVacancies } from '@/features/vacancies/hooks';
@@ -653,6 +654,7 @@ export function CandidateCardPage({ source: sourceProp }: CandidateCardPageProps
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
+            {candidate && <HireEmployeeButton candidateId={candidate.id} status={candidate.status} />}
           </div>
           <Button variant="ghost" size="icon" onClick={close}><X className="h-3.5 w-3.5" /></Button>
         </div>

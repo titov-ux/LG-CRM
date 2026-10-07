@@ -65,6 +65,7 @@ class S3Adapter(Protocol):
     def presign_get(self, *, file_key: str, expires_in: int = 300) -> str: ...
     def download_bytes(self, *, file_key: str) -> bytes: ...
     def delete(self, *, file_key: str) -> None: ...
+    def upload_bytes(self, *, file_key: str, data: bytes, mime: str) -> None: ...
 
 
 class BotoS3Adapter:
@@ -113,6 +114,14 @@ class BotoS3Adapter:
 
     def delete(self, *, file_key: str) -> None:
         self._client.delete_object(Bucket=self._bucket, Key=file_key)
+
+    def upload_bytes(self, *, file_key: str, data: bytes, mime: str) -> None:
+        """Серверная загрузка (кадровый ЭДО: замороженные PDF, `.sig`, сканы).
+
+        Браузер в этот путь не ходит: бэкенд сам считает хеши и кладёт файл,
+        иначе нельзя гарантировать, что в S3 лежит ровно то, что захешировано.
+        """
+        self._client.put_object(Bucket=self._bucket, Key=file_key, Body=data, ContentType=mime)
 
 
 def make_file_key(*, entity_type: str, entity_id: uuid.UUID, original_name: str) -> str:

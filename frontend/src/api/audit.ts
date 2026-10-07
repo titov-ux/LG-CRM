@@ -20,12 +20,13 @@ export const auditApi = {
     });
     return api.get('audit', { searchParams }).json<AuditEntry[]>();
   },
-  activity: (entityType: 'vacancy' | 'candidate' | 'client' | 'tender', entityId: UUID) => {
-    const entityPath: Record<'vacancy' | 'candidate' | 'client' | 'tender', string> = {
+  activity: (entityType: ActivityEntry['entityType'], entityId: UUID) => {
+    const entityPath: Record<ActivityEntry['entityType'], string> = {
       vacancy: 'vacancies',
       candidate: 'candidates',
       client: 'clients',
       tender: 'tenders',
+      lead: 'leads',
     };
     return api.get(`${entityPath[entityType]}/${entityId}/activity`).json<ActivityEntry[]>();
   },

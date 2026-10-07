@@ -11,6 +11,7 @@ import {
   Eye,
   UserPlus,
   MessageSquare,
+  FileSignature,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -33,6 +34,7 @@ const KIND_ICON = {
   assignment: UserPlus,
   comment: MessageSquare,
   chat_message: MessageSquare,
+  hr_document: FileSignature,
 };
 
 const KIND_LABEL: Record<Notification['kind'], string> = {
@@ -42,6 +44,7 @@ const KIND_LABEL: Record<Notification['kind'], string> = {
   assignment: 'Назначения',
   comment: 'Комментарии',
   chat_message: 'Сообщения в чате',
+  hr_document: 'Кадровые документы',
 };
 
 const KIND_OPTIONS: Notification['kind'][] = [
@@ -50,6 +53,7 @@ const KIND_OPTIONS: Notification['kind'][] = [
   'comment',
   'status_change',
   'assignment',
+  'hr_document',
   'system',
 ];
 

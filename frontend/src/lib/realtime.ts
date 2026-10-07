@@ -15,7 +15,7 @@
 import { WS_URL } from './constants';
 import { getClientId } from './clientId';
 
-export type RealtimeEntity = 'vacancy' | 'candidate' | 'tender';
+export type RealtimeEntity = 'vacancy' | 'candidate' | 'tender' | 'lead';
 
 export type RealtimeKind =
   | 'created'
@@ -45,7 +45,7 @@ interface RealtimeEventBase {
 }
 
 export interface DomainRealtimeEvent extends RealtimeEventBase {
-  type: 'vacancy.changed' | 'candidate.changed' | 'tender.changed';
+  type: 'vacancy.changed' | 'candidate.changed' | 'tender.changed' | 'lead.changed';
   entity: RealtimeEntity;
   kind: RealtimeKind;
   id: string | null;
@@ -246,7 +246,8 @@ function openSocket(): void {
     if (
       type === 'vacancy.changed' ||
       type === 'candidate.changed' ||
-      type === 'tender.changed'
+      type === 'tender.changed' ||
+      type === 'lead.changed'
     ) {
       emit({
         ...base,
@@ -256,7 +257,9 @@ function openSocket(): void {
             ? 'vacancy'
             : type === 'tender.changed'
               ? 'tender'
-              : 'candidate',
+              : type === 'lead.changed'
+                ? 'lead'
+                : 'candidate',
         kind: (obj.kind as RealtimeKind) ?? 'updated',
         id: typeof obj.id === 'string' ? obj.id : null,
         ids: Array.isArray(obj.ids) ? (obj.ids as string[]) : [],

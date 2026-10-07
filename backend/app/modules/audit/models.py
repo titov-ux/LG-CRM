@@ -25,6 +25,7 @@ class ActivityEntityType(str, enum.Enum):
     candidate = "candidate"
     client = "client"
     tender = "tender"
+    lead = "lead"
 
 
 class ActivityKind(str, enum.Enum):

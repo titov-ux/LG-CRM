@@ -21,6 +21,11 @@ dependencies = [
     "websockets>=13.0",
     "structlog>=24.4",
     "playwright>=1.54",
+    # Кадровый ЭДО: HTML-шаблоны документов, склейка PDF с листом подписания,
+    # хеш ГОСТ Р 34.11-2012 (Стрибог) замороженных документов и ключей.
+    "jinja2>=3.1",
+    "pypdf>=5.0",
+    "gostcrypto>=1.2",
 ]
 
 [project.optional-dependencies]

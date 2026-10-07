@@ -1,0 +1,31 @@
+{% extends "_base.html" %}
+{% import "_macros.html" as m %}
+{% block body %}
+<h1>Приказ (распоряжение) о приеме работника на работу</h1>
+<p class="subtitle">№ {{ number or "____" }}</p>
+{{ m.place_date(company, doc_date) }}
+
+<p>Принять на работу:</p>
+<dl class="terms">
+  <div><dt>Работник</dt><dd>{{ employee.full_name | t }}</dd></div>
+  <div><dt>Должность</dt><dd>{{ (f.position or employee.position) | t }}</dd></div>
+  <div><dt>Дата начала работы</dt><dd>{{ f.start_date | date_ru }}</dd></div>
+  <div><dt>Условия приема, характер работы</dt><dd>{{ f.work_conditions | t }}</dd></div>
+  <div><dt>Оклад</dt><dd>{{ f.salary | money }} руб. в месяц</dd></div>
+  <div><dt>Испытательный срок</dt><dd>{{ (f.probation or "без испытания") | t }}</dd></div>
+  <div><dt>Основание</dt><dd>трудовой договор № {{ f.contract_number | t or "____" }} от {{ f.contract_date | date_short }}</dd></div>
+</dl>
+
+<div class="signs">
+  <div>
+    <h3>Руководитель организации</h3>
+    {{ m.employer_requisites(company) }}
+    <div class="line">{{ company.director_position | t }}{% if company.director_name %} {{ company.director_name | t }}{% endif %} · подписано электронной подписью</div>
+  </div>
+  <div>
+    <h3>С приказом ознакомлен(а)</h3>
+    <div class="req">{{ employee.full_name | t }}</div>
+    <div class="line">подписано электронной подписью</div>
+  </div>
+</div>
+{% endblock %}

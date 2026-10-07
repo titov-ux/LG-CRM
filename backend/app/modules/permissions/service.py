@@ -5,13 +5,13 @@ from fastapi import status
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import ApiError, Forbidden
+from app.core.errors import ApiError
 from app.modules.permissions.defaults import clone_defaults
 from app.modules.permissions.models import PermissionRow
-from app.modules.users.models import User
+from app.modules.users.models import Role, User
 
 # Все «известные» роли — фронту нужен полный словарь для каждой строки.
-_VALID_ROLES = {"admin", "account_manager", "recruiter", "viewer"}
+_VALID_ROLES = {r.value for r in Role}
 
 
 async def user_has_action(db: AsyncSession, user: User, action: str) -> bool:
@@ -39,9 +39,18 @@ async def require_action(
     *,
     message: str | None = None,
 ) -> None:
-    """403, если у роли юзера нет `action` в матрице."""
+    """403, если у роли юзера нет `action` в матрице.
+
+    В `details.action` отдаём проверенное действие — фронту проще показать,
+    какого именно права не хватает.
+    """
     if not await user_has_action(db, user, action):
-        raise Forbidden(message or "Недостаточно прав")
+        raise ApiError(
+            status.HTTP_403_FORBIDDEN,
+            "forbidden",
+            message or "Недостаточно прав",
+            details={"action": action},
+        )
 
 
 async def list_matrix(db: AsyncSession) -> list[PermissionRow]:
@@ -65,10 +74,26 @@ async def list_matrix(db: AsyncSession) -> list[PermissionRow]:
 async def _sync_missing_defaults(
     db: AsyncSession, existing: list[PermissionRow]
 ) -> bool:
-    """Вставить отсутствующие дефолтные строки. True — если что-то добавили."""
+    """Вставить отсутствующие дефолтные строки. True — если что-то добавили.
+
+    Заодно доливает в существующие строки ключи новых ролей (например,
+    `accountant`, появившийся вместе с кадровым ЭДО): значение берётся из
+    дефолтов, а уже настроенные администратором ключи не трогаются.
+    """
+    defaults_by_id = {p["id"]: p for p in clone_defaults()}
     existing_ids = {r.id for r in existing}
     added = False
-    for p in clone_defaults():
+    for row in existing:
+        current = dict(row.matrix or {})
+        missing = _VALID_ROLES - set(current)
+        if not missing:
+            continue
+        default_matrix = defaults_by_id.get(row.id, {"matrix": {}})["matrix"]
+        for role in missing:
+            current[role] = bool(default_matrix.get(role, False))
+        row.matrix = current
+        added = True
+    for p in defaults_by_id.values():
         if p["id"] in existing_ids:
             continue
         db.add(

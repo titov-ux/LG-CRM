@@ -55,9 +55,11 @@ const ROLE_BADGE_CLASS: Record<Role, string> = {
     'bg-emerald-100 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-950/40',
   viewer:
     'bg-slate-100 text-slate-700 hover:bg-slate-100 dark:bg-slate-800/60 dark:text-slate-300 dark:hover:bg-slate-800/60',
+  accountant:
+    'bg-amber-100 text-amber-800 hover:bg-amber-100 dark:bg-amber-950/40 dark:text-amber-300 dark:hover:bg-amber-950/40',
 };
 
-const ROLES_ORDER: Role[] = ['admin', 'account_manager', 'recruiter', 'viewer'];
+const ROLES_ORDER: Role[] = ['admin', 'account_manager', 'recruiter', 'accountant', 'viewer'];
 
 export function RolesPage() {
   const [tab, setTab] = useState<'users' | 'roles'>('users');
@@ -97,6 +99,7 @@ export function RolesPage() {
       account_manager: 0,
       recruiter: 0,
       viewer: 0,
+      accountant: 0,
     };
     (users ?? []).forEach((u) => {
       counts[u.role] = (counts[u.role] ?? 0) + 1;
@@ -359,7 +362,7 @@ export function RolesPage() {
         </TabsContent>
 
         <TabsContent value="roles" className="mt-0 space-y-3">
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
             {ROLES_ORDER.map((r) => (
               <Card key={r}>
                 <CardHeader className="pb-2">

@@ -11,6 +11,8 @@ import type {
   CommentEntityType,
   ContactListItem,
   EventStatus,
+  Lead,
+  LeadStatus,
   Notification,
   Tender,
   TenderStatus,
@@ -28,7 +30,9 @@ import {
   contactsDb,
   notificationsDb,
   permissionsMatrixDb,
+  leadsDb,
   persistCandidatesDb,
+  persistLeadsDb,
   persistTendersDb,
   persistVacanciesDb,
   resetPermissionsMatrix,
@@ -54,6 +58,8 @@ import type {
   ScreeningSession,
 } from '@/api/screenings';
 import { tenderStatuses } from '@/features/tenders/statuses';
+import { leadStatusLabel } from '@/features/leads/statuses';
+import { hrEdoHandlers } from './hrEdoHandlers';
 
 const url = (path: string) => `${API_BASE_URL}${path.startsWith('/') ? '' : '/'}${path}`;
 
@@ -932,6 +938,141 @@ export const handlers = [
     if (idx === -1) return new HttpResponse(null, { status: 404 });
     tendersDb.splice(idx, 1);
     persistTendersDb();
+    return HttpResponse.json({ ok: true });
+  }),
+
+  // === Leads ===
+  http.put(url('/leads/kanban-order'), async ({ request }) => {
+    const body = (await request.json()) as {
+      updates: { id: string; status: LeadStatus; kanbanOrder: number }[];
+    };
+    const before = new Map(leadsDb.map((l) => [l.id, l.status]));
+    const updated = applyKanbanReorder(leadsDb, body.updates);
+    const actorId = actorIdFromRequest(request);
+    for (const u of body.updates) {
+      const prev = before.get(u.id);
+      if (prev && prev !== u.status) {
+        pushActivity({
+          entityType: 'lead',
+          entityId: u.id,
+          actorId,
+          kind: 'status',
+          text: `Статус изменён на «${leadStatusLabel(u.status)}»`,
+        });
+      }
+    }
+    persistLeadsDb();
+    return HttpResponse.json(updated);
+  }),
+  http.get(url('/leads'), ({ request }) => {
+    const u = new URL(request.url);
+    const search = u.searchParams.get('search')?.toLowerCase() ?? '';
+    const priority = u.searchParams.get('priority');
+    const source = u.searchParams.get('source');
+    const accountManagerId = u.searchParams.get('accountManagerId');
+    const items = leadsDb.filter((l) => {
+      if (search) {
+        const haystack = [l.title, l.company, l.contactName, l.email, l.phone]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        if (!haystack.includes(search)) return false;
+      }
+      if (priority && l.priority !== priority) return false;
+      if (source && l.source !== source) return false;
+      if (accountManagerId && l.accountManagerId !== accountManagerId) return false;
+      return true;
+    });
+    return HttpResponse.json(
+      paginate(sortByKanbanOrder(items), u.searchParams.get('page'), u.searchParams.get('pageSize')),
+    );
+  }),
+  http.post(url('/leads'), async ({ request }) => {
+    const body = (await request.json()) as Partial<Lead>;
+    const created: Lead = {
+      id: `l-${Date.now()}`,
+      title: body.title ?? 'Без названия',
+      company: body.company ?? '',
+      industry: body.industry ?? null,
+      website: body.website ?? null,
+      contactName: body.contactName ?? null,
+      contactPosition: body.contactPosition ?? null,
+      phone: body.phone ?? null,
+      email: body.email ?? null,
+      telegram: body.telegram ?? null,
+      source: body.source ?? null,
+      expectedValue: body.expectedValue ?? null,
+      nextContactDate: body.nextContactDate ?? null,
+      status: body.status ?? 'new',
+      priority: body.priority ?? 'medium',
+      accountManagerId: body.accountManagerId ?? null,
+      clientId: null,
+      daysInStatus: 0,
+      kanbanOrder: nextKanbanOrder(leadsDb, body.status ?? 'new'),
+      note: body.note ?? null,
+    };
+    leadsDb.unshift(created);
+    persistLeadsDb();
+    pushActivity({
+      entityType: 'lead',
+      entityId: created.id,
+      actorId: actorIdFromRequest(request),
+      kind: 'create',
+      text: 'Лид добавлен в систему',
+    });
+    return HttpResponse.json(created, { status: 201 });
+  }),
+  http.get(url('/leads/:id'), ({ params }) => {
+    const l = leadsDb.find((x) => x.id === params.id);
+    return l ? HttpResponse.json(l) : new HttpResponse(null, { status: 404 });
+  }),
+  http.get(url('/leads/:id/activity'), ({ params }) =>
+    HttpResponse.json(
+      activityDb
+        .filter((a) => a.entityType === 'lead' && a.entityId === params.id)
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
+    ),
+  ),
+  http.patch(url('/leads/:id/status'), async ({ params, request }) => {
+    const body = (await request.json()) as { status: LeadStatus; comment?: string };
+    const l = leadsDb.find((x) => x.id === params.id);
+    if (!l) return new HttpResponse(null, { status: 404 });
+    const prev = l.status;
+    l.status = body.status;
+    if (prev !== body.status) {
+      l.daysInStatus = 0;
+      l.kanbanOrder = nextKanbanOrder(leadsDb, body.status);
+      if (body.comment?.trim()) {
+        const stamp = new Date().toISOString().slice(0, 10);
+        const line = `[${stamp}] ${body.status}: ${body.comment.trim()}`;
+        l.note = l.note ? `${l.note}\n${line}` : line;
+      }
+      pushActivity({
+        entityType: 'lead',
+        entityId: l.id,
+        actorId: actorIdFromRequest(request),
+        kind: 'status',
+        text:
+          `Статус изменён на «${leadStatusLabel(body.status)}»` +
+          (body.comment?.trim() ? `. ${body.comment.trim()}` : ''),
+      });
+    }
+    persistLeadsDb();
+    return HttpResponse.json(l);
+  }),
+  http.patch(url('/leads/:id'), async ({ params, request }) => {
+    const patch = (await request.json()) as Partial<Lead>;
+    const l = leadsDb.find((x) => x.id === params.id);
+    if (!l) return new HttpResponse(null, { status: 404 });
+    Object.assign(l, patch);
+    persistLeadsDb();
+    return HttpResponse.json(l);
+  }),
+  http.delete(url('/leads/:id'), ({ params }) => {
+    const idx = leadsDb.findIndex((x) => x.id === params.id);
+    if (idx === -1) return new HttpResponse(null, { status: 404 });
+    leadsDb.splice(idx, 1);
+    persistLeadsDb();
     return HttpResponse.json({ ok: true });
   }),
 
@@ -2262,6 +2403,8 @@ export const handlers = [
     s.updatedAt = new Date().toISOString();
     return HttpResponse.json(enrichScreening(s));
   }),
+  // Кадровый ЭДО (/hr-edo/*) и публичный портал подписания (/sign/*).
+  ...hrEdoHandlers,
 ];
 
 // ─────────────────────────────────────────────────────────────

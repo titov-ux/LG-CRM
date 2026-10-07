@@ -1,0 +1,27 @@
+{% extends "_base.html" %}
+{% import "_macros.html" as m %}
+{% block body %}
+<h1>Дополнительное соглашение{% if number %} № {{ number }}{% endif %}</h1>
+<p class="subtitle">к трудовому договору № {{ f.contract_number | t or "____" }} от {{ f.contract_date | date_short }}</p>
+{{ m.place_date(company, doc_date) }}
+
+<p>{{ company.name | t }} (далее - Работодатель) и {{ employee.full_name | t }} (далее - Работник) заключили настоящее дополнительное соглашение о нижеследующем.</p>
+
+<h2>1. Изменения условий трудового договора</h2>
+<ol class="clauses">
+  {% for item in f.changes | lines %}
+  <li data-n="1.{{ loop.index }}.">{{ item | t }}</li>
+  {% else %}
+  <li data-n="1.1.">________________________________________________</li>
+  {% endfor %}
+</ol>
+
+<h2>2. Заключительные положения</h2>
+<ol class="clauses">
+  <li data-n="2.1.">Соглашение вступает в силу {{ f.effective_date | date_ru }} и является неотъемлемой частью трудового договора.</li>
+  <li data-n="2.2.">Остальные условия трудового договора не изменяются.</li>
+  <li data-n="2.3.">Соглашение составлено в форме электронного документа и подписано электронными подписями сторон (ч. 1, 4 ст. 22.3 ТК РФ).</li>
+</ol>
+
+{{ m.signs(company, employee) }}
+{% endblock %}

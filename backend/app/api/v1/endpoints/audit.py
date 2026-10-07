@@ -130,3 +130,16 @@ async def tender_activity(
     db: AsyncSession = Depends(get_db),
 ) -> list[ActivityResponse]:
     return await _activity_for(db, ActivityEntityType.tender, entity_id)
+
+
+@activity_router.get(
+    "/leads/{entity_id}/activity",
+    response_model=list[ActivityResponse],
+    summary="Активность по лиду",
+)
+async def lead_activity(
+    entity_id: uuid.UUID,
+    _: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[ActivityResponse]:
+    return await _activity_for(db, ActivityEntityType.lead, entity_id)

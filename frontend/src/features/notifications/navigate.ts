@@ -12,12 +12,14 @@ export function notificationHasTarget(n: Notification): boolean {
     case 'candidate':
     case 'vacancy':
     case 'tender':
+    case 'lead':
     case 'client':
     case 'contact':
       return !!n.entityId;
     case 'chat_message':
       return !!conversationIdOf(n);
     case 'event':
+    case 'hr_document':
       return true;
     default:
       return false;
@@ -53,6 +55,9 @@ export function useNotificationNavigate() {
       case 'tender':
         if (n.entityId) navigate({ to: '/tenders/$id', params: { id: n.entityId } });
         break;
+      case 'lead':
+        if (n.entityId) navigate({ to: '/leads/$id', params: { id: n.entityId } });
+        break;
       case 'client':
         if (n.entityId) navigate({ to: '/clients/$id', params: { id: n.entityId } });
         break;
@@ -69,6 +74,10 @@ export function useNotificationNavigate() {
       }
       case 'event':
         navigate({ to: '/calendar' });
+        break;
+      case 'hr_document':
+        // Кадровику — «Кадровые документы», сотруднику — «Мои документы».
+        navigate({ to: n.payload?.target === 'hr' ? '/hr-docs' : '/my-docs' });
         break;
       default:
         // system и прочее без привязки — перехода нет.

@@ -1,0 +1,17 @@
+{% extends "_base.html" %}
+{% import "_macros.html" as m %}
+{% block body %}
+<h1>Лист ознакомления с локальным нормативным актом</h1>
+{{ m.place_date(company, doc_date) }}
+
+<dl class="terms">
+  <div><dt>Локальный нормативный акт</dt><dd>{{ f.lna_title | t }}</dd></div>
+  <div><dt>Реквизиты</dt><dd>{% if f.lna_number %}№ {{ f.lna_number | t }} {% endif %}от {{ f.lna_date | date_short }}</dd></div>
+  <div><dt>Работник</dt><dd>{{ employee.full_name | t }}</dd></div>
+  <div><dt>Должность</dt><dd>{{ employee.position | t }}</dd></div>
+</dl>
+
+<p style="margin-top: 16px;">Я, {{ employee.full_name | t }}, ознакомлен(а) с указанным локальным нормативным актом {{ company.name | t }} до подписания настоящего листа (ст. 22, 68 ТК РФ).</p>
+
+{{ m.signs(company, employee, employer=False) }}
+{% endblock %}

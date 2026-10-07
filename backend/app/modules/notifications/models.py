@@ -36,6 +36,9 @@ class NotificationKind(str, enum.Enum):
     # Добавлено миграцией 0028_notification_chat_message — новое сообщение в
     # диалоге чата для участников (см. chat/service.py: _notify_new_message).
     chat_message = "chat_message"
+    # Добавлено миграцией 0036_hr_edo — кадровый ЭДО: документ на подпись,
+    # подписан, отказ (см. hr_edo/notify.py).
+    hr_document = "hr_document"
 
 
 class NotificationEntityType(str, enum.Enum):
@@ -52,6 +55,12 @@ class NotificationEntityType(str, enum.Enum):
     # Добавлено миграцией 0032_tender_activity — @-упоминания в комментариях
     # к тендеру; entity_id ссылается на tenders.id.
     tender = "tender"
+    # Добавлено миграцией 0037_leads — @-упоминания в комментариях к лиду;
+    # entity_id ссылается на leads.id.
+    lead = "lead"
+    # Добавлено миграцией 0036_hr_edo — кадровый документ; entity_id
+    # ссылается на hr_documents.id.
+    hr_document = "hr_document"
 
 
 def _enum_values(e):

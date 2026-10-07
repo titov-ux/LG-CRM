@@ -14,7 +14,10 @@ from app.api.v1.endpoints import (
     contacts,
     documents,
     files,
+    hr_edo,
+    hr_sign_public,
     integrations,
+    leads,
     matching,
     notifications,
     permissions,
@@ -35,6 +38,7 @@ api_router.include_router(contacts.router)
 api_router.include_router(documents.router)
 api_router.include_router(vacancies.router)
 api_router.include_router(tenders.router)
+api_router.include_router(leads.router)
 api_router.include_router(candidates.router)
 api_router.include_router(matching.matches_router)
 api_router.include_router(matching.vacancy_matches_router)
@@ -53,3 +57,5 @@ api_router.include_router(api_tokens.router)
 api_router.include_router(calendar.router)
 api_router.include_router(screenings.router)
 api_router.include_router(screening_ws.router)
+api_router.include_router(hr_edo.router)
+api_router.include_router(hr_sign_public.router)

@@ -1,7 +1,8 @@
 """Celery-приложение CRM-LG.
 
 Прод: `celery -A app.celery_app worker` + `beat` (см. infra/docker-compose.prod.yml,
-profile `celery`). Задачи: пост-анализ скрининга (Этап 5), retention аудио (Этап 6).
+profile `celery`). Задачи: пост-анализ скрининга (Этап 5), retention аудио (Этап 6),
+кадровый ЭДО (напоминания, сроки, статусы SMS, сверка протокола).
 
 Broker/backend — Redis (`REDIS_URL`). Задачи импортируются через `include`,
 чтобы worker видел их без ручного автодискавера.
@@ -19,7 +20,7 @@ celery_app = Celery(
     "crm_lg",
     broker=str(_settings.redis_url),
     backend=str(_settings.redis_url),
-    include=["app.modules.screening.tasks"],
+    include=["app.modules.screening.tasks", "app.modules.hr_edo.tasks"],
 )
 
 celery_app.conf.update(
@@ -61,6 +62,24 @@ celery_app.conf.update(
         "screening-close-stale-sessions": {
             "task": "screening.close_stale_sessions",
             "schedule": crontab(minute="*"),
+        },
+        # ── Кадровый ЭДО (docs/plan-hr-edo.md) ──
+        # 10:00 МСК = 07:00 UTC — напоминания о неподписанных документах.
+        "hr-edo-remind-unsigned": {
+            "task": "hr_edo.remind_unsigned",
+            "schedule": crontab(hour=7, minute=0),
+        },
+        "hr-edo-expire-documents": {
+            "task": "hr_edo.expire_documents",
+            "schedule": crontab(minute=5),
+        },
+        "hr-edo-poll-sms-status": {
+            "task": "hr_edo.poll_sms_status",
+            "schedule": crontab(minute="*/5"),
+        },
+        "hr-edo-verify-event-chain": {
+            "task": "hr_edo.verify_event_chain",
+            "schedule": crontab(hour=2, minute=30),
         },
     },
 )

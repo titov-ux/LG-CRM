@@ -14,7 +14,7 @@ from fastapi.responses import PlainTextResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.v1 import api_router
-from app.core.config import get_settings
+from app.core.config import get_settings, validate_hr_edo_settings
 from app.realtime.bus import get_bus
 from app.realtime.events import current_client_id_var, publish_user_presence_event
 from app.realtime.presence import start_sweeper, stop_sweeper
@@ -50,7 +50,37 @@ def _init_sentry(dsn: str, environment: str, traces_sample_rate: float) -> None:
         traces_sample_rate=traces_sample_rate,
         integrations=[FastApiIntegration(), SqlalchemyIntegration()],
         send_default_pii=False,
+        before_send=_scrub_sentry_event,
+        before_breadcrumb=_scrub_sentry_breadcrumb,
     )
+
+
+def _scrub(value: object) -> object:
+    """Рекурсивно замаскировать телефоны и одноразовые коды (кадровый ЭДО)."""
+    from app.integrations.sms import scrub_sensitive
+
+    if isinstance(value, str):
+        return scrub_sensitive(value)
+    if isinstance(value, dict):
+        return {k: _scrub(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_scrub(v) for v in value]
+    return value
+
+
+def _scrub_sentry_event(event: dict, _hint: dict) -> dict:  # type: ignore[type-arg]
+    """Sentry before_send: SMS-коды и номера телефонов не должны уходить в Sentry.
+
+    Тела запросов и так не отправляются (send_default_pii=False), но код может
+    оказаться в сообщении исключения, в extra или в breadcrumb лога.
+    """
+    scrubbed = _scrub(event)
+    return scrubbed if isinstance(scrubbed, dict) else event
+
+
+def _scrub_sentry_breadcrumb(crumb: dict, _hint: dict) -> dict:  # type: ignore[type-arg]
+    scrubbed = _scrub(crumb)
+    return scrubbed if isinstance(scrubbed, dict) else crumb
 
 
 @asynccontextmanager
@@ -136,6 +166,8 @@ async def _lifespan(_app: FastAPI):
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    # Кадровый ЭДО: на staging/prod заглушки SMS и crypto-service запрещены.
+    validate_hr_edo_settings(settings)
     _init_sentry(
         settings.sentry_dsn,
         settings.sentry_environment,

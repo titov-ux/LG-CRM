@@ -9,7 +9,7 @@ export type UUID = string;
 export type { FileResponse };
 
 // === Users ===
-export type Role = 'admin' | 'account_manager' | 'recruiter' | 'viewer';
+export type Role = 'admin' | 'account_manager' | 'recruiter' | 'viewer' | 'accountant';
 
 export interface User {
   id: UUID;
@@ -222,6 +222,47 @@ export interface Tender {
   /** Ссылка на карточку закупки на ЭТП / в ЕИС. */
   url?: string | null;
   /** Свободные заметки / история комментариев финальных статусов. */
+  note?: string | null;
+}
+
+// === Leads (будущие клиенты, воронка продаж) ===
+export type LeadStatus =
+  | 'new'
+  | 'contacted'
+  | 'qualified'
+  | 'proposal'
+  | 'negotiation'
+  | 'won'
+  | 'lost';
+
+export interface Lead {
+  id: UUID;
+  /** Суть лида / потребность: «Подбор 5 Java-разработчиков». */
+  title: string;
+  /** Компания потенциального клиента (строкой — клиентом CRM она ещё не стала). */
+  company: string;
+  industry?: string | null;
+  website?: string | null;
+  /** Контактное лицо. */
+  contactName?: string | null;
+  contactPosition?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  telegram?: string | null;
+  /** Откуда пришёл лид: сайт, рекомендация, холодный звонок… */
+  source?: string | null;
+  /** Потенциальная сумма сделки, ₽. */
+  expectedValue?: number | null;
+  /** Дата следующего касания (ISO YYYY-MM-DD). */
+  nextContactDate?: string | null;
+  status: LeadStatus;
+  priority: Priority;
+  accountManagerId: UUID | null;
+  /** Клиент CRM, в которого лид конвертирован. */
+  clientId?: UUID | null;
+  daysInStatus: number;
+  kanbanOrder: number;
+  /** Заметки + история комментариев финальных статусов. */
   note?: string | null;
 }
 
@@ -512,9 +553,19 @@ export interface Notification {
     | 'system'
     | 'assignment'
     | 'comment'
-    | 'chat_message';
+    | 'chat_message'
+    | 'hr_document';
   text: string;
-  entityType?: 'vacancy' | 'candidate' | 'client' | 'contact' | 'chat_message' | 'event' | 'tender';
+  entityType?:
+    | 'vacancy'
+    | 'candidate'
+    | 'client'
+    | 'contact'
+    | 'chat_message'
+    | 'event'
+    | 'tender'
+    | 'lead'
+    | 'hr_document';
   entityId?: UUID;
   /**
    * Доп. данные для построения ссылки-перехода. Например, у chat_message
@@ -527,7 +578,13 @@ export interface Notification {
 }
 
 // === Comments ===
-export type CommentEntityType = 'contact' | 'candidate' | 'vacancy' | 'client' | 'tender';
+export type CommentEntityType =
+  | 'contact'
+  | 'candidate'
+  | 'vacancy'
+  | 'client'
+  | 'tender'
+  | 'lead';
 
 export interface Comment {
   id: UUID;
@@ -561,7 +618,7 @@ export interface UpdateCommentRequest {
 // === Audit / Activity ===
 export interface ActivityEntry {
   id: UUID;
-  entityType: 'vacancy' | 'candidate' | 'client' | 'tender';
+  entityType: 'vacancy' | 'candidate' | 'client' | 'tender' | 'lead';
   entityId: UUID;
   /** null = актёр удалён. */
   actorId: UUID | null;

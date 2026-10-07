@@ -8,14 +8,17 @@ import {
   Calendar,
   ContactRound,
   Database,
+  FileCheck2,
   FileSignature,
   FileText,
   FileUp,
   Gavel,
+  Target,
   Home,
   MessageSquare,
   Settings,
   ShieldCheck,
+  Stamp,
   TrendingUp,
   Users,
   Video,
@@ -24,6 +27,7 @@ import type { LucideIcon } from 'lucide-react';
 import { Link, useRouterState } from '@tanstack/react-router';
 import { cn } from '@/lib/utils';
 import { useNotifications } from '@/features/notifications/hooks';
+import { useMyHr } from '@/features/hrEdo/hooks';
 import { useAuthStore } from '@/stores/auth';
 import { useCan } from '@/lib/permissions';
 import { useUIStore } from '@/stores/ui';
@@ -40,11 +44,11 @@ interface NavItem {
   /** Пункт виден только администраторам. */
   adminOnly?: boolean;
   /** Пункт виден, если есть хотя бы одно из перечисленных прав. */
-  anyAction?: ScreeningNavAction[];
+  anyAction?: NavAction[];
 }
 
 /** Действия матрицы доступов, которыми гейтятся пункты меню. */
-type ScreeningNavAction = 'screening:run' | 'screening:view_report';
+type NavAction = 'screening:run' | 'screening:view_report' | 'hr_edo:view_own' | 'hr_edo:manage';
 
 interface NavGroup {
   label?: string;
@@ -58,6 +62,7 @@ const GROUPS: NavGroup[] = [
     items: [
       { to: '/vacancies', label: 'Вакансии', icon: Briefcase },
       { to: '/candidates', label: 'Кандидаты', icon: Users },
+      { to: '/leads', label: 'Лиды', icon: Target },
       { to: '/clients', label: 'Клиенты', icon: Building2 },
       { to: '/tenders', label: 'Тендеры', icon: Gavel },
       { to: '/contacts', label: 'Контакты', icon: ContactRound },
@@ -76,6 +81,13 @@ const GROUPS: NavGroup[] = [
     items: [
       { to: '/database', label: 'Все кандидаты', icon: Database },
       { to: '/documents', label: 'Документы', icon: FileText },
+    ],
+  },
+  {
+    label: 'Кадры',
+    items: [
+      { to: '/my-docs', label: 'Мои документы', icon: FileCheck2, anyAction: ['hr_edo:view_own'] },
+      { to: '/hr-docs', label: 'Кадровые документы', icon: Stamp, anyAction: ['hr_edo:manage'] },
     ],
   },
   {
@@ -110,10 +122,20 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const isAdmin = useAuthStore((s) => s.user?.role) === 'admin';
   const canRunScreening = useCan('screening:run');
   const canViewScreeningReport = useCan('screening:view_report');
-  const actionAllowed: Record<ScreeningNavAction, boolean> = {
+  const canViewOwnHr = useCan('hr_edo:view_own');
+  const canManageHr = useCan('hr_edo:manage');
+  // Бейдж «Мои документы» — число документов, которые ждут подписи.
+  const { data: myHr } = useMyHr();
+  const myDocsPending = myHr?.employee?.pendingCount ?? 0;
+  const actionAllowed: Record<NavAction, boolean> = {
     'screening:run': canRunScreening,
     'screening:view_report': canViewScreeningReport,
+    'hr_edo:view_own': canViewOwnHr,
+    'hr_edo:manage': canManageHr,
   };
+  const isVisible = (item: NavItem) =>
+    (!item.adminOnly || isAdmin) &&
+    (!item.anyAction || item.anyAction.some((a) => actionAllowed[a]));
 
   return (
     <>
@@ -134,25 +156,25 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
       </AppInfoPopover>
 
       <nav className="flex-1 space-y-4 overflow-y-auto px-2 py-2">
-        {GROUPS.map((group, gi) => (
-          <div key={gi}>
-            {group.label && (
-              <div className="px-3 pb-1 pt-2 text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground/70">
-                {group.label}
-              </div>
-            )}
-            <ul className="space-y-px">
-              {group.items
-                .filter((item) => !item.adminOnly || isAdmin)
-                .filter(
-                  (item) =>
-                    !item.anyAction || item.anyAction.some((a) => actionAllowed[a]),
-                )
-                .map((item) => {
+        {GROUPS.map((group, gi) => ({ group, gi, visible: group.items.filter(isVisible) }))
+          .filter(({ visible }) => visible.length > 0)
+          .map(({ group, gi, visible }) => (
+            <div key={gi}>
+              {group.label && (
+                <div className="px-3 pb-1 pt-2 text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+                  {group.label}
+                </div>
+              )}
+              <ul className="space-y-px">
+                {visible.map((item) => {
                   const Icon = item.icon;
                   const active = pathname.startsWith(item.to);
                   const badge =
-                    item.to === '/notifications' ? unreadCount : item.badge;
+                    item.to === '/notifications'
+                      ? unreadCount
+                      : item.to === '/my-docs'
+                        ? myDocsPending
+                        : item.badge;
                   return (
                     <li key={item.to}>
                       <Link
@@ -184,9 +206,9 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
                     </li>
                   );
                 })}
-            </ul>
-          </div>
-        ))}
+              </ul>
+            </div>
+          ))}
       </nav>
     </>
   );

@@ -22,10 +22,31 @@ class DefaultPermission(TypedDict):
     matrix: dict[str, bool]
 
 
-# Все 4 роли упоминаются явно — иначе фронт получит частичный словарь и UI
-# нарисует неопределённый чекбокс.
-_ALL_ON: dict[str, bool] = {"admin": True, "account_manager": True, "recruiter": True, "viewer": True}
-_ADMIN_ONLY: dict[str, bool] = {"admin": True, "account_manager": False, "recruiter": False, "viewer": False}
+# Все 5 ролей упоминаются явно — иначе фронт получит частичный словарь и UI
+# нарисует неопределённый чекбокс. Для строк, уже лежащих в БД, недостающие
+# ключи ролей доливает `permissions.service._sync_missing_defaults`.
+_ALL_ON: dict[str, bool] = {
+    "admin": True,
+    "account_manager": True,
+    "recruiter": True,
+    "viewer": True,
+    "accountant": True,
+}
+_ADMIN_ONLY: dict[str, bool] = {
+    "admin": True,
+    "account_manager": False,
+    "recruiter": False,
+    "viewer": False,
+    "accountant": False,
+}
+# Кадровый ЭДО ведут администратор и бухгалтер.
+_ADMIN_AND_ACCOUNTANT: dict[str, bool] = {
+    "admin": True,
+    "account_manager": False,
+    "recruiter": False,
+    "viewer": False,
+    "accountant": True,
+}
 
 
 DEFAULT_PERMISSIONS: list[DefaultPermission] = [
@@ -43,7 +64,7 @@ DEFAULT_PERMISSIONS: list[DefaultPermission] = [
         "permission": "Создание и редактирование",
         "description": "Создавать, изменять данные клиентов и контакты.",
         "actions": ["client:create", "client:edit"],
-        "matrix": {"admin": True, "account_manager": True, "recruiter": False, "viewer": False},
+        "matrix": {"admin": True, "account_manager": True, "recruiter": False, "viewer": False, "accountant": False},
     },
     {
         "id": "clients.delete",
@@ -67,7 +88,7 @@ DEFAULT_PERMISSIONS: list[DefaultPermission] = [
         "permission": "Создание / редактирование",
         "description": "Заводить новые вакансии и менять их статусы.",
         "actions": ["vacancy:create", "vacancy:edit", "vacancy:change_status"],
-        "matrix": {"admin": True, "account_manager": True, "recruiter": True, "viewer": False},
+        "matrix": {"admin": True, "account_manager": True, "recruiter": True, "viewer": False, "accountant": False},
     },
     {
         "id": "vacancies.assign_recruiter",
@@ -75,7 +96,7 @@ DEFAULT_PERMISSIONS: list[DefaultPermission] = [
         "permission": "Назначение рекрутера",
         "description": "Распределять рекрутеров по вакансиям.",
         "actions": ["vacancy:assign_recruiter"],
-        "matrix": {"admin": True, "account_manager": True, "recruiter": True, "viewer": False},
+        "matrix": {"admin": True, "account_manager": True, "recruiter": True, "viewer": False, "accountant": False},
     },
     {
         "id": "candidates.view",
@@ -91,7 +112,7 @@ DEFAULT_PERMISSIONS: list[DefaultPermission] = [
         "permission": "Создание / редактирование",
         "description": "Добавлять и редактировать карточки кандидатов.",
         "actions": ["candidate:create", "candidate:edit", "candidate:change_status"],
-        "matrix": {"admin": True, "account_manager": False, "recruiter": True, "viewer": False},
+        "matrix": {"admin": True, "account_manager": False, "recruiter": True, "viewer": False, "accountant": False},
     },
     {
         "id": "candidates.present",
@@ -99,7 +120,7 @@ DEFAULT_PERMISSIONS: list[DefaultPermission] = [
         "permission": "Презентация клиенту",
         "description": "Отправлять подборку кандидатов клиенту.",
         "actions": [],
-        "matrix": {"admin": True, "account_manager": True, "recruiter": True, "viewer": False},
+        "matrix": {"admin": True, "account_manager": True, "recruiter": True, "viewer": False, "accountant": False},
     },
     {
         "id": "candidates.archive",
@@ -109,7 +130,7 @@ DEFAULT_PERMISSIONS: list[DefaultPermission] = [
             "Скрыть кандидата с канбан-доски. Кандидат остаётся в общей «Базе кандидатов»."
         ),
         "actions": ["candidate:archive"],
-        "matrix": {"admin": True, "account_manager": True, "recruiter": True, "viewer": False},
+        "matrix": {"admin": True, "account_manager": True, "recruiter": True, "viewer": False, "accountant": False},
     },
     {
         "id": "candidates.delete_permanent",
@@ -136,7 +157,7 @@ DEFAULT_PERMISSIONS: list[DefaultPermission] = [
         "permission": "Создание / редактирование событий",
         "description": "Назначать собеседования, переносить и отмечать их исход.",
         "actions": ["event:create", "event:edit", "event:set_outcome"],
-        "matrix": {"admin": True, "account_manager": True, "recruiter": True, "viewer": False},
+        "matrix": {"admin": True, "account_manager": True, "recruiter": True, "viewer": False, "accountant": False},
     },
     {
         "id": "calendar.delete",
@@ -144,7 +165,7 @@ DEFAULT_PERMISSIONS: list[DefaultPermission] = [
         "permission": "Удаление событий",
         "description": "Удалять события календаря.",
         "actions": ["event:delete"],
-        "matrix": {"admin": True, "account_manager": True, "recruiter": False, "viewer": False},
+        "matrix": {"admin": True, "account_manager": True, "recruiter": False, "viewer": False, "accountant": False},
     },
     {
         "id": "analytics.view",
@@ -152,7 +173,7 @@ DEFAULT_PERMISSIONS: list[DefaultPermission] = [
         "permission": "Доступ к аналитике",
         "description": "Доступ к разделу «Аналитика» и выгрузкам.",
         "actions": ["analytics:view"],
-        "matrix": {"admin": True, "account_manager": True, "recruiter": False, "viewer": True},
+        "matrix": {"admin": True, "account_manager": True, "recruiter": False, "viewer": True, "accountant": False},
     },
     {
         "id": "screening.run",
@@ -160,7 +181,7 @@ DEFAULT_PERMISSIONS: list[DefaultPermission] = [
         "permission": "Проведение скрининга",
         "description": "Создавать сессии AI-скрининга и вести видеоинтервью с записью.",
         "actions": ["screening:run"],
-        "matrix": {"admin": True, "account_manager": True, "recruiter": True, "viewer": False},
+        "matrix": {"admin": True, "account_manager": True, "recruiter": True, "viewer": False, "accountant": False},
     },
     {
         "id": "screening.view_report",
@@ -168,7 +189,42 @@ DEFAULT_PERMISSIONS: list[DefaultPermission] = [
         "permission": "Просмотр отчётов",
         "description": "Доступ к транскриптам, записям и AI-отчётам скрининга.",
         "actions": ["screening:view_report"],
-        "matrix": {"admin": True, "account_manager": True, "recruiter": True, "viewer": False},
+        "matrix": {"admin": True, "account_manager": True, "recruiter": True, "viewer": False, "accountant": False},
+    },
+    {
+        "id": "hr_edo.view_own",
+        "group": "Кадровый ЭДО",
+        "permission": "Мои кадровые документы",
+        "description": "Видеть и подписывать свои кадровые документы в разделе «Мои документы».",
+        "actions": ["hr_edo:view_own"],
+        "matrix": dict(_ALL_ON),
+    },
+    {
+        "id": "hr_edo.manage",
+        "group": "Кадровый ЭДО",
+        "permission": "Кадровые документы",
+        "description": (
+            "Раздел «Кадровые документы»: реестр сотрудников, согласия на КЭДО, "
+            "формирование и отправка документов на подпись."
+        ),
+        "actions": ["hr_edo:manage"],
+        "matrix": dict(_ADMIN_AND_ACCOUNTANT),
+    },
+    {
+        "id": "hr_edo.sign_employer",
+        "group": "Кадровый ЭДО",
+        "permission": "Подпись работодателя",
+        "description": "Подписывать кадровые документы от имени работодателя (УКЭП директора).",
+        "actions": ["hr_edo:sign_employer"],
+        "matrix": dict(_ADMIN_ONLY),
+    },
+    {
+        "id": "hr_edo.export",
+        "group": "Кадровый ЭДО",
+        "permission": "Выгрузка пакетов",
+        "description": "Скачивать подписи, листы подписания и пакеты доказательств.",
+        "actions": ["hr_edo:export"],
+        "matrix": dict(_ADMIN_AND_ACCOUNTANT),
     },
     {
         "id": "audit.view",

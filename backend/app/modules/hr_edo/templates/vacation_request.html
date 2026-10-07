@@ -1,0 +1,23 @@
+{% extends "_base.html" %}
+{% block body %}
+<div style="margin-top: 28px; margin-left: 50%; font-size: 13px; line-height: 1.5;">
+  {{ company.director_position | t }}<br>
+  {{ company.name | t }}<br>
+  {% if company.director_name %}{{ company.director_name | t }}<br>{% endif %}
+  от {{ employee.full_name | t }}{% if employee.position %},<br>{{ employee.position | t }}{% endif %}
+</div>
+
+<h1>Заявление</h1>
+{% if number %}<p class="subtitle">№ {{ number }}</p>{% endif %}
+
+<p style="margin-top: 18px;">Прошу предоставить мне {{ f.vacation_type | t }} отпуск с {{ f.vacation_start | date_ru }} по {{ f.vacation_end | date_ru }} продолжительностью {{ f.vacation_days or "__" }} календарных дней.</p>
+
+<div class="signs">
+  <div></div>
+  <div>
+    <h3>{{ doc_date | date_ru }}</h3>
+    <div class="req">{{ employee.full_name | t }}</div>
+    <div class="line">подписано электронной подписью</div>
+  </div>
+</div>
+{% endblock %}

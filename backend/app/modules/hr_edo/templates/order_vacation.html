@@ -1,0 +1,30 @@
+{% extends "_base.html" %}
+{% import "_macros.html" as m %}
+{% block body %}
+<h1>Приказ (распоряжение) о предоставлении отпуска работнику</h1>
+<p class="subtitle">№ {{ number or "____" }}</p>
+{{ m.place_date(company, doc_date) }}
+
+<p>Предоставить отпуск:</p>
+<dl class="terms">
+  <div><dt>Работник</dt><dd>{{ employee.full_name | t }}</dd></div>
+  <div><dt>Должность</dt><dd>{{ (f.position or employee.position) | t }}</dd></div>
+  <div><dt>Вид отпуска</dt><dd>{{ f.vacation_type | t }}</dd></div>
+  {% if f.period %}<div><dt>За период работы</dt><dd>{{ f.period | t }}</dd></div>{% endif %}
+  <div><dt>Продолжительность</dt><dd>{{ f.vacation_days or "__" }} календарных дней</dd></div>
+  <div><dt>Период отпуска</dt><dd>с {{ f.vacation_start | date_short }} по {{ f.vacation_end | date_short }}</dd></div>
+</dl>
+
+<div class="signs">
+  <div>
+    <h3>Руководитель организации</h3>
+    {{ m.employer_requisites(company) }}
+    <div class="line">{{ company.director_position | t }}{% if company.director_name %} {{ company.director_name | t }}{% endif %} · подписано электронной подписью</div>
+  </div>
+  <div>
+    <h3>С приказом ознакомлен(а)</h3>
+    <div class="req">{{ employee.full_name | t }}</div>
+    <div class="line">подписано электронной подписью</div>
+  </div>
+</div>
+{% endblock %}

@@ -24,6 +24,9 @@ class Role(str, enum.Enum):
     account_manager = "account_manager"
     recruiter = "recruiter"
     viewer = "viewer"
+    # Добавлено миграцией 0036_hr_edo — бухгалтер/кадровик: ведёт кадровый ЭДО
+    # (раздел «Кадровые документы», право `hr_edo:manage`).
+    accountant = "accountant"
 
 
 class User(Base, TimestampsMixin):

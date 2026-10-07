@@ -336,7 +336,9 @@ export function LeadCardPage() {
                 <div className="text-[22px] font-bold leading-tight tracking-tight">
                   {lead.company || 'Компания не указана'}
                 </div>
-                <div className="text-[14px] text-muted-foreground">{lead.title}</div>
+                {lead.title && lead.title !== lead.company && (
+                  <div className="text-[14px] text-muted-foreground">{lead.title}</div>
+                )}
                 <div className="flex flex-wrap items-center gap-2 pt-1">
                   <KanbanStatusSelect
                     statuses={leadStatuses}

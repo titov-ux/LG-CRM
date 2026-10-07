@@ -74,9 +74,11 @@ export function LeadKanbanCard({ lead, accountManager }: Props) {
         <span className="truncate">{lead.company || 'Компания не указана'}</span>
       </div>
 
-      <div className="mb-2 line-clamp-2 text-[12px] leading-[16px] text-muted-foreground">
-        {lead.title}
-      </div>
+      {lead.title && lead.title !== lead.company && (
+        <div className="mb-2 line-clamp-2 text-[12px] leading-[16px] text-muted-foreground">
+          {lead.title}
+        </div>
+      )}
 
       {(contactLine || lead.phone || lead.email) && (
         <div className="mb-2 space-y-0.5 rounded-md border border-border/60 bg-muted/40 px-2 py-1.5 text-[11.5px]">

@@ -27,12 +27,15 @@ export function daysUntil(iso?: string | null): number | null {
   return Math.round((target.getTime() - today.getTime()) / 86_400_000);
 }
 
-/** Значения формы → payload API (пустые строки → null). */
+/**
+ * Значения формы → payload API (пустые строки → null). Поля «Потребность»
+ * (`title`) в форме нет: при создании его заполняет вызывающий код, при
+ * редактировании старое значение не трогаем.
+ */
 export function leadFormToPayload(values: LeadFormValues): Partial<Lead> {
   const str = (v: string | undefined) => v?.trim() || null;
   return {
     company: values.company.trim(),
-    title: values.title.trim(),
     industry: str(values.industry),
     website: str(values.website),
     contactName: str(values.contactName),
@@ -55,7 +58,6 @@ export function leadFormToPayload(values: LeadFormValues): Partial<Lead> {
 export function leadToForm(l: Lead): Partial<LeadFormValues> {
   return {
     company: l.company,
-    title: l.title,
     industry: l.industry ?? '',
     website: l.website ?? '',
     contactName: l.contactName ?? '',

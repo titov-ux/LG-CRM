@@ -114,7 +114,8 @@ export function LeadsKanbanPage() {
   const handleCreate = (values: LeadFormValues) => {
     if (createStatus === null) return;
     createLead.mutate(
-      { ...leadFormToPayload(values), status: createStatus },
+      // Бэкенд требует непустой title, а поля «Потребность» в форме нет — берём компанию.
+      { ...leadFormToPayload(values), title: values.company.trim(), status: createStatus },
       {
         onSuccess: () => {
           toast.success(`Лид «${values.company}» добавлен`);

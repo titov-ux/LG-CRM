@@ -41,7 +41,6 @@ const optionalSum = z.preprocess(
 const schema = z
   .object({
     company: z.string().trim().min(2, 'Укажите компанию'),
-    title: z.string().trim().min(2, 'Опишите потребность — минимум 2 символа'),
     industry: z.string().optional(),
     website: z.string().optional(),
     contactName: z.string().optional(),
@@ -83,7 +82,6 @@ export function LeadForm({
     resolver: zodResolver(schema),
     defaultValues: {
       company: '',
-      title: '',
       industry: '',
       website: '',
       contactName: '',
@@ -132,7 +130,6 @@ export function LeadForm({
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5">
         <FormSection title="Компания">
           {text('company', 'Компания', 'ООО «Ромашка»')}
-          {text('title', 'Потребность', 'Подбор 5 Java-разработчиков, аутстафф…')}
           <div className="grid grid-cols-2 gap-3">
             {text('industry', 'Отрасль', 'IT, ритейл, производство…')}
             {text('website', 'Сайт', 'romashka.ru')}

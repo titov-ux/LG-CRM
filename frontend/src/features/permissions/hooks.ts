@@ -36,7 +36,10 @@ export function usePermissionsMatrix() {
       return items;
     },
     ...QUERY_DEFAULTS,
-    staleTime: 5 * 60_000,
+    // Админ может поменять права в любой момент — подтягиваем матрицу раз в
+    // минуту, чтобы галочки у остальных пользователей не отставали надолго.
+    staleTime: 60_000,
+    refetchInterval: 60_000,
   });
 
   // Зеркалим успешные ответы в sync-кэш для can()/useCan().

@@ -22,6 +22,7 @@ from app.modules.audit import service as audit_service
 from app.modules.audit.models import ActivityEntityType, ActivityKind
 from app.modules.notifications import service as notify_service
 from app.modules.notifications.models import NotificationEntityType, NotificationKind
+from app.modules.permissions import service as permissions_service
 from app.modules.users.models import Role, User
 from app.modules.vacancies import transitions
 from app.realtime.events import publish_vacancy_changed
@@ -52,9 +53,13 @@ def _scope(q: Select, user: User) -> Select:
     return q
 
 
-def _ensure_can_mutate(user: User) -> None:
-    if user.role not in (Role.admin, Role.account_manager, Role.recruiter):
-        raise ApiError(status.HTTP_403_FORBIDDEN, "forbidden", "Нет прав на изменение вакансий")
+async def _ensure_can(db: AsyncSession, user: User, action: str) -> None:
+    """Права на вакансии — по матрице доступов (строки `vacancies.*`):
+    `vacancy:create`, `vacancy:edit`, `vacancy:change_status`,
+    `vacancy:assign_recruiter`. Удаление пока остаётся за admin/AM."""
+    await permissions_service.require_action(
+        db, user, action, message="Нет прав на изменение вакансий"
+    )
 
 
 def _ensure_can_delete(user: User) -> None:
@@ -210,7 +215,9 @@ async def get_vacancy(db: AsyncSession, user: User, vac_id: uuid.UUID) -> Vacanc
 async def create_vacancy(
     db: AsyncSession, user: User, payload: CreateVacancyRequest
 ) -> Vacancy:
-    _ensure_can_mutate(user)
+    await _ensure_can(db, user, "vacancy:create")
+    if payload.recruiter_ids:
+        await _ensure_can(db, user, "vacancy:assign_recruiter")
     # AM может создавать вакансии только на себя (или вообще без AM-а — это
     # запрещено, иначе он мог бы «обойти» scope-проверку).
     if user.role == Role.account_manager and payload.account_manager_id != user.id:
@@ -278,7 +285,7 @@ async def create_vacancy(
 async def update_vacancy(
     db: AsyncSession, user: User, vac_id: uuid.UUID, payload: UpdateVacancyRequest
 ) -> Vacancy:
-    _ensure_can_mutate(user)
+    await _ensure_can(db, user, "vacancy:edit")
     vac = await get_vacancy(db, user, vac_id)
     data = payload.model_dump(exclude_unset=True)
 
@@ -323,6 +330,8 @@ async def update_vacancy(
     if "recruiter_ids" in data and data["recruiter_ids"] is not None:
         before_recruiters = {r.user_id for r in vac.recruiters}
         target_recruiters = set(data["recruiter_ids"])
+        if target_recruiters != before_recruiters:
+            await _ensure_can(db, user, "vacancy:assign_recruiter")
         newly_assigned |= target_recruiters - before_recruiters
         _replace_recruiters(vac, list(data["recruiter_ids"]))
 
@@ -362,7 +371,7 @@ async def delete_vacancy(db: AsyncSession, user: User, vac_id: uuid.UUID) -> Non
 async def change_status(
     db: AsyncSession, user: User, vac_id: uuid.UUID, payload: ChangeStatusRequest
 ) -> Vacancy:
-    _ensure_can_mutate(user)
+    await _ensure_can(db, user, "vacancy:change_status")
     vac = await get_vacancy(db, user, vac_id)
     if not transitions.is_allowed(vac.status, payload.status):
         raise ApiError(
@@ -442,7 +451,7 @@ async def change_status(
 async def reorder_kanban(
     db: AsyncSession, user: User, updates: list[KanbanUpdate]
 ) -> list[Vacancy]:
-    _ensure_can_mutate(user)
+    await _ensure_can(db, user, "vacancy:change_status")
     ids = [u.id for u in updates]
     if not ids:
         return []

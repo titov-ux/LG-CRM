@@ -37,14 +37,15 @@ from app.modules.analytics.worklog_schemas import (
 from app.modules.chat.analytics import chat_stats
 from app.modules.screening.metrics import SCREENING_METRICS
 from app.modules.auth.dependencies import get_current_user
+from app.modules.permissions import service as permissions_service
 from app.modules.users.models import Role, User
 
-# Учёт времени — раздел только для администраторов.
-def _ensure_worklog_admin(current: User) -> None:
-    if current.role != Role.admin:
-        raise ApiError(
-            403, "forbidden", "Учёт времени доступен только администраторам"
-        )
+# Учёт времени (страница «Аналитика») — по праву `analytics:view` матрицы
+# доступов (строка `analytics.view`, по умолчанию только admin).
+async def _ensure_worklog_access(db: AsyncSession, current: User) -> None:
+    await permissions_service.require_action(
+        db, current, "analytics:view", message="Учёт времени недоступен"
+    )
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -281,7 +282,7 @@ async def worklog_summary(
     current: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> WorklogSummaryResponse:
-    _ensure_worklog_admin(current)
+    await _ensure_worklog_access(db, current)
     period = service.resolve_period(from_dt, to_dt)
     user_ids = None if user_id is None else [user_id]
     rows = await worklog_service.summary(
@@ -306,7 +307,7 @@ async def worklog_sessions(
     current: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[WorklogSession]:
-    _ensure_worklog_admin(current)
+    await _ensure_worklog_access(db, current)
     period = service.resolve_period(from_dt, to_dt)
     # Без явного userId админ смотрит свои интервалы (список «по всем» бессмыслен).
     target = user_id or current.id

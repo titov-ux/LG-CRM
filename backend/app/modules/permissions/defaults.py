@@ -74,7 +74,7 @@ DEFAULT_PERMISSIONS: list[DefaultPermission] = [
         "group": "Клиенты",
         "permission": "Удаление / архив",
         "description": "Перевод клиентов в архив или удаление.",
-        "actions": [],
+        "actions": ["client:delete"],
         "matrix": dict(_ADMIN_ONLY),
     },
     {
@@ -192,9 +192,9 @@ DEFAULT_PERMISSIONS: list[DefaultPermission] = [
         "id": "analytics.view",
         "group": "Аналитика",
         "permission": "Доступ к аналитике",
-        "description": "Доступ к разделу «Аналитика» и выгрузкам.",
+        "description": "Раздел «Аналитика»: учёт рабочего времени сотрудников.",
         "actions": ["analytics:view"],
-        "matrix": {"admin": True, "account_manager": True, "recruiter": False, "viewer": True, "accountant": False, "sales_manager": True},
+        "matrix": dict(_ADMIN_ONLY),
     },
     {
         "id": "screening.run",

@@ -1,9 +1,11 @@
 """Бизнес-логика clients/legal_entities/contacts.
 
-Видимость по ролям: все роли видят и редактируют всех клиентов
-(совпадает с матрицей: `clients.view` = всем, `clients.create_edit` =
-admin + account_manager). Ролевые ограничения, которые остаются:
-- удаление/архив клиента — только admin (`_ensure_can_delete`);
+Видимость: все роли видят всех клиентов (`clients.view`). Изменения — по
+матрице доступов (источник правды, настраивается на странице «Роли и доступы»):
+- создание — `client:create`, редактирование и контакты — `client:edit`
+  (строка `clients.create_edit`);
+- удаление/архив — `client:delete` (строка `clients.delete`).
+Ролевые ограничения, которые остаются поверх матрицы:
 - смена ответственного менеджера — только admin (см. `update_client`);
 - account_manager заводит новых клиентов только на себя (см. `create_client`).
 
@@ -34,6 +36,7 @@ from app.modules.clients.schemas import (
     LegalEntityIn,
     UpdateClientRequest,
 )
+from app.modules.permissions import service as permissions_service
 from app.modules.users.models import Role, User
 from app.modules.vacancies.models import Vacancy
 
@@ -60,16 +63,18 @@ def _ensure_can_see(client: Client, user: User) -> None:
     return None
 
 
-def _ensure_can_mutate(user: User) -> None:
-    """Создание/редактирование клиентов: admin и account_manager (правило clients.create_edit)."""
-    if user.role not in (Role.admin, Role.account_manager):
-        raise ApiError(status.HTTP_403_FORBIDDEN, "forbidden", "Нет прав на изменение клиента")
+async def _ensure_can_mutate(db: AsyncSession, user: User, action: str = "client:edit") -> None:
+    """Создание (`client:create`) / редактирование (`client:edit`) — по матрице доступов."""
+    await permissions_service.require_action(
+        db, user, action, message="Нет прав на изменение клиента"
+    )
 
 
-def _ensure_can_delete(user: User) -> None:
-    """Удаление клиента — только admin (см. правило `clients.delete`)."""
-    if user.role != Role.admin:
-        raise ApiError(status.HTTP_403_FORBIDDEN, "forbidden", "Удаление доступно только админу")
+async def _ensure_can_delete(db: AsyncSession, user: User) -> None:
+    """Удаление клиента — по матрице доступов (`client:delete`, строка `clients.delete`)."""
+    await permissions_service.require_action(
+        db, user, "client:delete", message="Нет прав на удаление клиента"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +198,7 @@ async def get_client(db: AsyncSession, client_id: uuid.UUID, user: User) -> tupl
 async def create_client(
     db: AsyncSession, user: User, payload: CreateClientRequest
 ) -> tuple[Client, dict[str, int]]:
-    _ensure_can_mutate(user)
+    await _ensure_can_mutate(db, user, "client:create")
     # account_manager не может назначить клиента на чужой ID — только на себя.
     if user.role == Role.account_manager and payload.account_manager_id != user.id:
         raise ApiError(
@@ -224,7 +229,7 @@ async def update_client(
     client_id: uuid.UUID,
     payload: UpdateClientRequest,
 ) -> tuple[Client, dict[str, int]]:
-    _ensure_can_mutate(user)
+    await _ensure_can_mutate(db, user)
     client, _ = await get_client(db, client_id, user)
 
     data = payload.model_dump(exclude_unset=True)
@@ -233,12 +238,13 @@ async def update_client(
     if "industry" in data and data["industry"] is not None:
         client.industry = data["industry"]
     if "account_manager_id" in data and data["account_manager_id"] is not None:
-        # account_manager не может «передать» клиента другому — только админ.
+        # Передать клиента другому менеджеру может только админ — даже если
+        # матрица разрешила роли редактирование клиентов.
         # Сравниваем с текущим значением, а не с user.id: форма всегда шлёт
         # accountManagerId, и редактирование чужого клиента без смены менеджера
         # (значение не меняется) должно проходить.
         if (
-            user.role == Role.account_manager
+            user.role != Role.admin
             and data["account_manager_id"] != client.account_manager_id
         ):
             raise ApiError(
@@ -279,7 +285,7 @@ def _replace_legal_entities(client: Client, incoming: list[LegalEntityIn]) -> No
 
 
 async def delete_client(db: AsyncSession, user: User, client_id: uuid.UUID) -> None:
-    _ensure_can_delete(user)
+    await _ensure_can_delete(db, user)
     client, _ = await get_client(db, client_id, user)
     from datetime import datetime, timezone
 

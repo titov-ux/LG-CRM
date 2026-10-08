@@ -107,7 +107,7 @@ async def create_contact(
     client_id: uuid.UUID,
     payload: CreateContactRequest,
 ) -> Contact:
-    _ensure_can_mutate(user)
+    await _ensure_can_mutate(db, user)
     client, _ = await get_client(db, client_id, user)
     contact = Contact(
         client_id=client.id,
@@ -130,7 +130,7 @@ async def update_contact(
     contact_id: uuid.UUID,
     payload: CreateContactRequest,
 ) -> tuple[Contact, str]:
-    _ensure_can_mutate(user)
+    await _ensure_can_mutate(db, user)
     contact, client_name = await get_contact(db, user, contact_id)
     # Прямое присваивание — обязательные поля в схеме всё равно валидируются.
     contact.name = payload.name
@@ -145,7 +145,7 @@ async def update_contact(
 
 
 async def delete_contact(db: AsyncSession, user: User, contact_id: uuid.UUID) -> None:
-    _ensure_can_mutate(user)
+    await _ensure_can_mutate(db, user)
     contact, _ = await get_contact(db, user, contact_id)
     contact.deleted_at = datetime.now(timezone.utc)
     await db.commit()

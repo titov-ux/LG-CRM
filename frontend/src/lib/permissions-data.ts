@@ -8,6 +8,8 @@ import type { Role } from '@/api/types';
 export type Action =
   | 'client:create'
   | 'client:edit'
+  /** Удаление / архив клиента. По умолчанию — только админ. */
+  | 'client:delete'
   | 'vacancy:create'
   | 'vacancy:edit'
   | 'vacancy:change_status'
@@ -90,7 +92,7 @@ export const DEFAULT_PERMISSIONS: MatrixPermission[] = [
     group: 'Клиенты',
     permission: 'Удаление / архив',
     description: 'Перевод клиентов в архив или удаление.',
-    actions: [],
+    actions: ['client:delete'],
     matrix: {
       admin: true,
       account_manager: false,
@@ -287,15 +289,15 @@ export const DEFAULT_PERMISSIONS: MatrixPermission[] = [
     id: 'analytics.view',
     group: 'Аналитика',
     permission: 'Доступ к аналитике',
-    description: 'Доступ к разделу «Аналитика» и выгрузкам.',
+    description: 'Раздел «Аналитика»: учёт рабочего времени сотрудников.',
     actions: ['analytics:view'],
     matrix: {
       admin: true,
-      account_manager: true,
+      account_manager: false,
       recruiter: false,
-      viewer: true,
+      viewer: false,
       accountant: false,
-      sales_manager: true,
+      sales_manager: false,
     },
   },
   {

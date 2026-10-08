@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { useAuthStore } from '@/stores/auth';
+import { useCan } from '@/lib/permissions';
 import { resolvePeriod, useAnalyticsPeriod } from '@/stores/analyticsPeriod';
 import { useWorklogSummary } from './hooks';
 import { PeriodPicker } from './PeriodPicker';
@@ -14,14 +14,13 @@ export function AnalyticsPage() {
     [period.from, period.to],
   );
 
-  const role = useAuthStore((s) => s.user?.role);
-  const isAdmin = role === 'admin';
+  // Доступ — по праву analytics:view матрицы доступов (по умолчанию только
+  // админ). Хук вызываем всегда (правило хуков), но запрос включаем только с
+  // правом — иначе бэк всё равно ответит 403.
+  const canView = useCan('analytics:view');
+  const { data, isLoading } = useWorklogSummary(queryParams, canView);
 
-  // Хук вызываем всегда (правило хуков), но запрос включаем только админам —
-  // иначе бэк всё равно ответит 403.
-  const { data, isLoading } = useWorklogSummary(queryParams, isAdmin);
-
-  if (!isAdmin) {
+  if (!canView) {
     return (
       <div className="flex-1 overflow-auto px-6 pb-6 pt-5">
         <Card>
@@ -29,7 +28,7 @@ export function AnalyticsPage() {
             <CardTitle>Учёт времени</CardTitle>
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground">
-            Раздел доступен только администраторам.
+            Раздел недоступен для вашей роли.
           </CardContent>
         </Card>
       </div>

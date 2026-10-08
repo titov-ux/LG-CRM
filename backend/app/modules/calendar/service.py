@@ -41,6 +41,7 @@ from app.modules.matching.models import MatchStatus, VacancyCandidate
 from app.modules.matching.schemas import UpdateMatchRequest
 from app.modules.notifications import service as notify_service
 from app.modules.notifications.models import NotificationEntityType, NotificationKind
+from app.modules.permissions import service as permissions_service
 from app.modules.users.models import Role, User
 from app.modules.vacancies.models import Vacancy, VacancyRecruiter
 from app.realtime.events import publish_calendar_event
@@ -255,6 +256,7 @@ async def _sync_attendees(
 async def create(
     db: AsyncSession, user: User, payload: CreateEventRequest
 ) -> CalendarEventResponse:
+    await permissions_service.require_action(db, user, "event:create", message="Нет прав на календарь")
     # Валидируем ссылки на сущности (мягко — допускаем событие без привязок).
     cand: Candidate | None = None
     if payload.candidate_id is not None:
@@ -336,6 +338,7 @@ async def create(
 async def update(
     db: AsyncSession, user: User, event_id: uuid.UUID, payload: UpdateEventRequest
 ) -> CalendarEventResponse:
+    await permissions_service.require_action(db, user, "event:edit", message="Нет прав на календарь")
     event = await _load(db, event_id)
     rescheduled = False
     if payload.title is not None:
@@ -385,6 +388,7 @@ async def update(
 async def set_outcome(
     db: AsyncSession, user: User, event_id: uuid.UUID, payload: OutcomeRequest
 ) -> CalendarEventResponse:
+    await permissions_service.require_action(db, user, "event:set_outcome", message="Нет прав на календарь")
     if payload.status not in (EventStatus.held, EventStatus.no_show):
         raise ApiError(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -423,6 +427,7 @@ async def set_outcome(
 async def cancel(
     db: AsyncSession, user: User, event_id: uuid.UUID, reason: str | None
 ) -> CalendarEventResponse:
+    await permissions_service.require_action(db, user, "event:edit", message="Нет прав на календарь")
     event = await _load(db, event_id)
     event.status = EventStatus.canceled
     if reason:
@@ -453,6 +458,7 @@ async def cancel(
 
 
 async def delete(db: AsyncSession, user: User, event_id: uuid.UUID) -> None:
+    await permissions_service.require_action(db, user, "event:delete", message="Нет прав на удаление события")
     event = await _load(db, event_id)
     audience = await _attendee_audience(event)
     await db.delete(event)

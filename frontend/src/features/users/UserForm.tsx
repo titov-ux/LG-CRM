@@ -73,11 +73,6 @@ interface Props {
   disableRole?: boolean;
   /** Заблокировать переключатель «Активен» (нельзя деактивировать себя). */
   disableActive?: boolean;
-  /**
-   * Можно ли выбрать роль «Администратор». Не-админ с правом user:manage
-   * выдавать её не может (бэкенд отвечает 403).
-   */
-  allowAdminRole?: boolean;
 }
 
 export function UserForm({
@@ -88,7 +83,6 @@ export function UserForm({
   mode = 'create',
   disableRole = false,
   disableActive = false,
-  allowAdminRole = true,
 }: Props) {
   const form = useForm<UserFormValues>({
     resolver: zodResolver(schema),
@@ -178,7 +172,7 @@ export function UserForm({
                 </FormControl>
                 <SelectContent>
                   {(Object.keys(ROLE_LABEL) as Role[]).map((r) => (
-                    <SelectItem key={r} value={r} disabled={r === 'admin' && !allowAdminRole}>
+                    <SelectItem key={r} value={r}>
                       {ROLE_LABEL[r]}
                     </SelectItem>
                   ))}

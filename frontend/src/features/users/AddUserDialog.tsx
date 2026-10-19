@@ -10,7 +10,6 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { useAuthStore } from '@/stores/auth';
 import { UserForm } from './UserForm';
 import { useCreateUser } from './hooks';
 
@@ -21,7 +20,6 @@ interface Props {
 
 export function AddUserDialog({ open, onOpenChange }: Props) {
   const createUser = useCreateUser();
-  const isAdmin = useAuthStore((s) => s.user?.role === 'admin');
   // Если SMTP не настроен — бэк вернёт inviteUrl, показываем экран «скопируйте ссылку».
   const [fallbackInvite, setFallbackInvite] = useState<{ name: string; url: string } | null>(null);
 
@@ -66,7 +64,6 @@ export function AddUserDialog({ open, onOpenChange }: Props) {
         ) : (
           <UserForm
             isPending={createUser.isPending}
-            allowAdminRole={isAdmin}
             onSubmit={(values) =>
               createUser.mutate(values, {
                 onSuccess: (res) => {

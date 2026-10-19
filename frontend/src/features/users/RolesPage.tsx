@@ -39,12 +39,15 @@ import { AddUserDialog } from './AddUserDialog';
 import { EditUserDialog } from './EditUserDialog';
 import { ROLE_DESCRIPTION, ROLE_LABEL } from './UserForm';
 import { useAuthStore } from '@/stores/auth';
-import { useCanOrAdmin, type MatrixPermission } from '@/lib/permissions';
+import { type MatrixPermission } from '@/lib/permissions';
 import {
   usePermissionsMatrix,
   useResetPermissionsMatrix,
   useTogglePermission,
 } from '@/features/permissions/hooks';
+
+/** Строки матрицы, которые не настраиваются: раздел только для администратора. */
+const ADMIN_FIXED_ROWS = new Set(['audit.view', 'users.manage', 'analytics.view']);
 
 const ROLE_BADGE_CLASS: Record<Role, string> = {
   admin:
@@ -84,12 +87,9 @@ export function RolesPage() {
   const deleteUser = useDeleteUser();
   const resendInvite = useResendInvite();
   const isAdmin = currentUser?.role === 'admin';
-  // Управление пользователями — право user:manage (админ проходит всегда),
-  // как `require_action_or_admin("user:manage")` на бэкенде.
-  const canManageUsers = useCanOrAdmin('user:manage');
-  // Не-админ с user:manage не может трогать администраторов и выдавать роль
-  // admin (бэкенд: `_ensure_no_admin_escalation`).
-  const canManageUser = (u: User) => canManageUsers && (isAdmin || u.role !== 'admin');
+  // Раздел и управление пользователями — только для администратора
+  // (бэкенд: require_roles(admin) на всех изменениях /users).
+  const canManageUsers = isAdmin;
   // Матрицу доступов меняет только администратор (PUT /permissions/{id} и
   // /permissions/reset на бэкенде — require_roles(admin)).
   const canEditMatrix = isAdmin;
@@ -128,7 +128,7 @@ export function RolesPage() {
   }, [users]);
 
   const handleRoleChange = (user: User, role: Role) => {
-    if (!canManageUser(user) || (role === 'admin' && !isAdmin)) {
+    if (!canManageUsers) {
       toast.error('Недостаточно прав для изменения роли');
       return;
     }
@@ -285,7 +285,7 @@ export function RolesPage() {
                     <TableCell className="text-[12.5px] text-muted-foreground">{u.email}</TableCell>
                     <TableCell>
                       {(() => {
-                        const canChangeThisRole = canManageUser(u) && currentUser?.id !== u.id;
+                        const canChangeThisRole = canManageUsers && currentUser?.id !== u.id;
                         return (
                       <Select
                         value={u.role}
@@ -324,7 +324,7 @@ export function RolesPage() {
                           <Switch
                             checked
                             onCheckedChange={(v) => handleActiveToggle(u, v)}
-                            disabled={currentUser?.id === u.id || !canManageUser(u)}
+                            disabled={currentUser?.id === u.id || !canManageUsers}
                           />
                         </div>
                       ) : (
@@ -335,7 +335,7 @@ export function RolesPage() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-0.5">
-                        {canManageUser(u) && (
+                        {canManageUsers && (
                           <Button
                             variant="ghost"
                             size="icon"
@@ -346,7 +346,7 @@ export function RolesPage() {
                             <Pencil className="h-4 w-4" />
                           </Button>
                         )}
-                        {!u.isActive && canManageUser(u) && (
+                        {!u.isActive && canManageUsers && (
                           <Button
                             variant="ghost"
                             size="icon"
@@ -360,7 +360,7 @@ export function RolesPage() {
                             <Mail className="h-4 w-4" />
                           </Button>
                         )}
-                        {currentUser?.id !== u.id && canManageUser(u) && (
+                        {currentUser?.id !== u.id && canManageUsers && (
                           <Button
                             variant="ghost"
                             size="icon"
@@ -458,6 +458,9 @@ export function RolesPage() {
                   // Строка без actions нигде не проверяется (ни фронтом, ни бэком) —
                   // переключать её бессмысленно, чтобы не вводить админа в заблуждение.
                   const notEnforced = p.actions.length === 0;
+                  // «Журнал действий», «Управление пользователями», «Аналитика» —
+                  // жёстко только администратор, галочки на них не влияют.
+                  const adminFixed = ADMIN_FIXED_ROWS.has(p.id);
                   return (
                     <TableRow key={p.id}>
                       <TableCell>
@@ -472,10 +475,15 @@ export function RolesPage() {
                             Пока не влияет на доступ
                           </div>
                         )}
+                        {adminFixed && (
+                          <div className="text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">
+                            Только администратор
+                          </div>
+                        )}
                         <div className="text-[11.5px] text-muted-foreground">{p.description}</div>
                       </TableCell>
                       {ROLES_ORDER.map((r) => {
-                        const allowed = p.matrix[r];
+                        const allowed = adminFixed ? r === 'admin' : p.matrix[r];
                         const busy =
                           togglePermissionMutation.isPending &&
                           togglePermissionMutation.variables?.id === p.id &&
@@ -489,14 +497,19 @@ export function RolesPage() {
                               aria-busy={busy || undefined}
                               aria-label={`${p.permission} — ${ROLE_LABEL[r]}: ${allowed ? 'разрешено' : 'запрещено'}`}
                               title={
-                                notEnforced
+                                adminFixed
+                                  ? 'Доступно только администратору'
+                                  : notEnforced
                                   ? 'Пока не влияет на доступ'
                                   : !canEditMatrix
                                     ? 'Изменять права может только администратор'
                                     : undefined
                               }
                               disabled={
-                                !canEditMatrix || notEnforced || resetPermissionsMutation.isPending
+                                !canEditMatrix ||
+                                notEnforced ||
+                                adminFixed ||
+                                resetPermissionsMutation.isPending
                               }
                               onClick={() =>
                                 togglePermissionMutation.mutate(

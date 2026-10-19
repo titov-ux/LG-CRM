@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { useCan } from '@/lib/permissions';
+import { useAuthStore } from '@/stores/auth';
 import { resolvePeriod, useAnalyticsPeriod } from '@/stores/analyticsPeriod';
 import { useWorklogSummary } from './hooks';
 import { PeriodPicker } from './PeriodPicker';
@@ -14,10 +14,9 @@ export function AnalyticsPage() {
     [period.from, period.to],
   );
 
-  // Доступ — по праву analytics:view матрицы доступов (по умолчанию только
-  // админ). Хук вызываем всегда (правило хуков), но запрос включаем только с
-  // правом — иначе бэк всё равно ответит 403.
-  const canView = useCan('analytics:view');
+  // Раздел только для администраторов (бэкенд: require_roles(admin)). Хук
+  // вызываем всегда (правило хуков), но запрос включаем только админу.
+  const canView = useAuthStore((s) => s.user?.role === 'admin');
   const { data, isLoading } = useWorklogSummary(queryParams, canView);
 
   if (!canView) {

@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ApiError
@@ -37,15 +37,19 @@ from app.modules.analytics.worklog_schemas import (
 from app.modules.chat.analytics import chat_stats
 from app.modules.screening.metrics import SCREENING_METRICS
 from app.modules.auth.dependencies import get_current_user
-from app.modules.permissions import service as permissions_service
 from app.modules.users.models import Role, User
 
-# Учёт времени (страница «Аналитика») — по праву `analytics:view` матрицы
-# доступов (строка `analytics.view`, по умолчанию только admin).
+# Учёт времени (страница «Аналитика») — только администратор. Жёсткое правило
+# по роли, а не по матрице: раздел решено не открывать другим ролям.
 async def _ensure_worklog_access(db: AsyncSession, current: User) -> None:
-    await permissions_service.require_action(
-        db, current, "analytics:view", message="Учёт времени недоступен"
-    )
+    if current.role != Role.admin:
+        raise ApiError(
+            status.HTTP_403_FORBIDDEN,
+            "forbidden",
+            "Раздел доступен только администраторам",
+            details={"action": "analytics:view"},
+        )
+
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 

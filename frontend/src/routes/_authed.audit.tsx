@@ -1,15 +1,11 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { SectionAccessGuard } from '@/components/common/SectionAccessGuard';
+import { AdminOnlyGuard } from '@/components/common/AdminOnlyGuard';
 import { AuditPage } from '@/features/audit/AuditPage';
 
 export const Route = createFileRoute('/_authed/audit')({
   component: () => (
-    <SectionAccessGuard
-      action="audit:view"
-      adminAlways
-      description="У вашей роли нет доступа к журналу действий."
-    >
+    <AdminOnlyGuard>
       <AuditPage />
-    </SectionAccessGuard>
+    </AdminOnlyGuard>
   ),
 });

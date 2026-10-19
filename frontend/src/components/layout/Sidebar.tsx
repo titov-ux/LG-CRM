@@ -30,7 +30,7 @@ import { cn } from '@/lib/utils';
 import { useNotifications } from '@/features/notifications/hooks';
 import { useMyHr } from '@/features/hrEdo/hooks';
 import { useAuthStore } from '@/stores/auth';
-import { useCan, useCanOrAdmin } from '@/lib/permissions';
+import { useCan } from '@/lib/permissions';
 import { useUIStore } from '@/stores/ui';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { AppInfoPopover } from './AppInfoPopover';
@@ -55,10 +55,8 @@ type NavAction =
   | 'hr_edo:view_own'
   | 'hr_edo:manage'
   | 'lead:access'
-  | 'analytics:view'
   | 'vacancy:view'
-  | 'candidate:view'
-  | 'audit:view';
+  | 'candidate:view';
 
 interface NavGroup {
   label?: string;
@@ -107,17 +105,17 @@ const GROUPS: NavGroup[] = [
     label: 'Прочее',
     items: [
       { to: '/notifications', label: 'Уведомления', icon: Bell },
-      { to: '/analytics', label: 'Аналитика', icon: TrendingUp, anyAction: ['analytics:view'] },
+      { to: '/analytics', label: 'Аналитика', icon: TrendingUp, adminOnly: true },
       { to: '/calculator', label: 'Калькулятор', icon: Calculator },
       { to: '/resume-formatter', label: 'Оформление резюме', icon: FileUp },
       { to: '/offers', label: 'Офферы', icon: FileSignature },
-      { to: '/audit', label: 'Журнал действий', icon: Activity, anyAction: ['audit:view'] },
+      { to: '/audit', label: 'Журнал действий', icon: Activity, adminOnly: true },
     ],
   },
   {
     label: 'Администрирование',
     items: [
-      { to: '/roles', label: 'Роли и доступы', icon: ShieldCheck },
+      { to: '/roles', label: 'Роли и доступы', icon: ShieldCheck, adminOnly: true },
       { to: '/settings', label: 'Настройки', icon: Settings },
     ],
   },
@@ -138,11 +136,8 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const canViewOwnHr = useCan('hr_edo:view_own');
   const canManageHr = useCan('hr_edo:manage');
   const canAccessLeads = useCan('lead:access');
-  const canViewAnalytics = useCan('analytics:view');
   const canViewVacancies = useCan('vacancy:view');
   const canViewCandidates = useCan('candidate:view');
-  // Журнал действий: право audit:view, админ проходит всегда (как на бэкенде).
-  const canViewAudit = useCanOrAdmin('audit:view');
   // Бейдж «Мои документы» — число документов, которые ждут подписи.
   const { data: myHr } = useMyHr();
   const myDocsPending = myHr?.employee?.pendingCount ?? 0;
@@ -152,10 +147,8 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
     'hr_edo:view_own': canViewOwnHr,
     'hr_edo:manage': canManageHr,
     'lead:access': canAccessLeads,
-    'analytics:view': canViewAnalytics,
     'vacancy:view': canViewVacancies,
     'candidate:view': canViewCandidates,
-    'audit:view': canViewAudit,
   };
   const isVisible = (item: NavItem) =>
     (!item.adminOnly || isAdmin) &&

@@ -601,6 +601,106 @@ async def time_to_hire(db: AsyncSession, *, period: Period | None = None) -> dic
 WORKING_HOURS_PER_MONTH = 160
 
 
+# ---------------------------------------------------------------------------
+# Найм: к какой вакансии относится нанятый кандидат
+# ---------------------------------------------------------------------------
+
+# Чем дальше связка продвинулась, тем вероятнее, что найм — по этой вакансии.
+_PLACEMENT_RANK: dict[MatchStatus, int] = {
+    MatchStatus.accepted: 5,
+    MatchStatus.offered: 4,
+    MatchStatus.interview: 3,
+    MatchStatus.reviewed: 2,
+    MatchStatus.submitted: 1,
+}
+
+
+@dataclass
+class _Placement:
+    candidate_id: uuid.UUID
+    recruiter_id: uuid.UUID | None
+    rate_month: float | None
+    hired_at: datetime | None
+    client_id: uuid.UUID | None = None
+    rate_client: float | None = None
+    vacancy_created_at: datetime | None = None
+
+
+async def _hired_placements(db: AsyncSession, period: Period) -> list[_Placement]:
+    """Нанятые за период кандидаты — каждый ровно с ОДНОЙ вакансией найма.
+
+    Раньше найм и маржа засчитывались по КАЖДОЙ вакансии, к которой кандидат
+    когда-либо был привязан (включая отказы клиента), а ставка бралась как
+    max(rate_client) по всем ним: отказ у клиента A + найм у B давал найм у
+    обоих и завышенную маржу. Теперь выбирается одна связка: самая
+    продвинутая по статусу (accepted > offered > interview > reviewed >
+    submitted), при равенстве — самая свежая. Отказные связки не учитываются;
+    если других нет — найм без вакансии (без клиента и маржи).
+    """
+    rows = (
+        await db.execute(
+            select(
+                Candidate.id,
+                Candidate.recruiter_id,
+                Candidate.rate_month,
+                Candidate.status_changed_at,
+                VacancyCandidate.status,
+                VacancyCandidate.added_at,
+                Vacancy.client_id,
+                Vacancy.rate_client,
+                Vacancy.created_at,
+            )
+            .select_from(Candidate)
+            .outerjoin(
+                VacancyCandidate,
+                and_(
+                    VacancyCandidate.candidate_id == Candidate.id,
+                    VacancyCandidate.status.in_(list(_PLACEMENT_RANK)),
+                ),
+            )
+            .outerjoin(
+                Vacancy,
+                and_(Vacancy.id == VacancyCandidate.vacancy_id, Vacancy.deleted_at.is_(None)),
+            )
+            .where(
+                Candidate.deleted_at.is_(None),
+                Candidate.status == CandidateStatus.hired,
+                Candidate.status_changed_at >= period.from_dt,
+                Candidate.status_changed_at < period.to_dt,
+            )
+        )
+    ).all()
+
+    best: dict[uuid.UUID, tuple[tuple[int, datetime], _Placement]] = {}
+    for (
+        cand_id, recruiter_id, rate_month, hired_at,
+        match_status, added_at, client_id, rate_client, vac_created,
+    ) in rows:
+        placement = _Placement(
+            candidate_id=cand_id,
+            recruiter_id=recruiter_id,
+            rate_month=float(rate_month) if rate_month is not None else None,
+            hired_at=hired_at,
+        )
+        score = (0, datetime.min.replace(tzinfo=timezone.utc))
+        if client_id is not None and match_status is not None:
+            placement.client_id = client_id
+            placement.rate_client = float(rate_client) if rate_client is not None else None
+            placement.vacancy_created_at = vac_created
+            score = (_PLACEMENT_RANK[match_status], added_at or score[1])
+        current = best.get(cand_id)
+        if current is None or score > current[0]:
+            best[cand_id] = (score, placement)
+    return [placement for _score, placement in best.values()]
+
+
+def _monthly_margin(p: _Placement) -> float | None:
+    if p.rate_client is None or p.rate_month is None:
+        return None
+    margin = p.rate_client * WORKING_HOURS_PER_MONTH - p.rate_month
+    return margin if margin > 0 else None
+
+
 async def recruiter_performance(
     db: AsyncSession, *, period: Period | None = None
 ) -> dict:
@@ -754,49 +854,19 @@ async def recruiter_performance(
         if row is not None:
             row["hired"] = int(cnt)
 
-    # 5) hire_rate, total_margin, avg_time_to_hire — берём детальный список
-    #    hired-кандидатов с прикреплённой самой ранней вакансией.
-    hired_detail = (
-        await db.execute(
-            select(
-                Candidate.recruiter_id,
-                Candidate.id,
-                Candidate.rate_month,
-                Candidate.status_changed_at,
-                func.min(Vacancy.created_at).label("vac_created"),
-                func.max(Vacancy.rate_client).label("rate_client"),
-            )
-            .select_from(Candidate)
-            .outerjoin(VacancyCandidate, VacancyCandidate.candidate_id == Candidate.id)
-            .outerjoin(Vacancy, Vacancy.id == VacancyCandidate.vacancy_id)
-            .where(
-                Candidate.deleted_at.is_(None),
-                Candidate.status == CandidateStatus.hired,
-                Candidate.status_changed_at >= period.from_dt,
-                Candidate.status_changed_at < period.to_dt,
-            )
-            .group_by(
-                Candidate.recruiter_id,
-                Candidate.id,
-                Candidate.rate_month,
-                Candidate.status_changed_at,
-            )
-        )
-    ).all()
+    # 5) hire_rate, total_margin, avg_time_to_hire — по ОДНОЙ вакансии найма
+    #    на кандидата (см. _hired_placements).
     tth_by_rec: dict[str, list[float]] = {}
-    for rid, _cid, rate_month, hired_at, vac_created, rate_client in hired_detail:
-        key = str(rid)
+    for p in await _hired_placements(db, period):
+        key = str(p.recruiter_id)
         row = await _ensure(key)
         if row is None:
             continue
-        # маржа (если есть привязанная вакансия)
-        if rate_client is not None and rate_month is not None:
-            margin = float(rate_client) * WORKING_HOURS_PER_MONTH - float(rate_month)
-            if margin > 0:
-                row["total_margin"] += margin
-        # time-to-hire
-        if vac_created is not None and hired_at is not None:
-            d = (hired_at - vac_created).total_seconds() / 86400.0
+        margin = _monthly_margin(p)
+        if margin is not None:
+            row["total_margin"] += margin
+        if p.vacancy_created_at is not None and p.hired_at is not None:
+            d = (p.hired_at - p.vacancy_created_at).total_seconds() / 86400.0
             if d >= 0:
                 tth_by_rec.setdefault(key, []).append(d)
 
@@ -1024,41 +1094,16 @@ async def client_performance(
         if vals:
             clients[key]["avg_time_to_fill_days"] = round(sum(vals) / len(vals), 1)
 
-    # 4) hires_in_period и monthly_margin — через VacancyCandidate→Vacancy.client_id
-    hire_rows = (
-        await db.execute(
-            select(
-                Vacancy.client_id,
-                Candidate.id,
-                Candidate.rate_month,
-                Vacancy.rate_client,
-            )
-            .select_from(Candidate)
-            .join(VacancyCandidate, VacancyCandidate.candidate_id == Candidate.id)
-            .join(Vacancy, Vacancy.id == VacancyCandidate.vacancy_id)
-            .where(
-                Candidate.deleted_at.is_(None),
-                Candidate.status == CandidateStatus.hired,
-                Candidate.status_changed_at >= period.from_dt,
-                Candidate.status_changed_at < period.to_dt,
-                Vacancy.deleted_at.is_(None),
-            )
-        )
-    ).all()
-    counted: set[tuple[str, str]] = set()  # (client_id, candidate_id) — не дублить hires при join
-    for cid, cand_id, rate_month, rate_client in hire_rows:
-        key = str(cid)
-        if key not in clients:
+    # 4) hires_in_period и monthly_margin — найм засчитывается ОДНОМУ клиенту:
+    #    тому, чья вакансия выбрана как вакансия найма (см. _hired_placements).
+    for p in await _hired_placements(db, period):
+        if p.client_id is None or str(p.client_id) not in clients:
             continue
-        pair = (key, str(cand_id))
-        if pair in counted:
-            continue
-        counted.add(pair)
+        key = str(p.client_id)
         clients[key]["hires_in_period"] += 1
-        if rate_client is not None and rate_month is not None:
-            margin = float(rate_client) * WORKING_HOURS_PER_MONTH - float(rate_month)
-            if margin > 0:
-                clients[key]["monthly_margin_run_rate"] += margin
+        margin = _monthly_margin(p)
+        if margin is not None:
+            clients[key]["monthly_margin_run_rate"] += margin
 
     # 5) Conversion presented→hired и rejection_rate по матчингам в period
     match_rows = (

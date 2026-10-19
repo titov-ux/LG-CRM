@@ -20,18 +20,38 @@ from app.modules.vacancies.models import VacancyStatus as V
 # (валидация в сервисе на смене статуса).
 FINAL_STATUSES: frozenset[VacancyStatus] = frozenset({V.closed_success, V.closed})
 
-# Куда можно перевести из каждого статуса. Любой → paused разрешён всегда;
-# из paused — возврат в `in_work` или `new`.
-_TRANSITIONS: dict[V, set[V]] = {
+# Рабочая воронка вакансии по порядку этапов.
+PIPELINE: tuple[VacancyStatus, ...] = (V.new, V.in_work, V.proposed, V.interview, V.waiting_os)
+
+# Переходы ВПЕРЁД по воронке (и в финальные статусы). Любой → paused разрешён
+# всегда; из paused — возврат в `in_work` или `new`.
+_FORWARD: dict[V, set[V]] = {
     V.new: {V.in_work, V.paused},
     V.in_work: {V.proposed, V.interview, V.waiting_os, V.closed, V.paused},
-    V.proposed: {V.interview, V.in_work, V.closed, V.paused},
-    V.interview: {V.waiting_os, V.closed, V.closed_success, V.in_work, V.paused},
-    V.waiting_os: {V.closed_success, V.closed, V.interview, V.paused},
+    V.proposed: {V.interview, V.closed, V.paused},
+    V.interview: {V.waiting_os, V.closed, V.closed_success, V.paused},
+    V.waiting_os: {V.closed_success, V.closed, V.paused},
     V.closed_success: set(),  # терминальное состояние
     V.closed: {V.in_work},  # можно «переоткрыть»
     V.paused: {V.new, V.in_work},
 }
+
+
+def _with_rollback(forward: dict[V, set[V]]) -> dict[V, set[V]]:
+    """Добавить откат на любой ПРЕДЫДУЩИЙ этап воронки.
+
+    Раньше назад можно было только частично (например, из «Интервью» — лишь в
+    «В работе»), и случайный клик по следующему статусу нельзя было отменить:
+    из «Интервью» не вернуть «Кандидаты предложены». Ограничения вперёд
+    (нельзя из «Новой» сразу закрыть и т.п.) не меняются.
+    """
+    result = {src: set(dsts) for src, dsts in forward.items()}
+    for i, src in enumerate(PIPELINE):
+        result[src] |= set(PIPELINE[:i])
+    return result
+
+
+_TRANSITIONS: dict[V, set[V]] = _with_rollback(_FORWARD)
 
 
 def allowed_next(status: V) -> set[V]:

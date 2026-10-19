@@ -12,6 +12,7 @@ from app.core.errors import ApiError
 from app.db.session import get_db
 from app.modules.auth.dependencies import get_current_user
 from app.modules.auth.schemas import OkResponse
+from app.modules.permissions.dependencies import require_action_dep
 from app.modules.users.models import User
 from app.modules.vacancies import service, transitions
 from app.modules.vacancies.ai import (
@@ -41,7 +42,15 @@ from app.modules.vacancies.schemas import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/vacancies", tags=["vacancies"])
+# Весь раздел «Вакансии» — по праву vacancy:view (строка матрицы
+# vacancies.view_all). По умолчанию закрыт для менеджера по продажам.
+router = APIRouter(
+    prefix="/vacancies",
+    tags=["vacancies"],
+    dependencies=[
+        Depends(require_action_dep("vacancy:view", message="Нет доступа к вакансиям"))
+    ],
+)
 
 
 def _to_dto(vac: VacancyModel, candidates_count: int = 0) -> VacancyResponse:

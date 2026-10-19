@@ -39,11 +39,20 @@ from app.modules.candidates.schemas import (
     ParseResumeTextResponse,
     UpdateCandidateRequest,
 )
+from app.modules.permissions.dependencies import require_action_dep
 from app.modules.users.models import Role, User
 from app.modules.vacancies import service as vacancies_service
 from app.modules.vacancies.models import EngagementType, Grade
 
-router = APIRouter(prefix="/candidates", tags=["candidates"])
+# Доска «Кандидаты», база «Все кандидаты» и карточки — по праву candidate:view
+# (строка матрицы candidates.view). По умолчанию закрыто для менеджера по продажам.
+router = APIRouter(
+    prefix="/candidates",
+    tags=["candidates"],
+    dependencies=[
+        Depends(require_action_dep("candidate:view", message="Нет доступа к кандидатам"))
+    ],
+)
 logger = logging.getLogger(__name__)
 
 

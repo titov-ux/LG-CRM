@@ -1,0 +1,97 @@
+# Production-стек на Timeweb Cloud (с 2026-10-14, после потери Yandex Cloud).
+# Отличие от docker-compose.prod.yml: PostgreSQL — управляемая БД Timeweb
+# (приватная сеть, DATABASE_URL в .env.prod), поэтому контейнера postgres нет.
+# Остальное (комментарии про --workers 1, --profile celery и т.п.) — см. prod-файл.
+#
+#   docker compose -f infra/docker-compose.timeweb.yml --env-file .env.prod --profile celery up -d
+
+x-backend-base: &backend-base
+  build:
+    context: ../backend
+    dockerfile: Dockerfile
+  env_file: ../.env.prod
+  depends_on:
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: crm-lg-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    <<: *backend-base
+    container_name: crm-lg-backend
+    # --workers 1 — обязательно, см. docker-compose.prod.yml.
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--proxy-headers", "--forwarded-allow-ips=*", "--ws-max-size", "4194304"]
+    expose:
+      - "8000"
+
+  celery-worker:
+    <<: *backend-base
+    container_name: crm-lg-celery-worker
+    command: ["celery", "-A", "app.celery_app", "worker", "--loglevel=info", "--concurrency=2"]
+    profiles: ["celery"]
+
+  celery-beat:
+    <<: *backend-base
+    container_name: crm-lg-celery-beat
+    command: ["celery", "-A", "app.celery_app", "beat", "--loglevel=info"]
+    profiles: ["celery"]
+
+  stt:
+    build:
+      context: ../services/stt
+      dockerfile: Dockerfile
+      args:
+        STT_FULL: "${STT_FULL:-0}"
+    container_name: crm-lg-stt
+    restart: unless-stopped
+    environment:
+      STT_FAKE: "${STT_FAKE:-0}"
+      STT_MODEL: "${STT_MODEL:-small}"
+      STT_DEVICE: "${STT_DEVICE:-cpu}"
+      STT_COMPUTE_TYPE: "${STT_COMPUTE_TYPE:-int8}"
+      STT_CPU_THREADS: "${STT_CPU_THREADS:-2}"
+      STT_MAX_SESSIONS: "${STT_MAX_SESSIONS:-2}"
+      STT_BATCH_WINDOW_S: "${STT_BATCH_WINDOW_S:-120}"
+      STT_BATCH_BEAM: "${STT_BATCH_BEAM:-5}"
+      STT_BATCH_PROMPT: "${STT_BATCH_PROMPT:-}"
+      STT_PORT: "8765"
+      HF_HOME: "/root/.cache/huggingface"
+    volumes:
+      - stt_models:/root/.cache/huggingface
+    mem_limit: "${STT_MEM_LIMIT:-1500m}"
+    cpus: "${STT_CPUS:-1.0}"
+    expose:
+      - "8765"
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: crm-lg-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - ../frontend/dist:/usr/share/nginx/html:ro
+      - ./certbot-webroot:/var/www/certbot:ro
+    depends_on:
+      - backend
+
+volumes:
+  redis_data:
+  stt_models:

@@ -5,4 +5,4 @@
 #  - BACKUP_S3_PREFIX (prod | staging) тоже берётся из .env.prod и определяет,
 #    в какой папке бакета лежат дампы этого контура.
 
-0 1 * * * root cd /opt/crm-lg && set -a && . .env.prod && set +a && /usr/bin/env bash backend/scripts/backup_db.sh >> /var/log/crm-lg-backup.log 2>&1
+0 1 * * * root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin; cd /opt/crm-lg && set -a && . .env.prod && set +a && /usr/bin/env bash backend/scripts/backup_db.sh >> /var/log/crm-lg-backup.log 2>&1

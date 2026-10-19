@@ -3,6 +3,7 @@ import { candidatesApi, type CandidatesListParams } from '@/api/candidates';
 import { auditApi } from '@/api/audit';
 import type { Candidate, CandidateStatus, UUID } from '@/api/types';
 import { QUERY_DEFAULTS } from '@/lib/constants';
+import { useCan } from '@/lib/permissions';
 
 export const candidateKeys = {
   all: ['candidates'] as const,
@@ -11,28 +12,33 @@ export const candidateKeys = {
   activity: (id: UUID) => [...candidateKeys.all, 'activity', id] as const,
 };
 
+// Без права candidate:view бэкенд отвечает 403 — запросы не шлём вовсе.
 export function useCandidates(params: CandidatesListParams = {}) {
+  const canView = useCan('candidate:view');
   return useQuery({
     queryKey: candidateKeys.list(params),
     queryFn: () => candidatesApi.list(params),
+    enabled: canView,
     ...QUERY_DEFAULTS,
   });
 }
 
 export function useCandidate(id: UUID | undefined) {
+  const canView = useCan('candidate:view');
   return useQuery({
     queryKey: candidateKeys.byId(id ?? ''),
     queryFn: () => candidatesApi.byId(id as UUID),
-    enabled: !!id,
+    enabled: !!id && canView,
     ...QUERY_DEFAULTS,
   });
 }
 
 export function useCandidateActivity(id: UUID | undefined) {
+  const canView = useCan('candidate:view');
   return useQuery({
     queryKey: candidateKeys.activity(id ?? ''),
     queryFn: () => auditApi.activity('candidate', id as UUID),
-    enabled: !!id,
+    enabled: !!id && canView,
     ...QUERY_DEFAULTS,
   });
 }

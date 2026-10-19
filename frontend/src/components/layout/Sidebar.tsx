@@ -55,7 +55,9 @@ type NavAction =
   | 'hr_edo:view_own'
   | 'hr_edo:manage'
   | 'lead:access'
-  | 'analytics:view';
+  | 'analytics:view'
+  | 'vacancy:view'
+  | 'candidate:view';
 
 interface NavGroup {
   label?: string;
@@ -69,8 +71,8 @@ const GROUPS: NavGroup[] = [
   {
     label: 'Работа',
     items: [
-      { to: '/vacancies', label: 'Вакансии', icon: Briefcase },
-      { to: '/candidates', label: 'Кандидаты', icon: Users },
+      { to: '/vacancies', label: 'Вакансии', icon: Briefcase, anyAction: ['vacancy:view'] },
+      { to: '/candidates', label: 'Кандидаты', icon: Users, anyAction: ['candidate:view'] },
       { to: '/leads', label: 'Лиды', icon: Target, anyAction: ['lead:access'] },
       { to: '/clients', label: 'Клиенты', icon: Building2 },
       { to: '/tenders', label: 'Тендеры', icon: Gavel },
@@ -88,7 +90,7 @@ const GROUPS: NavGroup[] = [
   {
     label: 'Хранилище',
     items: [
-      { to: '/database', label: 'Все кандидаты', icon: Database },
+      { to: '/database', label: 'Все кандидаты', icon: Database, anyAction: ['candidate:view'] },
       { to: '/documents', label: 'Документы', icon: FileText },
     ],
   },
@@ -136,6 +138,8 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const canManageHr = useCan('hr_edo:manage');
   const canAccessLeads = useCan('lead:access');
   const canViewAnalytics = useCan('analytics:view');
+  const canViewVacancies = useCan('vacancy:view');
+  const canViewCandidates = useCan('candidate:view');
   // Бейдж «Мои документы» — число документов, которые ждут подписи.
   const { data: myHr } = useMyHr();
   const myDocsPending = myHr?.employee?.pendingCount ?? 0;
@@ -146,6 +150,8 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
     'hr_edo:manage': canManageHr,
     'lead:access': canAccessLeads,
     'analytics:view': canViewAnalytics,
+    'vacancy:view': canViewVacancies,
+    'candidate:view': canViewCandidates,
   };
   const isVisible = (item: NavItem) =>
     (!item.adminOnly || isAdmin) &&

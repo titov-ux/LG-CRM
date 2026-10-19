@@ -23,7 +23,7 @@ import { UserAvatar } from '@/components/common/UserAvatar';
 import { Skeleton } from '@/components/ui/skeleton';
 import { FilterBar, FilterChip, MenuItem } from '@/components/common/FilterChip';
 import type { ClientKind, ClientStatus } from '@/api/types';
-import { ClientForm, type ClientFormValues } from './ClientForm';
+import { CLIENT_OWNER_ROLES, ClientForm, type ClientFormValues } from './ClientForm';
 import { useClients, useCreateClient, useUsers } from './hooks';
 import { useFiltersStore } from '@/stores/filters';
 
@@ -246,7 +246,7 @@ export function ClientsListPage() {
               Все менеджеры
             </MenuItem>
             {(usersData ?? [])
-              .filter((u) => u.role === 'account_manager' || u.role === 'admin')
+              .filter((u) => CLIENT_OWNER_ROLES.includes(u.role))
               .map((u) => (
                 <MenuItem
                   key={u.id}

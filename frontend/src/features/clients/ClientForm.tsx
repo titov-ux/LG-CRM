@@ -21,7 +21,7 @@ import {
 } from '@/components/ui/select';
 import { useUsers } from '@/features/users/hooks';
 import { useAuthStore } from '@/stores/auth';
-import type { ClientKind, ClientStatus } from '@/api/types';
+import type { ClientKind, ClientStatus, Role } from '@/api/types';
 
 const STATUSES: { id: ClientStatus; label: string }[] = [
   { id: 'lead', label: 'Лид' },
@@ -53,6 +53,9 @@ const schema = z.object({
 
 export type ClientFormValues = z.infer<typeof schema>;
 
+/** Роли, которые можно назначить ответственным (аккаунт-менеджером) клиента. */
+export const CLIENT_OWNER_ROLES: readonly Role[] = ['admin', 'account_manager', 'sales_manager'];
+
 interface Props {
   defaultValues?: Partial<ClientFormValues>;
   onSubmit: (values: ClientFormValues) => void;
@@ -64,7 +67,9 @@ export function ClientForm({ defaultValues, onSubmit, isPending, submitLabel = '
   const { data: users } = useUsers();
   const currentUser = useAuthStore((s) => s.user);
   const isAccountManager = currentUser?.role === 'account_manager';
-  const managers = (users ?? []).filter((u) => u.role === 'account_manager' || u.role === 'admin');
+  // Ответственным за клиента может быть админ, аккаунт-менеджер или менеджер
+  // по продажам (он заводит клиентов из своих лидов и ставит себя).
+  const managers = (users ?? []).filter((u) => CLIENT_OWNER_ROLES.includes(u.role));
 
   // Аккаунт-менеджер по правам может заводить клиента только на себя и не может
   // менять ответственного (см. backend create_client/update_client). Поэтому для

@@ -20,6 +20,7 @@ from app.modules.audit.models import ActivityEntityType
 from app.modules.audit.schemas import ActivityResponse, AuditResponse
 from app.modules.auth.dependencies import get_current_user, require_roles
 from app.modules.leads import service as leads_service
+from app.modules.permissions.dependencies import require_action_dep
 from app.modules.users.models import Role, User
 
 router = APIRouter(prefix="/audit", tags=["audit"])
@@ -85,6 +86,9 @@ activity_router = APIRouter(tags=["audit"])
     "/vacancies/{entity_id}/activity",
     response_model=list[ActivityResponse],
     summary="Активность по вакансии",
+    dependencies=[
+        Depends(require_action_dep("vacancy:view", message="Нет доступа к вакансиям"))
+    ],
 )
 async def vacancy_activity(
     entity_id: uuid.UUID,
@@ -98,6 +102,9 @@ async def vacancy_activity(
     "/candidates/{entity_id}/activity",
     response_model=list[ActivityResponse],
     summary="Активность по кандидату",
+    dependencies=[
+        Depends(require_action_dep("candidate:view", message="Нет доступа к кандидатам"))
+    ],
 )
 async def candidate_activity(
     entity_id: uuid.UUID,

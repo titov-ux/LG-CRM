@@ -51,3 +51,4 @@ yarn-debug.log*
 # ── Прочие временные ──
 _tmp_*
 *.log
+secrets.txt

@@ -48,10 +48,19 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 DUMP_PATH="${TMP_DIR}/crm-lg-${TS}.dump.gz"
 
 echo "[backup] dumping → ${DUMP_PATH}"
-docker exec -i "${POSTGRES_CONTAINER}" \
-    pg_dump --format=custom --no-owner --no-acl \
-        -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" \
-    | gzip -9 > "${DUMP_PATH}"
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "${POSTGRES_CONTAINER}"; then
+    # БД в контейнере на этой же VM (Yandex Cloud, docker-compose.prod.yml).
+    docker exec -i "${POSTGRES_CONTAINER}" \
+        pg_dump --format=custom --no-owner --no-acl \
+            -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" \
+        | gzip -9 > "${DUMP_PATH}"
+else
+    # Управляемая БД (Timeweb, docker-compose.timeweb.yml): pg_dump с хоста
+    # (postgresql-client 16 ставит cloud-init) по DATABASE_URL.
+    PG_URL="${DATABASE_URL/postgresql+asyncpg/postgresql}"
+    pg_dump --format=custom --no-owner --no-acl "${PG_URL}" | gzip -9 > "${DUMP_PATH}"
+fi
+[ -s "${DUMP_PATH}" ] || { echo "[backup] FAIL: пустой дамп"; exit 1; }
 
 # Префикс без обрамляющих слешей, чтобы итоговый ключ был чистым.
 # Пустой префикс → пишем в legacy-путь daily/... (как до 2026-05-26).

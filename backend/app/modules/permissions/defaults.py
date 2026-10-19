@@ -98,10 +98,10 @@ DEFAULT_PERMISSIONS: list[DefaultPermission] = [
     {
         "id": "vacancies.view_all",
         "group": "Вакансии",
-        "permission": "Просмотр всех вакансий",
-        "description": "Видеть все вакансии компании, а не только свои.",
-        "actions": [],
-        "matrix": dict(_ALL_ON),
+        "permission": "Доступ к вакансиям",
+        "description": "Раздел «Вакансии»: доска и карточки вакансий, вакансии в карточке клиента.",
+        "actions": ["vacancy:view"],
+        "matrix": {**_ALL_ON, "sales_manager": False},
     },
     {
         "id": "vacancies.create_edit",
@@ -122,10 +122,10 @@ DEFAULT_PERMISSIONS: list[DefaultPermission] = [
     {
         "id": "candidates.view",
         "group": "Кандидаты",
-        "permission": "Просмотр базы кандидатов",
-        "description": "Поиск и фильтрация кандидатов.",
-        "actions": [],
-        "matrix": dict(_ALL_ON),
+        "permission": "Доступ к кандидатам",
+        "description": "Доска «Кандидаты», база «Все кандидаты» и карточки кандидатов.",
+        "actions": ["candidate:view"],
+        "matrix": {**_ALL_ON, "sales_manager": False},
     },
     {
         "id": "candidates.create_edit",

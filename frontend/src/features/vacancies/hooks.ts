@@ -3,6 +3,7 @@ import { vacanciesApi, type VacanciesListParams } from '@/api/vacancies';
 import { auditApi } from '@/api/audit';
 import type { UUID, Vacancy, VacancyStatus } from '@/api/types';
 import { QUERY_DEFAULTS } from '@/lib/constants';
+import { useCan } from '@/lib/permissions';
 
 export const vacancyKeys = {
   all: ['vacancies'] as const,
@@ -11,28 +12,33 @@ export const vacancyKeys = {
   activity: (id: UUID) => [...vacancyKeys.all, 'activity', id] as const,
 };
 
+// Без права vacancy:view бэкенд отвечает 403 — запросы не шлём вовсе.
 export function useVacancies(params: VacanciesListParams = {}) {
+  const canView = useCan('vacancy:view');
   return useQuery({
     queryKey: vacancyKeys.list(params),
     queryFn: () => vacanciesApi.list(params),
+    enabled: canView,
     ...QUERY_DEFAULTS,
   });
 }
 
 export function useVacancy(id: UUID | undefined) {
+  const canView = useCan('vacancy:view');
   return useQuery({
     queryKey: vacancyKeys.byId(id ?? ''),
     queryFn: () => vacanciesApi.byId(id as UUID),
-    enabled: !!id,
+    enabled: !!id && canView,
     ...QUERY_DEFAULTS,
   });
 }
 
 export function useVacancyActivity(id: UUID | undefined) {
+  const canView = useCan('vacancy:view');
   return useQuery({
     queryKey: vacancyKeys.activity(id ?? ''),
     queryFn: () => auditApi.activity('vacancy', id as UUID),
-    enabled: !!id,
+    enabled: !!id && canView,
     ...QUERY_DEFAULTS,
   });
 }

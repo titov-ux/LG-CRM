@@ -10,10 +10,14 @@ export type Action =
   | 'client:edit'
   /** Удаление / архив клиента. По умолчанию — только админ. */
   | 'client:delete'
+  /** Раздел «Вакансии»: доска, карточки, вакансии в карточке клиента. */
+  | 'vacancy:view'
   | 'vacancy:create'
   | 'vacancy:edit'
   | 'vacancy:change_status'
   | 'vacancy:assign_recruiter'
+  /** Доска «Кандидаты», база «Все кандидаты» и карточки кандидатов. */
+  | 'candidate:view'
   | 'candidate:create'
   | 'candidate:edit'
   | 'candidate:change_status'
@@ -121,16 +125,16 @@ export const DEFAULT_PERMISSIONS: MatrixPermission[] = [
   {
     id: 'vacancies.view_all',
     group: 'Вакансии',
-    permission: 'Просмотр всех вакансий',
-    description: 'Видеть все вакансии компании, а не только свои.',
-    actions: [],
+    permission: 'Доступ к вакансиям',
+    description: 'Раздел «Вакансии»: доска и карточки вакансий, вакансии в карточке клиента.',
+    actions: ['vacancy:view'],
     matrix: {
       admin: true,
       account_manager: true,
       recruiter: true,
       viewer: true,
       accountant: true,
-      sales_manager: true,
+      sales_manager: false,
     },
   },
   {
@@ -166,16 +170,16 @@ export const DEFAULT_PERMISSIONS: MatrixPermission[] = [
   {
     id: 'candidates.view',
     group: 'Кандидаты',
-    permission: 'Просмотр базы кандидатов',
-    description: 'Поиск и фильтрация кандидатов.',
-    actions: [],
+    permission: 'Доступ к кандидатам',
+    description: 'Доска «Кандидаты», база «Все кандидаты» и карточки кандидатов.',
+    actions: ['candidate:view'],
     matrix: {
       admin: true,
       account_manager: true,
       recruiter: true,
       viewer: true,
       accountant: true,
-      sales_manager: true,
+      sales_manager: false,
     },
   },
   {

@@ -27,6 +27,7 @@ import { ClientForm, type ClientFormValues } from './ClientForm';
 import { CommentsSection } from '@/features/comments/CommentsSection';
 import { useClient, useClientContacts, useCreateClient, useDeleteClient, useUpdateClient, useUsers } from './hooks';
 import { useVacancies } from '@/features/vacancies/hooks';
+import { useCan } from '@/lib/permissions';
 import { vacancyStatuses } from '@/mocks/db/vacancies';
 import type { Client } from '@/api/types';
 import { telegramUrl } from '@/lib/utils';
@@ -78,6 +79,8 @@ export function ClientCardPage() {
   const { data: contacts } = useClientContacts(id);
   const { data: usersData } = useUsers();
   const { data: vacanciesData } = useVacancies({ clientId: id });
+  // Без права vacancy:view (например, менеджер по продажам) блок вакансий скрыт.
+  const canViewVacancies = useCan('vacancy:view');
   const updateClient = useUpdateClient();
   const createClient = useCreateClient();
   const deleteClient = useDeleteClient();
@@ -262,7 +265,9 @@ export function ClientCardPage() {
                   ) : undefined
                 }
               />
-              <Field label="Открытых вакансий" value={<b className="tnum">{vacanciesData?.items.length ?? 0}</b>} />
+              {canViewVacancies && (
+                <Field label="Открытых вакансий" value={<b className="tnum">{vacanciesData?.items.length ?? 0}</b>} />
+              )}
               <Field label="Контактных лиц" value={contactsList.length} />
             </div>
 
@@ -341,34 +346,36 @@ export function ClientCardPage() {
               onOpenChange={setContactDialogOpen}
             />
 
-            <Section title={`Вакансии · ${vacanciesData?.items.length ?? 0}`}>
-              <div className="space-y-1.5">
-                {(vacanciesData?.items ?? []).map((v) => {
-                  const st = vacancyStatuses.find((s) => s.id === v.status);
-                  return (
-                    <button
-                      type="button"
-                      key={v.id}
-                      onClick={() => navigate({ to: '/vacancies/$id', params: { id: v.id } })}
-                      className="flex w-full items-center justify-between rounded-md border bg-muted/30 px-3 py-2.5 text-left hover:bg-muted"
-                    >
-                      <div>
-                        <div className="text-[13px] font-semibold">{v.title}</div>
-                        <div className="mt-0.5 text-[11.5px] text-muted-foreground">
-                          {v.grade} · {v.format} · {v.candidatesCount} канд.
+            {canViewVacancies && (
+              <Section title={`Вакансии · ${vacanciesData?.items.length ?? 0}`}>
+                <div className="space-y-1.5">
+                  {(vacanciesData?.items ?? []).map((v) => {
+                    const st = vacancyStatuses.find((s) => s.id === v.status);
+                    return (
+                      <button
+                        type="button"
+                        key={v.id}
+                        onClick={() => navigate({ to: '/vacancies/$id', params: { id: v.id } })}
+                        className="flex w-full items-center justify-between rounded-md border bg-muted/30 px-3 py-2.5 text-left hover:bg-muted"
+                      >
+                        <div>
+                          <div className="text-[13px] font-semibold">{v.title}</div>
+                          <div className="mt-0.5 text-[11.5px] text-muted-foreground">
+                            {v.grade} · {v.format} · {v.candidatesCount} канд.
+                          </div>
                         </div>
-                      </div>
-                      {st && (
-                        <span className="inline-flex items-center gap-1.5 text-[11.5px]">
-                          <span className="h-1.5 w-1.5 rounded-full" style={{ background: st.color }} />
-                          {st.label}
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </Section>
+                        {st && (
+                          <span className="inline-flex items-center gap-1.5 text-[11.5px]">
+                            <span className="h-1.5 w-1.5 rounded-full" style={{ background: st.color }} />
+                            {st.label}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </Section>
+            )}
 
             <Separator />
 

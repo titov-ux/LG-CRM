@@ -1,0 +1,26 @@
+#cloud-config
+users:
+  - default
+  - name: crm
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA8fJFLgfKDZnc9AIPRI7Fr4zHTfd19xAaOgAjcBCXlM skolkovo-hub
+package_update: true
+packages: [ca-certificates, curl, git, unzip, jq, cron, logrotate, postgresql-client, docker.io, docker-compose-v2, docker-buildx]
+write_files:
+  - path: /etc/docker/daemon.json
+    content: |
+      {"registry-mirrors": ["https://dockerhub.timeweb.cloud"],
+       "log-driver": "json-file", "log-opts": {"max-size": "20m", "max-file": "5"}}
+  - path: /etc/profile.d/crm-lg.sh
+    permissions: '0644'
+    content: |
+      alias dc='docker compose -f /opt/crm-lg/infra/docker-compose.prod.yml --env-file /opt/crm-lg/.env.prod --profile celery'
+runcmd:
+  - usermod -aG docker crm
+  - systemctl enable --now docker && systemctl restart docker
+  - curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs && npm i -g pnpm
+  - snap install aws-cli --classic
+  - snap install --classic certbot && ln -sf /snap/bin/certbot /usr/local/bin/certbot
+  - mkdir -p /opt/crm-lg && chown -R crm:crm /opt/crm-lg

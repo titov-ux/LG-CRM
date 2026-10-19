@@ -9,6 +9,7 @@ import { usersApi } from '@/api/users';
 import { candidatesApi } from '@/api/candidates';
 import { vacanciesApi } from '@/api/vacancies';
 import type { Candidate, User, Vacancy } from '@/api/types';
+import { useCan } from '@/lib/permissions';
 
 function normalize<T>(page: unknown): T[] {
   if (Array.isArray(page)) return page as T[];
@@ -30,18 +31,21 @@ export function useUsersList(enabled = true) {
   });
 }
 
+// Без права candidate:view / vacancy:view бэкенд отвечает 403 — пикеры пустые.
 export function useCandidatesList(enabled = true) {
+  const canView = useCan('candidate:view');
   return useQuery({
     queryKey: ['calendar', 'pick', 'candidates'],
     // Бэкенд ограничивает pageSize значением le=200 — больше отдаёт 422,
     // и тогда дропдаун кандидатов оставался пустым.
     queryFn: async () => normalize<Candidate>(await candidatesApi.list({ pageSize: 200 })),
     staleTime: 60_000,
-    enabled,
+    enabled: enabled && canView,
   });
 }
 
 export function useVacanciesList(enabled = true) {
+  const canView = useCan('vacancy:view');
   return useQuery({
     queryKey: ['calendar', 'pick', 'vacancies', { pageSize: 200 }],
     // Как у кандидатов: бэкенд режет pageSize сверху (le=200), иначе в пикере
@@ -53,6 +57,6 @@ export function useVacanciesList(enabled = true) {
         }),
       ),
     staleTime: 60_000,
-    enabled,
+    enabled: enabled && canView,
   });
 }

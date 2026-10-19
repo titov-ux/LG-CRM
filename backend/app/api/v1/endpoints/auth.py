@@ -10,6 +10,7 @@ from fastapi import APIRouter, Cookie, Depends, Request, Response, status
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.client_ip import trusted_client_ip
 from app.core.config import get_settings
 from app.core.errors import ApiError
 from app.core.redis import get_redis
@@ -42,11 +43,9 @@ def _redis_dep() -> Redis:
 
 
 def _client_ip(request: Request) -> str:
-    # Если за reverse-proxy (Nginx) — берём X-Forwarded-For; иначе client.host.
-    xff = request.headers.get("X-Forwarded-For")
-    if xff:
-        return xff.split(",")[0].strip()
-    return request.client.host if request.client else "0.0.0.0"
+    # Лимит попыток входа считается по IP. Левый элемент X-Forwarded-For
+    # подставляет сам клиент — раньше его ротация снимала лимит полностью.
+    return trusted_client_ip(request) or "0.0.0.0"
 
 
 def _set_refresh_cookie(response: Response, refresh: str) -> None:

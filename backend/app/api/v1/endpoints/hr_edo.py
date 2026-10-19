@@ -12,7 +12,6 @@
 """
 from __future__ import annotations
 
-import ipaddress
 import uuid
 from datetime import date
 from urllib.parse import quote
@@ -23,6 +22,7 @@ from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.client_ip import trusted_client_ip
 from app.core.config import get_settings, hr_edo_is_enabled
 from app.core.errors import ApiError
 from app.core.redis import get_redis
@@ -94,21 +94,8 @@ def _redis_dep() -> Redis:
 
 
 def client_ip(request: Request) -> str | None:
-    """IP клиента для протокола и лимитов.
-
-    За nginx доверяем `X-Real-IP` (его ставит сам прокси, `$remote_addr`) и
-    ПОСЛЕДНЕМУ элементу `X-Forwarded-For` (дописан прокси). Левые элементы XFF
-    присылает клиент — подделать ими IP в доказательной базе нельзя.
-    """
-    raw = (
-        request.headers.get("X-Real-IP", "").strip()
-        or request.headers.get("X-Forwarded-For", "").split(",")[-1].strip()
-        or (request.client.host if request.client else "")
-    )
-    try:
-        return str(ipaddress.ip_address(raw))
-    except ValueError:
-        return None
+    """IP клиента для протокола и лимитов (см. `app.core.client_ip`)."""
+    return trusted_client_ip(request)
 
 
 def user_agent(request: Request) -> str | None:

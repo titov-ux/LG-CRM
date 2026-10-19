@@ -10,7 +10,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, Enum, String, text
+from sqlalchemy import BigInteger, Boolean, DateTime, Enum, String, text
 from sqlalchemy.dialects.postgresql import CITEXT
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -68,7 +68,13 @@ class User(Base, TimestampsMixin):
 
     # Технические поля для блокировки/lockout — счётчики живут в Redis,
     # но дата последнего неуспеха кладётся в БД для аудита.
-    last_failed_login_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # DateTime(timezone=True) обязателен: в БД колонка timestamptz (миграция
+    # 0001), а без явного типа SQLAlchemy шлёт параметр как timestamp, и
+    # asyncpg падает на aware-datetime — неверный пароль давал 500 вместо 401,
+    # а счётчик блокировки аккаунта не увеличивался.
+    last_failed_login_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     def __repr__(self) -> str:  # pragma: no cover — debug only
         return f"<User {self.email} ({self.role.value})>"

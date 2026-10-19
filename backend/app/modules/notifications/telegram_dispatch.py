@@ -12,6 +12,12 @@
 
 Отправка делается отдельной короткоживущей сессией БД: на момент исполнения
 задачи исходная сессия запроса уже может быть закрыта.
+
+Задачи отправки держим в `_pending` (сильные ссылки — иначе GC может собрать
+незавершённую задачу). Код, который сам управляет event loop'ом (Celery-задачи
+через `asyncio.run`), обязан перед выходом вызвать `await drain()`: иначе
+`asyncio.run` отменяет недоставленные отправки, и уведомления из фоновых задач
+(напоминания HR-ЭДО, «отчёт скрининга готов», алерты) молча терялись.
 """
 from __future__ import annotations
 
@@ -27,6 +33,9 @@ from app.modules.integrations import telegram_service
 log = logging.getLogger(__name__)
 
 _OUTBOX_KEY = "tg_outbox"
+_DRAIN_TIMEOUT_S = 30.0
+
+_pending: set[asyncio.Task[None]] = set()
 
 
 def enqueue(session, *, user_id, text: str) -> None:
@@ -82,7 +91,26 @@ def _flush_outbox_after_commit(session: Session) -> None:
         log.warning("telegram: no running loop, dropping %d message(s)", len(pending))
         return
     for user_id, text in pending:
-        loop.create_task(_send_one(user_id, text))
+        task = loop.create_task(_send_one(user_id, text))
+        _pending.add(task)
+        task.add_done_callback(_pending.discard)
+
+
+async def drain(timeout: float = _DRAIN_TIMEOUT_S) -> None:  # noqa: ASYNC109
+    """Дождаться отправок, запланированных в ТЕКУЩЕМ event loop.
+
+    Вызывать перед завершением loop'а (Celery-задачи, скрипты). Не бросает:
+    по таймауту оставшиеся отправки отменяются с записью в лог.
+    """
+    loop = asyncio.get_running_loop()
+    tasks = [t for t in _pending if t.get_loop() is loop and not t.done()]
+    if not tasks:
+        return
+    _done, not_done = await asyncio.wait(tasks, timeout=timeout)
+    for task in not_done:
+        task.cancel()
+    if not_done:
+        log.error("telegram: %d notification(s) not delivered within %.0fs", len(not_done), timeout)
 
 
 @event.listens_for(Session, "after_rollback")

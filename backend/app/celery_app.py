@@ -16,6 +16,14 @@ from app.core.config import get_settings
 
 _settings = get_settings()
 
+# Как в FastAPI-lifespan (app/main.py): у сервера есть IPv6-адрес, но нет
+# маршрута наружу, и без этого воркер не достучится до api.telegram.org.
+# Патч применяется при импорте — до форка воркеров, поэтому его наследуют все.
+if _settings.force_ipv4_egress:
+    from app.core.ipv4 import force_ipv4
+
+    force_ipv4()
+
 celery_app = Celery(
     "crm_lg",
     broker=str(_settings.redis_url),

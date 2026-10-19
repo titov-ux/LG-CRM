@@ -30,10 +30,14 @@ def _now() -> datetime:
 async def _dispose_after[T](coro: Coroutine[Any, Any, T]) -> T:
     """Отдать пул asyncpg до закрытия loop (см. screening.tasks)."""
     from app.db.session import get_engine
+    from app.modules.notifications import telegram_dispatch
 
     try:
         return await coro
     finally:
+        # Сначала доставить Telegram-уведомления, запланированные задачей
+        # (asyncio.run отменил бы их), и только потом закрыть пул БД.
+        await telegram_dispatch.drain()
         await get_engine().dispose()
 
 

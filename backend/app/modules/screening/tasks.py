@@ -4,8 +4,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from collections.abc import Coroutine
 from concurrent.futures import Future, ThreadPoolExecutor
 from functools import partial
+from typing import Any
 
 from sqlalchemy import event
 from sqlalchemy.orm import Session
@@ -123,10 +125,22 @@ def _send_to_broker(sid: str, *, offline: bool, replace: bool = False) -> None:
 def _run_inline(sid: str, *, offline: bool, replace: bool = False) -> None:
     """Фолбэк без брокера: гоняем анализ прямо здесь (dev / сбой Celery)."""
     asyncio.run(
-        _run_offline_then_analysis(sid, replace=replace)
-        if offline
-        else _run_analysis(sid)
+        _drain_telegram_after(
+            _run_offline_then_analysis(sid, replace=replace)
+            if offline
+            else _run_analysis(sid)
+        )
     )
+
+
+async def _drain_telegram_after[T](coro: Coroutine[Any, Any, T]) -> T:
+    """Как `_dispose_engine_after`, но без закрытия пула (инлайн-фолбэк)."""
+    from app.modules.notifications import telegram_dispatch
+
+    try:
+        return await coro
+    finally:
+        await telegram_dispatch.drain()
 
 
 def _dispatch(session_id: uuid.UUID, *, offline: bool, replace: bool = False) -> None:
@@ -262,10 +276,14 @@ async def _dispose_engine_after(coro):
     чем случайные падения уборщика и пост-анализа.
     """
     from app.db.session import get_engine
+    from app.modules.notifications import telegram_dispatch
 
     try:
         return await coro
     finally:
+        # Сначала доставить Telegram-уведомления, запланированные задачей
+        # (asyncio.run отменил бы их), и только потом закрыть пул БД.
+        await telegram_dispatch.drain()
         await get_engine().dispose()
 
 

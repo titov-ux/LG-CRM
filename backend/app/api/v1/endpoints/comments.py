@@ -39,10 +39,10 @@ def _to_dto(c: Comment) -> CommentResponse:
 async def list_comments(
     entity_type: CommentEntityType = Query(alias="entityType"),
     entity_id: uuid.UUID = Query(alias="entityId"),
-    _: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[CommentResponse]:
-    rows = await service.list_for_entity(db, entity_type, entity_id)
+    rows = await service.list_for_entity(db, user, entity_type, entity_id)
     return [_to_dto(c) for c in rows]
 
 

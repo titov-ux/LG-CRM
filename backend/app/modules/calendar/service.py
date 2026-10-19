@@ -181,6 +181,34 @@ async def _visible_vacancy_ids(db: AsyncSession, user: User) -> set[uuid.UUID]:
     return ids
 
 
+async def _can_see(db: AsyncSession, user: User, event: CalendarEvent) -> bool:
+    """Та же видимость, что в `list_range`: admin/AM — всё; остальным — события,
+    которые они создали, где они участники, или по их вакансиям."""
+    if user.role in (Role.admin, Role.account_manager):
+        return True
+    if event.created_by_id == user.id:
+        return True
+    if any(a.user_id == user.id for a in event.attendees):
+        return True
+    if event.vacancy_id is not None:
+        return event.vacancy_id in await _visible_vacancy_ids(db, user)
+    return False
+
+
+async def _load_visible(db: AsyncSession, user: User, event_id: uuid.UUID) -> CalendarEvent:
+    """Загрузить событие с проверкой видимости.
+
+    Раньше get/update/set_outcome/cancel/delete брали событие по ID без неё:
+    любой пользователь читал любое событие, а рекрутер с `event:edit` мог
+    перенести/отменить чужое интервью и поставить исход, сдвинув кандидата в
+    чужой воронке. Невидимое событие — 404, чтобы не палить существование.
+    """
+    event = await _load(db, event_id)
+    if not await _can_see(db, user, event):
+        raise ApiError(status.HTTP_404_NOT_FOUND, "not_found", "Событие не найдено")
+    return event
+
+
 async def list_range(
     db: AsyncSession,
     user: User,
@@ -339,7 +367,7 @@ async def update(
     db: AsyncSession, user: User, event_id: uuid.UUID, payload: UpdateEventRequest
 ) -> CalendarEventResponse:
     await permissions_service.require_action(db, user, "event:edit", message="Нет прав на календарь")
-    event = await _load(db, event_id)
+    event = await _load_visible(db, user, event_id)
     rescheduled = False
     if payload.title is not None:
         event.title = payload.title
@@ -395,7 +423,7 @@ async def set_outcome(
             "invalid_outcome",
             "Исход может быть только «состоялось» или «не пришёл»",
         )
-    event = await _load(db, event_id)
+    event = await _load_visible(db, user, event_id)
     event.status = payload.status
     if payload.outcome is not None:
         event.outcome = payload.outcome
@@ -428,7 +456,7 @@ async def cancel(
     db: AsyncSession, user: User, event_id: uuid.UUID, reason: str | None
 ) -> CalendarEventResponse:
     await permissions_service.require_action(db, user, "event:edit", message="Нет прав на календарь")
-    event = await _load(db, event_id)
+    event = await _load_visible(db, user, event_id)
     event.status = EventStatus.canceled
     if reason:
         event.outcome = reason
@@ -459,7 +487,7 @@ async def cancel(
 
 async def delete(db: AsyncSession, user: User, event_id: uuid.UUID) -> None:
     await permissions_service.require_action(db, user, "event:delete", message="Нет прав на удаление события")
-    event = await _load(db, event_id)
+    event = await _load_visible(db, user, event_id)
     audience = await _attendee_audience(event)
     await db.delete(event)
     await db.commit()
@@ -468,6 +496,6 @@ async def delete(db: AsyncSession, user: User, event_id: uuid.UUID) -> None:
     )
 
 
-async def get(db: AsyncSession, event_id: uuid.UUID) -> CalendarEventResponse:
-    event = await _load(db, event_id)
+async def get(db: AsyncSession, user: User, event_id: uuid.UUID) -> CalendarEventResponse:
+    event = await _load_visible(db, user, event_id)
     return await to_dto(db, event)

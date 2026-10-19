@@ -16,6 +16,7 @@ from app.modules.comments.models import Comment, CommentEntityType
 from app.modules.comments.schemas import CreateCommentRequest, UpdateCommentRequest
 from app.modules.notifications import service as notify_service
 from app.modules.notifications.models import NotificationEntityType, NotificationKind
+from app.modules.permissions.entity_access import ensure_entity_access
 from app.modules.users.models import Role, User
 
 
@@ -118,8 +119,11 @@ async def _notify_comment_recipients(
 
 
 async def list_for_entity(
-    db: AsyncSession, entity_type: CommentEntityType, entity_id: uuid.UUID
+    db: AsyncSession, user: User, entity_type: CommentEntityType, entity_id: uuid.UUID
 ) -> list[Comment]:
+    # Комментарии видны тем же, кто видит карточку сущности (кандидат, вакансия
+    # с ограничением «только свои», лид, тендер…), а не любому залогиненному.
+    await ensure_entity_access(db, user, entity_type, entity_id)
     res = await db.execute(
         select(Comment)
         .where(Comment.entity_type == entity_type, Comment.entity_id == entity_id)
@@ -131,6 +135,17 @@ async def list_for_entity(
 async def create_comment(
     db: AsyncSession, user: User, payload: CreateCommentRequest
 ) -> Comment:
+    await ensure_entity_access(db, user, payload.entity_type, payload.entity_id, write=True)
+    if payload.parent_id is not None:
+        parent = await db.get(Comment, payload.parent_id)
+        if (
+            parent is None
+            or parent.entity_type != payload.entity_type
+            or parent.entity_id != payload.entity_id
+        ):
+            raise ApiError(
+                status.HTTP_404_NOT_FOUND, "parent_not_found", "Исходный комментарий не найден"
+            )
     comment = Comment(
         entity_type=payload.entity_type,
         entity_id=payload.entity_id,
@@ -175,6 +190,7 @@ async def update_comment(
     if comment is None:
         raise ApiError(status.HTTP_404_NOT_FOUND, "not_found", "Комментарий не найден")
     _ensure_can_edit(user, comment)
+    await ensure_entity_access(db, user, comment.entity_type, comment.entity_id, write=True)
     previous_mentions = set(comment.mentions or [])
     comment.text_ = payload.text
     if payload.mentions is not None:

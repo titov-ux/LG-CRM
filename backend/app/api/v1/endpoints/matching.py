@@ -25,7 +25,10 @@ from app.modules.matching.schemas import (
     UpdateMatchRequest,
     VacancyCandidateResponse,
 )
+from app.modules.permissions.dependencies import require_action_dep
+from app.modules.permissions.service import require_action
 from app.modules.users.models import User
+from app.modules.vacancies import service as vacancies_service
 from app.modules.vacancies.models import Vacancy
 
 logger = logging.getLogger(__name__)
@@ -73,11 +76,46 @@ async def _resolve_match_id(db: AsyncSession, match_id: str) -> uuid.UUID:
             status.HTTP_404_NOT_FOUND, "not_found", "Связка не найдена"
         ) from exc
 
+# Права на связки. Раньше здесь проверялось только право ПРОСМОТРА (роутерный
+# _MATCH_DEPS), а вакансия грузилась через db.get — поэтому viewer/бухгалтер
+# могли прикреплять/откреплять кандидатов и запускать платный LLM-скоринг, а
+# AM — работать с чужими и удалёнными вакансиями. Теперь:
+#   * вакансия всегда грузится через vacancies_service.get_vacancy (404 для
+#     удалённых, «только свои» для AM);
+#   * всё, что меняет связки или тратит LLM, требует `vacancy:edit`.
+_EDIT_ACTION = "vacancy:edit"
+_EDIT_MESSAGE = "Нет прав на работу с кандидатами вакансии"
+
+
+async def _require_edit(db: AsyncSession, user: User) -> None:
+    await require_action(db, user, _EDIT_ACTION, message=_EDIT_MESSAGE)
+
+
+async def _visible_vacancy(db: AsyncSession, user: User, vacancy_id: uuid.UUID) -> Vacancy:
+    return await vacancies_service.get_vacancy(db, user, vacancy_id)
+
+
+async def _visible_match(db: AsyncSession, user: User, match_id: str) -> VacancyCandidate:
+    real_id = await _resolve_match_id(db, match_id)
+    match = await db.get(VacancyCandidate, real_id)
+    if match is None:
+        raise ApiError(status.HTTP_404_NOT_FOUND, "not_found", "Связка не найдена")
+    await _visible_vacancy(db, user, match.vacancy_id)
+    return match
+
+
 # Этот роутер крепится по разным префиксам:
 #   * /vacancies/{id}/candidates — пристёгнут к роутеру vacancies (см. ниже)
 #   * /matches/{match_id} — отдельный роутер
-matches_router = APIRouter(prefix="/matches", tags=["matching"])
-vacancy_matches_router = APIRouter(prefix="/vacancies/{vacancy_id}/candidates", tags=["matching"])
+# Связки «вакансия ↔ кандидат» требуют доступа и к вакансиям, и к кандидатам.
+_MATCH_DEPS = [
+    Depends(require_action_dep("vacancy:view", message="Нет доступа к вакансиям")),
+    Depends(require_action_dep("candidate:view", message="Нет доступа к кандидатам")),
+]
+matches_router = APIRouter(prefix="/matches", tags=["matching"], dependencies=_MATCH_DEPS)
+vacancy_matches_router = APIRouter(
+    prefix="/vacancies/{vacancy_id}/candidates", tags=["matching"], dependencies=_MATCH_DEPS
+)
 
 
 def _to_dto(m) -> VacancyCandidateResponse:
@@ -91,9 +129,10 @@ def _to_dto(m) -> VacancyCandidateResponse:
 )
 async def list_matches(
     vacancy_id: uuid.UUID,
-    _: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[VacancyCandidateResponse]:
+    await _visible_vacancy(db, user, vacancy_id)
     rows = await service.list_for_vacancy(db, vacancy_id)
     return [_to_dto(m) for m in rows]
 
@@ -109,6 +148,8 @@ async def attach_candidate(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> VacancyCandidateResponse:
+    await _require_edit(db, user)
+    await _visible_vacancy(db, user, vacancy_id)
     match = await service.attach(db, user, vacancy_id, payload.candidate_id)
     return _to_dto(match)
 
@@ -117,22 +158,24 @@ async def attach_candidate(
 async def update_match(
     match_id: str,
     payload: UpdateMatchRequest,
-    _: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> VacancyCandidateResponse:
-    real_id = await _resolve_match_id(db, match_id)
-    match = await service.update_match(db, real_id, payload)
+    await _require_edit(db, user)
+    existing = await _visible_match(db, user, match_id)
+    match = await service.update_match(db, existing.id, payload)
     return _to_dto(match)
 
 
 @matches_router.delete("/{match_id}", response_model=OkResponse, summary="Открепить кандидата")
 async def detach_candidate(
     match_id: str,
-    _: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> OkResponse:
-    real_id = await _resolve_match_id(db, match_id)
-    await service.detach(db, real_id)
+    await _require_edit(db, user)
+    existing = await _visible_match(db, user, match_id)
+    await service.detach(db, existing.id)
     return OkResponse()
 
 
@@ -206,10 +249,8 @@ async def score_match_endpoint(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> MatchScoreResponse:
-    real_id = await _resolve_match_id(db, match_id)
-    match = await db.get(VacancyCandidate, real_id)
-    if match is None:
-        raise ApiError(status.HTTP_404_NOT_FOUND, "not_found", "Связка не найдена")
+    await _require_edit(db, user)
+    match = await _visible_match(db, user, match_id)
 
     _, _, cand_payload, vac_payload = await _load_payloads(
         db, match.vacancy_id, match.candidate_id
@@ -239,13 +280,10 @@ async def score_match_endpoint(
 )
 async def get_match_score(
     match_id: str,
-    _: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> MatchScoreResponse:
-    real_id = await _resolve_match_id(db, match_id)
-    match = await db.get(VacancyCandidate, real_id)
-    if match is None:
-        raise ApiError(status.HTTP_404_NOT_FOUND, "not_found", "Связка не найдена")
+    match = await _visible_match(db, user, match_id)
     if match.ai_score is None:
         raise ApiError(status.HTTP_404_NOT_FOUND, "not_scored", "Скоринг ещё не считался")
 
@@ -275,6 +313,8 @@ async def score_vacancy_candidates(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[MatchScoreResponse]:
+    await _require_edit(db, user)
+    await _visible_vacancy(db, user, vacancy_id)
     matches = await service.list_for_vacancy(db, vacancy_id)
     out: list[MatchScoreResponse] = []
     for match in matches:
@@ -311,9 +351,12 @@ async def score_vacancy_candidates(
 async def score_candidate_preview(
     vacancy_id: uuid.UUID,
     payload: ScoreCandidateRequest,
-    _: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> MatchScoreResponse:
+    # Превью ходит в LLM (платно) — как и сохранение скоринга, нужно vacancy:edit.
+    await _require_edit(db, user)
+    await _visible_vacancy(db, user, vacancy_id)
     _, _, cand_payload, vac_payload = await _load_payloads(
         db, vacancy_id, payload.candidate_id
     )
@@ -346,12 +389,13 @@ async def rank_candidates_endpoint(
     vacancy_id: uuid.UUID,
     limit: int = Query(default=20, ge=1, le=100),
     enrich: bool = Query(default=False),
-    _: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[RankedCandidate]:
-    vac = await db.get(Vacancy, vacancy_id)
-    if vac is None:
-        raise ApiError(status.HTTP_404_NOT_FOUND, "not_found", "Вакансия не найдена")
+    if enrich:
+        # enrich=true дообогащает топ через LLM — платная операция.
+        await _require_edit(db, user)
+    vac = await _visible_vacancy(db, user, vacancy_id)
     rows = await service.rank_candidates(db, vac, limit=limit, enrich=enrich)
     return [RankedCandidate.model_validate(r) for r in rows]
 

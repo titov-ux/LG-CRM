@@ -77,10 +77,11 @@ def _pdf_error_details(exc: Exception) -> dict[str, str]:
 @router.post("/presign", response_model=PresignResponse, summary="Получить presigned URL для загрузки")
 async def presign(
     payload: PresignRequest,
-    _: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
     s3: S3Adapter = Depends(_s3_dep),
 ) -> PresignResponse:
-    url, fields, file_key, max_bytes = await service.presign(s3, payload)
+    url, fields, file_key, max_bytes = await service.presign(db, s3, user, payload)
     return PresignResponse(url=url, fields=fields, file_key=file_key, max_bytes=max_bytes)
 
 
@@ -98,13 +99,13 @@ async def confirm(
 async def list_files(
     entity_type: FileEntityType = Query(alias="entityType"),
     entity_id: uuid.UUID = Query(alias="entityId"),
-    _: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[FileResponse]:
     if entity_type == FileEntityType.hr_document:
         # Кадровые файлы — только через /hr-edo/* (права + протокол).
         return []
-    rows = await service.list_for_entity(db, entity_type, entity_id)
+    rows = await service.list_for_entity(db, user, entity_type, entity_id)
     return [_to_dto(r) for r in rows]
 
 
@@ -120,8 +121,7 @@ async def get_download_url(
     s3: S3Adapter = Depends(_s3_dep),
 ) -> DownloadResponse:
     file = await service.get_file(db, file_id)
-    # Для вложений чата проверяем членство в conversation; для остальных
-    # entity-типов прав-логика прежняя («любой авторизованный»).
+    # Права на файл = права на сущность, к которой он привязан.
     await service.ensure_can_read_file(db, user, file)
     url = await service.download_url(s3, file)
     return DownloadResponse(url=url, expires_in=300)

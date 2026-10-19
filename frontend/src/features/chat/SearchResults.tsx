@@ -2,9 +2,10 @@
  * Список найденных сообщений (Этап 5). Появляется в левом сайдбаре под
  * заголовком «Сообщения», когда в поиске введено >= 2 символа.
  *
- * Snippet приходит с бэка в виде HTML с `<mark>...</mark>` (ts_headline) —
- * рендерим через dangerouslySetInnerHTML. Это безопасно, так как Postgres
- * ts_headline экранирует HTML на входе и вставляет только свои теги.
+ * Snippet приходит с бэка как экранированный текст, где единственный тег —
+ * `<mark>...</mark>` (ts_headline). HTML НЕ вставляем через innerHTML:
+ * разбираем строку на куски «текст / подсветка» и рендерим их как текстовые
+ * узлы — даже если бэк когда-нибудь вернёт сырой текст, скрипт не выполнится.
  *
  * Клик по результату — переключаемся на соответствующий диалог. Подсветить
  * конкретное сообщение в ленте — отдельная фича; на этом этапе мы просто
@@ -102,10 +103,9 @@ function HitRow({
             · {author?.fullName ?? 'Бывший сотрудник'}
           </span>
         </span>
-        <span
-          className="mt-0.5 block break-words text-[11.5px] leading-snug text-foreground/80 [&_mark]:rounded-sm [&_mark]:bg-amber-100/80 [&_mark]:px-0.5 [&_mark]:text-amber-900"
-          dangerouslySetInnerHTML={{ __html: hit.snippet }}
-        />
+        <span className="mt-0.5 block break-words text-[11.5px] leading-snug text-foreground/80 [&_mark]:rounded-sm [&_mark]:bg-amber-100/80 [&_mark]:px-0.5 [&_mark]:text-amber-900">
+          <Snippet html={hit.snippet} />
+        </span>
       </span>
     </button>
   );
@@ -120,4 +120,40 @@ function convTitleOf(
   const peerId = c.memberIds.find((id) => id !== meId);
   if (!peerId) return 'Диалог';
   return userMap.get(peerId)?.fullName ?? 'Пользователь';
+}
+
+const ENTITIES: Record<string, string> = {
+  '&amp;': '&',
+  '&lt;': '<',
+  '&gt;': '>',
+  '&quot;': '"',
+  '&#x27;': "'",
+  '&#39;': "'",
+};
+
+function decodeEntities(text: string): string {
+  return text.replace(/&(?:amp|lt|gt|quot|#x27|#39);/g, (m) => ENTITIES[m] ?? m);
+}
+
+/** Безопасный рендер сниппета: только текст и <mark>, без innerHTML. */
+function Snippet({ html }: { html: string }) {
+  const parts = html.split(/(<mark>|<\/mark>)/);
+  let highlighted = false;
+  return (
+    <>
+      {parts.map((part, i) => {
+        if (part === '<mark>') {
+          highlighted = true;
+          return null;
+        }
+        if (part === '</mark>') {
+          highlighted = false;
+          return null;
+        }
+        if (!part) return null;
+        const text = decodeEntities(part);
+        return highlighted ? <mark key={i}>{text}</mark> : <span key={i}>{text}</span>;
+      })}
+    </>
+  );
 }

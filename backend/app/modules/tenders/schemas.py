@@ -1,14 +1,28 @@
 """DTO модуля tenders (соответствует фронтовому контракту Tender)."""
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import date
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from app.core.schemas import CamelModel
 from app.modules.tenders.models import TenderLaw, TenderStatus
 from app.modules.vacancies.models import Priority
+
+# Ссылка на закупку рендерится как <a href> у всех коллег — разрешаем только
+# http(s), иначе `javascript:...` превращается в XSS по клику.
+_HTTP_URL_RE = re.compile(r"^https?://\S+$", re.IGNORECASE)
+
+
+def _validate_http_url(value: str | None) -> str | None:
+    if value is None:
+        return None
+    value = value.strip()
+    if value and not _HTTP_URL_RE.match(value):
+        raise ValueError("Ссылка должна начинаться с http:// или https://")
+    return value
 
 
 class TenderResponse(CamelModel):
@@ -49,6 +63,11 @@ class CreateTenderRequest(CamelModel):
     url: str | None = None
     note: str | None = None
 
+    @field_validator("url")
+    @classmethod
+    def _url_http_only(cls, v: str | None) -> str | None:
+        return _validate_http_url(v)
+
 
 class UpdateTenderRequest(CamelModel):
     title: str | None = Field(default=None, min_length=1, max_length=500)
@@ -65,6 +84,11 @@ class UpdateTenderRequest(CamelModel):
     account_manager_id: uuid.UUID | None = None
     url: str | None = None
     note: str | None = None
+
+    @field_validator("url")
+    @classmethod
+    def _url_http_only(cls, v: str | None) -> str | None:
+        return _validate_http_url(v)
     # status — отдельно через PATCH /{id}/status (валидация переходов).
 
 

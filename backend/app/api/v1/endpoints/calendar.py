@@ -74,10 +74,10 @@ async def create_event(
 )
 async def get_event(
     event_id: uuid.UUID,
-    _: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> CalendarEventResponse:
-    return await service.get(db, event_id)
+    return await service.get(db, user, event_id)
 
 
 @router.patch(

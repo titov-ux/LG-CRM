@@ -24,6 +24,29 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
+/**
+ * Расширения, задающие схему заметки. Используются и редактором, и
+ * read-only просмотрщиком: Tiptap разбирает HTML через схему ProseMirror и
+ * отбрасывает всё, чего в ней нет (script, iframe, on*-атрибуты,
+ * javascript:-ссылки), поэтому HTML из БД нельзя рендерить мимо него.
+ */
+function contentExtensions() {
+  return [
+    TaskList,
+    TaskItem.configure({ nested: true }),
+    Link.configure({
+      openOnClick: false,
+      autolink: true,
+      protocols: [],
+      HTMLAttributes: {
+        rel: 'noopener noreferrer',
+        target: '_blank',
+        class: 'text-blue-600 underline underline-offset-2 hover:text-blue-700',
+      },
+    }),
+  ];
+}
+
 interface Props {
   value: string;
   onChange: (html: string) => void;
@@ -41,17 +64,7 @@ export function NoteEditor({ value, onChange, placeholder, autoFocus, className 
       Placeholder.configure({
         placeholder: placeholder ?? 'Начните писать… поддерживается Markdown-ввод (## заголовок, * список, > цитата, ``` код)',
       }),
-      TaskList,
-      TaskItem.configure({ nested: true }),
-      Link.configure({
-        openOnClick: false,
-        autolink: true,
-        HTMLAttributes: {
-          rel: 'noopener noreferrer',
-          target: '_blank',
-          class: 'text-blue-600 underline underline-offset-2 hover:text-blue-700',
-        },
-      }),
+      ...contentExtensions(),
     ],
     content: value,
     autofocus: autoFocus,
@@ -244,22 +257,42 @@ export function NoteEditor({ value, onChange, placeholder, autoFocus, className 
   );
 }
 
-/** Read-only рендерер заметки для превью */
+/**
+ * Read-only рендерер заметки для превью.
+ *
+ * Раньше рендерил `body` через dangerouslySetInnerHTML — это хранимый XSS:
+ * `PATCH /documents/{id}` принимает любой HTML. Теперь HTML проходит через
+ * схему Tiptap (см. `contentExtensions`), которая выбрасывает опасное.
+ */
 export function NoteViewer({ html, className }: { html: string; className?: string }) {
-  return (
-    <div
-      className={cn(
-        'tiptap prose prose-sm max-w-none ' +
-          'prose-headings:font-bold prose-headings:tracking-tight ' +
-          'prose-h1:text-[24px] prose-h2:text-[18px] prose-h3:text-[15px] ' +
-          'prose-p:leading-relaxed ' +
-          'prose-blockquote:border-l-4 prose-blockquote:border-foreground/20 prose-blockquote:pl-3 prose-blockquote:not-italic ' +
-          'prose-code:rounded prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:before:content-none prose-code:after:content-none ' +
-          'prose-a:text-blue-600 prose-a:underline prose-a:underline-offset-2',
-        className,
-      )}
-      // ВАЖНО: рендерим HTML, выданный Tiptap (доверенный собственный вывод)
-      dangerouslySetInnerHTML={{ __html: html || '<p class="text-muted-foreground">Пустая заметка</p>' }}
-    />
+  const editor = useEditor(
+    {
+      extensions: [
+        StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
+        ...contentExtensions(),
+      ],
+      content: html,
+      editable: false,
+      editorProps: {
+        attributes: {
+          class: cn(
+            'tiptap prose prose-sm max-w-none ' +
+              'prose-headings:font-bold prose-headings:tracking-tight ' +
+              'prose-h1:text-[24px] prose-h2:text-[18px] prose-h3:text-[15px] ' +
+              'prose-p:leading-relaxed ' +
+              'prose-blockquote:border-l-4 prose-blockquote:border-foreground/20 prose-blockquote:pl-3 prose-blockquote:not-italic ' +
+              'prose-code:rounded prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:before:content-none prose-code:after:content-none ' +
+              'prose-a:text-blue-600 prose-a:underline prose-a:underline-offset-2',
+            className,
+          ),
+        },
+      },
+    },
+    [html, className],
   );
+
+  if (!html) {
+    return <p className={cn('text-muted-foreground', className)}>Пустая заметка</p>;
+  }
+  return <EditorContent editor={editor} />;
 }

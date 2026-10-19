@@ -60,6 +60,7 @@ import {
 import { TenderForm, type TenderFormValues } from './TenderForm';
 import { TenderFinalStatusDialog } from './TenderFinalStatusDialog';
 import { TENDER_LAW_META, isFinalTenderStatus, tenderStatuses } from './statuses';
+import { safeHttpUrl } from '@/lib/safeUrl';
 
 const ACTIVITY_ICON: Record<string, LucideIcon> = {
   status: ArrowRight,
@@ -257,8 +258,10 @@ export function TenderCardPage() {
                     <Share2 className="mr-2 h-3.5 w-3.5" />
                     Поделиться
                   </DropdownMenuItem>
-                  {tender?.url && (
-                    <DropdownMenuItem onSelect={() => window.open(tender.url ?? '', '_blank')}>
+                  {safeHttpUrl(tender?.url) && (
+                    <DropdownMenuItem
+                      onSelect={() => window.open(safeHttpUrl(tender?.url), '_blank', 'noopener,noreferrer')}
+                    >
                       <ExternalLink className="mr-2 h-3.5 w-3.5" />
                       Открыть закупку
                     </DropdownMenuItem>
@@ -354,7 +357,7 @@ export function TenderCardPage() {
               {tender.url && (
                 <Section title="Ссылка на закупку">
                   <a
-                    href={tender.url}
+                    href={safeHttpUrl(tender.url)}
                     target="_blank"
                     rel="noreferrer"
                     className="inline-flex items-center gap-1.5 break-all text-[13px] text-blue-600 hover:underline dark:text-blue-400"

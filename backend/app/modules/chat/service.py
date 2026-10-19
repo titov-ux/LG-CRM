@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import re
 import uuid
 from datetime import datetime, timezone
@@ -455,6 +456,28 @@ async def post_message(
                     "file_not_yours",
                     "Можно прикрепить только свои файлы",
                 )
+            # Прикреплять можно только «черновые» вложения чата: иначе отправка
+            # сообщения молча отвязывала резюме/договор от карточки кандидата
+            # или вложение от другого сообщения.
+            if f.entity_type != FileEntityType.chat_message:
+                raise ApiError(
+                    status.HTTP_400_BAD_REQUEST,
+                    "file_not_chat_attachment",
+                    "Этот файл нельзя прикрепить к сообщению",
+                )
+        bound = (
+            await db.execute(
+                select(ChatMessage.id).where(
+                    ChatMessage.id.in_({f.entity_id for f in files_to_attach})
+                )
+            )
+        ).first()
+        if bound is not None:
+            raise ApiError(
+                status.HTTP_400_BAD_REQUEST,
+                "file_already_attached",
+                "Вложение уже прикреплено к другому сообщению",
+            )
 
     msg = ChatMessage(
         conversation_id=conversation_id,
@@ -891,10 +914,23 @@ async def reply_counts_for_messages(
 # === full-text search (Этап 5) =============================================
 
 
+# ts_headline НЕ экранирует HTML исходного текста — он лишь вставляет маркеры
+# подсветки. Поэтому подсвечиваем управляющими символами \x02/\x03, а затем
+# экранируем весь сниппет и только после этого превращаем маркеры в <mark>.
+# Иначе сообщение вида `<img src=x onerror=...>` превращается в хранимый XSS у
+# всех, кто найдёт его поиском.
+_HL_START = "\x02"
+_HL_STOP = "\x03"
 _HEADLINE_OPTIONS = (
-    "StartSel=<mark>,StopSel=</mark>,"
+    f"StartSel={_HL_START},StopSel={_HL_STOP},"
     "MaxWords=18,MinWords=4,ShortWord=2,HighlightAll=false"
 )
+
+
+def _safe_snippet(raw: str) -> str:
+    """Экранировать сниппет ts_headline и вернуть HTML, где разрешён только <mark>."""
+    escaped = html.escape(raw, quote=True)
+    return escaped.replace(_HL_START, "<mark>").replace(_HL_STOP, "</mark>")
 
 
 async def search_messages(
@@ -965,7 +1001,7 @@ async def search_messages(
     rows = await db.execute(stmt)
     out: list[tuple[ChatMessage, str, float]] = []
     for msg, snip, rnk in rows.all():
-        out.append((msg, snip or "", float(rnk or 0.0)))
+        out.append((msg, _safe_snippet(snip or ""), float(rnk or 0.0)))
     return out
 
 

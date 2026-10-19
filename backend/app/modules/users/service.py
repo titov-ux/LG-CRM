@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import status
 from redis.asyncio import Redis
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,6 +32,21 @@ from app.modules.users.schemas import CreateUserRequest, UpdateProfileRequest, U
 
 UTC = timezone.utc
 log = logging.getLogger(__name__)
+
+
+async def _revoke_pending_invites(db: AsyncSession, user_id: uuid.UUID) -> None:
+    """Погасить все ещё не использованные invite-ссылки пользователя.
+
+    Вызывается при активации, повторной отправке и деактивации: иначе старая
+    ссылка (часто — скопированная админом в мессенджер) ещё 7 дней позволяет
+    задать пароль на уже рабочий аккаунт или реактивировать уволенного.
+    Коммит — на вызывающем.
+    """
+    await db.execute(
+        update(PasswordInvite)
+        .where(PasswordInvite.user_id == user_id, PasswordInvite.used_at.is_(None))
+        .values(used_at=datetime.now(UTC))
+    )
 
 # Палитра «аватарок» — соответствует тому, что фронт рисует в UI.
 _DEFAULT_COLORS = [
@@ -169,11 +184,8 @@ async def create_user(db: AsyncSession, payload: CreateUserRequest) -> tuple[Use
 async def reissue_invite(db: AsyncSession, user_id: uuid.UUID) -> tuple[User, str | None]:
     """Сгенерировать новый invite и отправить письмо повторно.
 
-    Допустимо только для не-активированных пользователей (is_active=false). Старые
-    активные invite-токены не отзываем явно: новый получит свой `token_hash`, при
-    активации мы всё равно отметим конкретный токен как `used` (одноразовость).
-    Если хочется строгости — можно дописать UPDATE used_at=now() WHERE user_id=…
-    AND used_at IS NULL, но пока не вижу сценария, где это критично.
+    Допустимо только для не-активированных пользователей (is_active=false). Все
+    прежние неиспользованные ссылки гасятся — рабочей остаётся только новая.
     """
     user = await get_user(db, user_id)
     if user.is_active:
@@ -182,6 +194,7 @@ async def reissue_invite(db: AsyncSession, user_id: uuid.UUID) -> tuple[User, st
             "already_active",
             "Пользователь уже активирован — повторное приглашение не нужно",
         )
+    await _revoke_pending_invites(db, user.id)
     raw_token = await _create_invite(db, user_id=user.id)
     await db.commit()
     sent = await _send_invite_email(
@@ -206,6 +219,10 @@ async def update_user(
         user.telegram = data["telegram"]
     if "is_active" in data:
         user.is_active = data["is_active"]
+        if not data["is_active"]:
+            # Деактивация гасит неиспользованные приглашения — иначе по старой
+            # ссылке сотрудник сам вернёт себе доступ.
+            await _revoke_pending_invites(db, user.id)
     try:
         await db.commit()
     except IntegrityError as e:
@@ -310,9 +327,8 @@ async def _find_active_invite(db: AsyncSession, raw_token: str) -> PasswordInvit
     return invite
 
 
-async def peek_invite(db: AsyncSession, raw_token: str) -> tuple[User, PasswordInvite]:
-    """Проверить invite-токен и вернуть юзера + invite. Без модификаций."""
-    invite = await _find_active_invite(db, raw_token)
+async def _invite_user(db: AsyncSession, invite: PasswordInvite) -> User:
+    """Пользователь invite-ссылки; уже активированный аккаунт ссылку не принимает."""
     user = await db.get(User, invite.user_id)
     if user is None:
         raise ApiError(
@@ -320,22 +336,28 @@ async def peek_invite(db: AsyncSession, raw_token: str) -> tuple[User, PasswordI
             "invite_not_found",
             "Пользователь приглашения не найден",
         )
+    if user.is_active:
+        # Аккаунт уже работает — приглашение не может перезаписать его пароль.
+        raise ApiError(
+            status.HTTP_410_GONE, "invite_used", "Ссылка приглашения уже использована"
+        )
+    return user
+
+
+async def peek_invite(db: AsyncSession, raw_token: str) -> tuple[User, PasswordInvite]:
+    """Проверить invite-токен и вернуть юзера + invite. Без модификаций."""
+    invite = await _find_active_invite(db, raw_token)
+    user = await _invite_user(db, invite)
     return user, invite
 
 
 async def activate_invite(db: AsyncSession, raw_token: str, *, new_password: str) -> User:
-    """Активировать аккаунт: установить пароль, погасить invite, выставить is_active."""
+    """Активировать аккаунт: установить пароль, погасить ВСЕ invite, выставить is_active."""
     invite = await _find_active_invite(db, raw_token)
-    user = await db.get(User, invite.user_id)
-    if user is None:
-        raise ApiError(
-            status.HTTP_404_NOT_FOUND,
-            "invite_not_found",
-            "Пользователь приглашения не найден",
-        )
+    user = await _invite_user(db, invite)
     user.password_hash = hash_password(new_password)
     user.is_active = True
-    invite.used_at = datetime.now(UTC)
+    await _revoke_pending_invites(db, user.id)
     await db.commit()
     await db.refresh(user)
     return user

@@ -12,6 +12,7 @@ from app.core.errors import ApiError
 from app.integrations.s3 import ALLOWED_MIME_TYPES, S3Adapter, make_file_key
 from app.modules.files.models import File, FileEntityType, ScanStatus
 from app.modules.files.schemas import ConfirmRequest, PresignRequest
+from app.modules.permissions.entity_access import ensure_entity_access
 from app.modules.users.models import User
 
 
@@ -50,9 +51,10 @@ def _reject_hr_document(entity_type: FileEntityType) -> None:
 
 
 async def presign(
-    s3: S3Adapter, payload: PresignRequest
+    db: AsyncSession, s3: S3Adapter, user: User, payload: PresignRequest
 ) -> tuple[str, dict[str, str], str, int]:
     _reject_hr_document(payload.entity_type)
+    await ensure_entity_access(db, user, payload.entity_type, payload.entity_id, write=True)
     mime = _normalize_mime(payload.mime)
     _validate_upload(mime, payload.size)
     settings = get_settings()
@@ -71,6 +73,7 @@ async def confirm(
     db: AsyncSession, user: User, payload: ConfirmRequest
 ) -> File:
     _reject_hr_document(payload.entity_type)
+    await ensure_entity_access(db, user, payload.entity_type, payload.entity_id, write=True)
     mime = _normalize_mime(payload.mime)
     _validate_upload(mime, payload.size)
     # Проверка, что file_key соответствует ожидаемому префиксу — анти-подмена.
@@ -85,6 +88,10 @@ async def confirm(
         await db.execute(select(File).where(File.file_key == payload.file_key))
     ).scalar_one_or_none()
     if existing is not None:
+        if existing.owner_user_id != user.id:
+            raise ApiError(
+                status.HTTP_409_CONFLICT, "file_key_taken", "Файл уже подтверждён"
+            )
         return existing  # идемпотентно
     rec = File(
         owner_user_id=user.id,
@@ -103,8 +110,10 @@ async def confirm(
 
 
 async def list_for_entity(
-    db: AsyncSession, entity_type: FileEntityType, entity_id: uuid.UUID
+    db: AsyncSession, user: User, entity_type: FileEntityType, entity_id: uuid.UUID
 ) -> list[File]:
+    """Файлы сущности — только если пользователь видит саму сущность."""
+    await ensure_entity_access(db, user, entity_type, entity_id)
     rows = await db.execute(
         select(File)
         .where(File.entity_type == entity_type, File.entity_id == entity_id)
@@ -125,31 +134,24 @@ async def ensure_can_read_file(
 ) -> None:
     """Проверка прав на чтение (download/просмотр) файла.
 
-    Для бизнес-сущностей (vacancy/candidate/client/contact) исторически
-    «любой авторизованный» — это устаревшая логика, оставленная как было.
-    Для вложений чата (entity_type=chat_message) проверяем, что юзер —
-    участник conversation сообщения. Если файл «осиротел» (сообщение или
-    его conversation_id отсутствуют) — отдаём 404, чтобы не палить
-    существование файла.
+    Права на файл = права на сущность, к которой он привязан
+    (см. `permissions.entity_access`): кандидат — `candidate:view`, вакансия —
+    `vacancy:view` + «только свои» для AM, лид/тендер — правила их карточек,
+    запись скрининга — видимость сессии + `screening:run`/`view_report`,
+    вложение чата — членство в диалоге. Раньше для всего, кроме чата, хватало
+    логина — так утекали резюме и записи интервью.
 
     Файлы кадрового ЭДО (entity_type=hr_document) через общий /files не
     отдаются никому: у них своя выдача в /hr-edo/* с проверкой прав,
     целостности и записью в протокол.
     """
-    if file.entity_type == FileEntityType.hr_document:
-        raise ApiError(status.HTTP_404_NOT_FOUND, "not_found", "Файл не найден")
-    if file.entity_type != FileEntityType.chat_message:
-        return
-
-    # Lazy-import чтобы не словить круговую зависимость chat ↔ files.
-    from app.modules.chat.models import ChatMember, ChatMessage
-
-    msg = await db.get(ChatMessage, file.entity_id)
-    if msg is None:
-        raise ApiError(status.HTTP_404_NOT_FOUND, "not_found", "Файл не найден")
-    member = await db.get(ChatMember, (msg.conversation_id, user.id))
-    if member is None:
-        raise ApiError(status.HTTP_404_NOT_FOUND, "not_found", "Файл не найден")
+    try:
+        await ensure_entity_access(db, user, file.entity_type, file.entity_id)
+    except ApiError as exc:
+        if exc.status_code == status.HTTP_403_FORBIDDEN:
+            raise
+        # Сущность удалена или скрыта — не палим существование файла.
+        raise ApiError(status.HTTP_404_NOT_FOUND, "not_found", "Файл не найден") from exc
 
 
 async def download_url(s3: S3Adapter, file: File, expires_in: int = 300) -> str:

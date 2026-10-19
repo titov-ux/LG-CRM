@@ -22,6 +22,7 @@ import { DateField } from '@/components/forms/DateField';
 import { useUsers } from '@/features/users/hooks';
 import type { Priority, TenderLaw } from '@/api/types';
 import { TENDER_LAW_OPTIONS, TENDER_PLATFORMS } from './statuses';
+import { HTTP_URL_RE } from '@/lib/safeUrl';
 
 const PRIORITIES: { id: Priority; label: string }[] = [
   { id: 'low', label: 'Низкий' },
@@ -48,7 +49,8 @@ const schema = z.object({
   submissionDeadline: z.string().optional(),
   priority: z.enum(['low', 'medium', 'high', 'urgent']),
   accountManagerId: z.string().optional(),
-  url: z.string().url('Некорректная ссылка').optional().or(z.literal('')),
+  // z.string().url() пропускает `javascript:alert(1)` — проверяем протокол явно.
+  url: z.string().trim().regex(HTTP_URL_RE, 'Ссылка должна начинаться с http:// или https://').optional().or(z.literal('')),
 });
 
 export type TenderFormValues = z.infer<typeof schema>;

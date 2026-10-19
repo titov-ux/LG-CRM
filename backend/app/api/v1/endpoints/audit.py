@@ -18,10 +18,10 @@ from app.db.session import get_db
 from app.modules.audit import service as audit_service
 from app.modules.audit.models import ActivityEntityType
 from app.modules.audit.schemas import ActivityResponse, AuditResponse
-from app.modules.auth.dependencies import get_current_user, require_roles
+from app.modules.auth.dependencies import get_current_user
 from app.modules.leads import service as leads_service
-from app.modules.permissions.dependencies import require_action_dep
-from app.modules.users.models import Role, User
+from app.modules.permissions.dependencies import require_action_dep, require_action_or_admin
+from app.modules.users.models import User
 
 router = APIRouter(prefix="/audit", tags=["audit"])
 
@@ -51,7 +51,9 @@ async def list_audit(
     date_from: date | None = Query(default=None, alias="dateFrom"),
     date_to: date | None = Query(default=None, alias="dateTo"),
     search: str | None = None,
-    _: User = Depends(require_roles(Role.admin.value)),
+    _: User = Depends(
+        require_action_or_admin("audit:view", message="Нет доступа к журналу действий")
+    ),
     db: AsyncSession = Depends(get_db),
 ) -> list[AuditResponse]:
     rows = await audit_service.list_audit(

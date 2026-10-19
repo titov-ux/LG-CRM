@@ -18,11 +18,23 @@ interface Props {
    * сделки (см. EngagementBadge / lib/engagement). Если не передан — без полоски.
    */
   accentColor?: string;
+  /** Карточку нельзя перетаскивать (нет прав) — только клик. */
+  dragDisabled?: boolean;
   children: ReactNode;
 }
 
-export function KanbanCard({ id, onClick, onPrefetch, accentColor, children }: Props) {
-  const { setNodeRef, transform, transition, isDragging, attributes, listeners } = useSortable({ id });
+export function KanbanCard({
+  id,
+  onClick,
+  onPrefetch,
+  accentColor,
+  dragDisabled = false,
+  children,
+}: Props) {
+  const { setNodeRef, transform, transition, isDragging, attributes, listeners } = useSortable({
+    id,
+    disabled: dragDisabled,
+  });
   const style = {
     transform: CSS.Translate.toString(transform),
     transition,
@@ -49,7 +61,8 @@ export function KanbanCard({ id, onClick, onPrefetch, accentColor, children }: P
       onPointerEnter={onPrefetch}
       onFocus={onPrefetch}
       className={cn(
-        'group relative cursor-grab overflow-hidden rounded-md border bg-background p-2.5 shadow-[0_1px_0_rgba(15,23,42,0.02)] transition-all hover:border-slate-300 hover:shadow-[0_2px_4px_rgba(15,23,42,0.04)] active:cursor-grabbing',
+        'group relative overflow-hidden rounded-md border bg-background p-2.5 shadow-[0_1px_0_rgba(15,23,42,0.02)] transition-all hover:border-slate-300 hover:shadow-[0_2px_4px_rgba(15,23,42,0.04)]',
+        dragDisabled ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing',
       )}
     >
       {accentColor && (

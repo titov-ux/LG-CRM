@@ -55,3 +55,16 @@ export function useCan(action: Action): boolean {
   if (!role) return false;
   return checkAction(rows, role, action);
 }
+
+/**
+ * Право `action` по матрице; администратор проходит всегда. Зеркало
+ * backend-зависимости `require_action_or_admin` (административные разделы:
+ * «Журнал действий», «Управление пользователями») — снятая по ошибке галочка
+ * не должна прятать от единственного администратора то, что бэкенд ему
+ * всё равно разрешает.
+ */
+export function useCanOrAdmin(action: Action): boolean {
+  const isAdmin = useAuthStore((s) => s.user?.role === 'admin');
+  const allowed = useCan(action);
+  return isAdmin || allowed;
+}

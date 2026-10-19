@@ -27,6 +27,7 @@ import { useCreateContact } from '@/features/clients/hooks';
 import { formatDateRu, telegramUrl } from '@/lib/utils';
 import { useContact, useDeleteContact, useUpdateContact } from './hooks';
 import { CommentsSection } from '@/features/comments/CommentsSection';
+import { useCan } from '@/lib/permissions';
 
 function toFormValues(contact: ContactListItem): Partial<ContactFormValues> {
   return {
@@ -48,6 +49,9 @@ export function ContactCardPage() {
   const createContact = useCreateContact(contact?.clientId ?? '');
   const deleteContact = useDeleteContact();
   const [deleteOpen, setDeleteOpen] = useState(false);
+  // Создание/правка/удаление контакта — право client:edit (backend
+  // `contacts_service` → `_ensure_can_mutate`).
+  const canEdit = useCan('client:edit');
   const close = () => navigate({ to: '/contacts' });
 
   const handleShare = async () => {
@@ -126,24 +130,28 @@ export function ContactCardPage() {
               <Button variant="ghost" size="icon" onClick={close}>
                 <ChevronLeft className="h-3.5 w-3.5" />
               </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                disabled={!contact}
-                onClick={() => setEditOpen(true)}
-                aria-label="Редактировать контакт"
-              >
-                <Edit3 className="h-3.5 w-3.5" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                disabled={!contact || createContact.isPending}
-                onClick={handleCopy}
-                aria-label="Скопировать контакт"
-              >
-                <Copy className="h-3.5 w-3.5" />
-              </Button>
+              {canEdit && (
+                <>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    disabled={!contact}
+                    onClick={() => setEditOpen(true)}
+                    aria-label="Редактировать контакт"
+                  >
+                    <Edit3 className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    disabled={!contact || createContact.isPending}
+                    onClick={handleCopy}
+                    aria-label="Скопировать контакт"
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                  </Button>
+                </>
+              )}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" size="icon" disabled={!contact} aria-label="Ещё">
@@ -155,17 +163,21 @@ export function ContactCardPage() {
                     <Share2 className="mr-2 h-3.5 w-3.5" />
                     Поделиться
                   </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    onSelect={(e) => {
-                      e.preventDefault();
-                      setDeleteOpen(true);
-                    }}
-                    className="text-red-600 focus:bg-red-50 focus:text-red-700 dark:focus:bg-red-950/40"
-                  >
-                    <Trash2 className="mr-2 h-3.5 w-3.5" />
-                    Удалить
-                  </DropdownMenuItem>
+                  {canEdit && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onSelect={(e) => {
+                          e.preventDefault();
+                          setDeleteOpen(true);
+                        }}
+                        className="text-red-600 focus:bg-red-50 focus:text-red-700 dark:focus:bg-red-950/40"
+                      >
+                        <Trash2 className="mr-2 h-3.5 w-3.5" />
+                        Удалить
+                      </DropdownMenuItem>
+                    </>
+                  )}
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
@@ -278,7 +290,7 @@ export function ContactCardPage() {
         </SheetContent>
       </Sheet>
 
-      <Sheet open={editOpen} onOpenChange={setEditOpen}>
+      <Sheet open={canEdit && editOpen} onOpenChange={setEditOpen}>
         <SheetContent className="overflow-y-auto sm:max-w-md">
           <SheetHeader className="mb-4">
             <SheetTitle>Редактирование контакта</SheetTitle>
@@ -296,7 +308,7 @@ export function ContactCardPage() {
         </SheetContent>
       </Sheet>
 
-      <Dialog open={deleteOpen} onOpenChange={(o) => !deleteContact.isPending && setDeleteOpen(o)}>
+      <Dialog open={canEdit && deleteOpen} onOpenChange={(o) => !deleteContact.isPending && setDeleteOpen(o)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Удалить контакт?</DialogTitle>

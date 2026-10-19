@@ -35,6 +35,7 @@ import { EmptyState } from '@/components/common/EmptyState';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ENGAGEMENT_META, ENGAGEMENT_OPTIONS } from '@/lib/engagement';
 import { FilterBar, FilterChip, MenuItem } from '@/components/common/FilterChip';
+import { useCan } from '@/lib/permissions';
 
 const STATUSES: KanbanStatusDescriptor<VacancyStatus>[] = vacancyStatuses;
 
@@ -97,6 +98,10 @@ export function VacanciesKanbanPage() {
   const reorder = useReorderVacanciesKanban();
   const changeStatus = useChangeVacancyStatus();
   const queryClient = useQueryClient();
+  // Перетаскивание (и между колонками, и внутри колонки) идёт через
+  // PUT /vacancies/kanban-order или PATCH /vacancies/{id}/status — оба на бэкенде
+  // требуют vacancy:change_status. Без права доска только для просмотра.
+  const canChangeStatus = useCan('vacancy:change_status');
 
   // Перетаскивание в финальную колонку (Закрыта / Закрыта успешно) требует
   // комментарий — копим целевой статус и id вакансии до подтверждения в диалоге.
@@ -346,7 +351,9 @@ export function VacanciesKanbanPage() {
               staleTime: 30_000,
             });
           }}
+          dragDisabled={!canChangeStatus}
           onReorder={(updates) => {
+            if (!canChangeStatus) return;
             const statusChanged = updates.find((u) => {
               const original = items.find((x) => x.id === u.id);
               return original && original.status !== u.status;

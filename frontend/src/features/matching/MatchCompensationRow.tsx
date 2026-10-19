@@ -20,7 +20,8 @@ interface Props {
   match?: VacancyCandidate;
   hoursPerMonth: number;
   onOpen: () => void;
-  onDetach: () => void;
+  /** Открепить от вакансии. Не передан — кнопки нет (нет права vacancy:edit). */
+  onDetach?: () => void;
   detachDisabled?: boolean;
   /** Скачать резюме как есть (DOCX). */
   onDownloadOriginal: () => void;
@@ -129,16 +130,18 @@ export function MatchCompensationRow({
             </DropdownMenuContent>
           </DropdownMenu>
 
-          <button
-            type="button"
-            onClick={onDetach}
-            disabled={detachDisabled}
-            aria-label={`Открепить ${candidate.fullName}`}
-            title="Открепить от вакансии"
-            className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-background hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 disabled:cursor-not-allowed"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
+          {onDetach && (
+            <button
+              type="button"
+              onClick={onDetach}
+              disabled={detachDisabled}
+              aria-label={`Открепить ${candidate.fullName}`}
+              title="Открепить от вакансии"
+              className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-background hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 disabled:cursor-not-allowed"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
           <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
         </div>
       </div>

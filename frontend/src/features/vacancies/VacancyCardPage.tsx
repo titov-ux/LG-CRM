@@ -183,6 +183,20 @@ export function VacancyCardPage() {
     pageSize: 200,
   });
   const currentUser = useAuthStore((s) => s.user);
+  const canAssignRecruiter = useCan('vacancy:assign_recruiter');
+  // Права — как в backend `vacancies/service.py` и `matching.py`:
+  //   • правка вакансии (PATCH) — vacancy:edit; прикрепить/открепить кандидата
+  //     и AI-оценка связок — тоже vacancy:edit;
+  //   • смена статуса — vacancy:change_status;
+  //   • копия (POST) — vacancy:create, плюс assign_recruiter, если в копии есть
+  //     рекрутеры;
+  //   • удаление пока не в матрице — только admin/AM (`_ensure_can_delete`).
+  const canEdit = useCan('vacancy:edit');
+  const canCreate = useCan('vacancy:create');
+  const canChangeStatus = useCan('vacancy:change_status');
+  const canDelete = currentUser?.role === 'admin' || currentUser?.role === 'account_manager';
+  const canCopy =
+    canCreate && (!vacancy || vacancy.recruiterIds.length === 0 || canAssignRecruiter);
   const updateVacancy = useUpdateVacancy();
   const createVacancy = useCreateVacancy();
   const changeStatus = useChangeVacancyStatus();
@@ -256,7 +270,7 @@ export function VacancyCardPage() {
   };
 
   const handleStatusChange = (status: VacancyStatus) => {
-    if (!vacancy || status === vacancy.status) return;
+    if (!vacancy || status === vacancy.status || !canChangeStatus) return;
     // Финальные статусы требуют обязательного комментария — открываем диалог.
     if (isFinalVacancyStatus(status)) {
       setFinalStatusTarget(status);
@@ -442,9 +456,10 @@ export function VacancyCardPage() {
     );
   };
 
-  const canAssignRecruiter = useCan('vacancy:assign_recruiter');
+  // «Назначить себя» идёт через PATCH /vacancies/{id} → нужно и vacancy:edit.
   const canSelfAssignRecruiter = Boolean(
     canAssignRecruiter &&
+      canEdit &&
       currentUser &&
       vacancy &&
       !vacancy.recruiterIds.includes(currentUser.id),
@@ -507,24 +522,28 @@ export function VacancyCardPage() {
             <Button variant="ghost" size="icon" onClick={close}>
               <ChevronLeft className="h-3.5 w-3.5" />
             </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              disabled={!vacancy}
-              onClick={() => setEditOpen(true)}
-              aria-label="Редактировать вакансию"
-            >
-              <Edit3 className="h-3.5 w-3.5" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              disabled={!vacancy || createVacancy.isPending}
-              onClick={handleCopy}
-              aria-label="Скопировать вакансию"
-            >
-              <Copy className="h-3.5 w-3.5" />
-            </Button>
+            {canEdit && (
+              <Button
+                variant="ghost"
+                size="icon"
+                disabled={!vacancy}
+                onClick={() => setEditOpen(true)}
+                aria-label="Редактировать вакансию"
+              >
+                <Edit3 className="h-3.5 w-3.5" />
+              </Button>
+            )}
+            {canCopy && (
+              <Button
+                variant="ghost"
+                size="icon"
+                disabled={!vacancy || createVacancy.isPending}
+                onClick={handleCopy}
+                aria-label="Скопировать вакансию"
+              >
+                <Copy className="h-3.5 w-3.5" />
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="icon"
@@ -546,17 +565,21 @@ export function VacancyCardPage() {
                   <Share2 className="mr-2 h-3.5 w-3.5" />
                   Поделиться
                 </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onSelect={(e) => {
-                    e.preventDefault();
-                    setDeleteOpen(true);
-                  }}
-                  className="text-red-600 focus:bg-red-50 focus:text-red-700 dark:focus:bg-red-950/40"
-                >
-                  <Trash2 className="mr-2 h-3.5 w-3.5" />
-                  Удалить
-                </DropdownMenuItem>
+                {canDelete && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onSelect={(e) => {
+                        e.preventDefault();
+                        setDeleteOpen(true);
+                      }}
+                      className="text-red-600 focus:bg-red-50 focus:text-red-700 dark:focus:bg-red-950/40"
+                    >
+                      <Trash2 className="mr-2 h-3.5 w-3.5" />
+                      Удалить
+                    </DropdownMenuItem>
+                  </>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -582,6 +605,7 @@ export function VacancyCardPage() {
                   value={vacancy.status}
                   onValueChange={handleStatusChange}
                   disabled={changeStatus.isPending}
+                  readOnly={!canChangeStatus}
                 />
                 <EngagementBadge type={vacancy.engagementType} variant="chip" />
                 <PriorityBadge priority={vacancy.priority} />
@@ -713,7 +737,7 @@ export function VacancyCardPage() {
               title={`Прикреплённые кандидаты · ${attached.length}`}
               action={
                 <div className="flex items-center gap-1">
-                  {attached.length > 0 && (
+                  {canEdit && attached.length > 0 && (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -737,15 +761,17 @@ export function VacancyCardPage() {
                       Оценить всех
                     </Button>
                   )}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 gap-1 px-2 text-xs"
-                    onClick={() => setAttachOpen(true)}
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    Прикрепить
-                  </Button>
+                  {canEdit && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 gap-1 px-2 text-xs"
+                      onClick={() => setAttachOpen(true)}
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      Прикрепить
+                    </Button>
+                  )}
                 </div>
               }
             >
@@ -790,7 +816,9 @@ export function VacancyCardPage() {
                         match={matchByCandidate.get(c.id)}
                         hoursPerMonth={hoursPerMonth}
                         onOpen={() => navigate({ to: '/candidates/$id', params: { id: c.id } })}
-                        onDetach={() => handleDetachCandidate(c.id, c.fullName)}
+                        onDetach={
+                          canEdit ? () => handleDetachCandidate(c.id, c.fullName) : undefined
+                        }
                         detachDisabled={detachCandidate.isPending}
                         onDownloadOriginal={() => handleDownloadOriginalResume(c)}
                         onDownloadImproved={() => handleDownloadImprovedResume(c)}
@@ -871,7 +899,7 @@ export function VacancyCardPage() {
       </SheetContent>
     </Sheet>
 
-    <Sheet open={editOpen} onOpenChange={setEditOpen}>
+    <Sheet open={canEdit && editOpen} onOpenChange={setEditOpen}>
       <SheetContent className="overflow-y-auto sm:max-w-xl">
         <SheetHeader className="mb-4">
           <SheetTitle>Редактирование вакансии</SheetTitle>
@@ -900,7 +928,7 @@ export function VacancyCardPage() {
       }}
     />
 
-    <Dialog open={deleteOpen} onOpenChange={(o) => !deleteVacancy.isPending && setDeleteOpen(o)}>
+    <Dialog open={canDelete && deleteOpen} onOpenChange={(o) => !deleteVacancy.isPending && setDeleteOpen(o)}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>Удалить вакансию?</DialogTitle>
@@ -931,7 +959,7 @@ export function VacancyCardPage() {
 
     {vacancy && (
       <AttachCandidateDialog
-        open={attachOpen}
+        open={canEdit && attachOpen}
         onOpenChange={setAttachOpen}
         vacancyId={vacancy.id}
         excludeIds={attached.map((c) => c.id)}

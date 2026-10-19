@@ -41,6 +41,11 @@ interface Props<TStatus extends string, TItem extends KanbanItem<TStatus>> {
   onCardHover?: (item: TItem) => void;
   onReorder: (updates: KanbanReorderUpdate<TStatus>[]) => void;
   onCreate?: (status: TStatus) => void;
+  /**
+   * Запретить перетаскивание карточек (нет права менять статус/порядок —
+   * бэкенд всё равно ответит 403). Клик по карточке продолжает работать.
+   */
+  dragDisabled?: boolean;
 }
 
 export function KanbanBoard<TStatus extends string, TItem extends KanbanItem<TStatus>>({
@@ -53,6 +58,7 @@ export function KanbanBoard<TStatus extends string, TItem extends KanbanItem<TSt
   onCardHover,
   onReorder,
   onCreate,
+  dragDisabled = false,
 }: Props<TStatus, TItem>) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [previewItems, setPreviewItems] = useState<TItem[] | null>(null);
@@ -163,6 +169,7 @@ export function KanbanBoard<TStatus extends string, TItem extends KanbanItem<TSt
                   onClick={() => onCardClick?.(item)}
                   onPrefetch={onCardHover ? () => onCardHover(item) : undefined}
                   accentColor={getAccentColor?.(item)}
+                  dragDisabled={dragDisabled}
                 >
                   {renderCard(item)}
                 </KanbanCard>

@@ -39,7 +39,7 @@ import { AddUserDialog } from './AddUserDialog';
 import { EditUserDialog } from './EditUserDialog';
 import { ROLE_DESCRIPTION, ROLE_LABEL } from './UserForm';
 import { useAuthStore } from '@/stores/auth';
-import type { MatrixPermission } from '@/lib/permissions';
+import { useCanOrAdmin, type MatrixPermission } from '@/lib/permissions';
 import {
   usePermissionsMatrix,
   useResetPermissionsMatrix,
@@ -83,7 +83,16 @@ export function RolesPage() {
   const updateUser = useUpdateUser();
   const deleteUser = useDeleteUser();
   const resendInvite = useResendInvite();
-  const canManageRoles = currentUser?.role === 'admin';
+  const isAdmin = currentUser?.role === 'admin';
+  // Управление пользователями — право user:manage (админ проходит всегда),
+  // как `require_action_or_admin("user:manage")` на бэкенде.
+  const canManageUsers = useCanOrAdmin('user:manage');
+  // Не-админ с user:manage не может трогать администраторов и выдавать роль
+  // admin (бэкенд: `_ensure_no_admin_escalation`).
+  const canManageUser = (u: User) => canManageUsers && (isAdmin || u.role !== 'admin');
+  // Матрицу доступов меняет только администратор (PUT /permissions/{id} и
+  // /permissions/reset на бэкенде — require_roles(admin)).
+  const canEditMatrix = isAdmin;
 
   const { permissions, isFetching: isPermissionsFetching } = usePermissionsMatrix();
   const togglePermissionMutation = useTogglePermission();
@@ -119,8 +128,8 @@ export function RolesPage() {
   }, [users]);
 
   const handleRoleChange = (user: User, role: Role) => {
-    if (!canManageRoles) {
-      toast.error('Менять роли может только администратор');
+    if (!canManageUser(user) || (role === 'admin' && !isAdmin)) {
+      toast.error('Недостаточно прав для изменения роли');
       return;
     }
     if (currentUser?.id === user.id) {
@@ -197,7 +206,7 @@ export function RolesPage() {
             <TabsTrigger value="users">Пользователи</TabsTrigger>
             <TabsTrigger value="roles">Роли и доступы</TabsTrigger>
           </TabsList>
-          {tab === 'users' && (
+          {tab === 'users' && canManageUsers && (
             <Button onClick={() => setDialogOpen(true)} className="gap-1.5">
               <UserPlus className="h-4 w-4" />
               Добавить пользователя
@@ -276,7 +285,7 @@ export function RolesPage() {
                     <TableCell className="text-[12.5px] text-muted-foreground">{u.email}</TableCell>
                     <TableCell>
                       {(() => {
-                        const canChangeThisRole = canManageRoles && currentUser?.id !== u.id;
+                        const canChangeThisRole = canManageUser(u) && currentUser?.id !== u.id;
                         return (
                       <Select
                         value={u.role}
@@ -288,16 +297,16 @@ export function RolesPage() {
                           title={
                             canChangeThisRole
                               ? 'Изменить роль'
-                              : canManageRoles
+                              : currentUser?.id === u.id
                                 ? 'Нельзя изменить свою роль'
-                                : 'Менять роли может только администратор'
+                                : 'Недостаточно прав для изменения роли'
                           }
                         >
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
                           {ROLES_ORDER.map((r) => (
-                            <SelectItem key={r} value={r}>
+                            <SelectItem key={r} value={r} disabled={r === 'admin' && !isAdmin}>
                               {ROLE_LABEL[r]}
                             </SelectItem>
                           ))}
@@ -315,7 +324,7 @@ export function RolesPage() {
                           <Switch
                             checked
                             onCheckedChange={(v) => handleActiveToggle(u, v)}
-                            disabled={currentUser?.id === u.id}
+                            disabled={currentUser?.id === u.id || !canManageUser(u)}
                           />
                         </div>
                       ) : (
@@ -326,7 +335,7 @@ export function RolesPage() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-0.5">
-                        {canManageRoles && (
+                        {canManageUser(u) && (
                           <Button
                             variant="ghost"
                             size="icon"
@@ -337,7 +346,7 @@ export function RolesPage() {
                             <Pencil className="h-4 w-4" />
                           </Button>
                         )}
-                        {!u.isActive && canManageRoles && (
+                        {!u.isActive && canManageUser(u) && (
                           <Button
                             variant="ghost"
                             size="icon"
@@ -351,7 +360,7 @@ export function RolesPage() {
                             <Mail className="h-4 w-4" />
                           </Button>
                         )}
-                        {currentUser?.id !== u.id && (
+                        {currentUser?.id !== u.id && canManageUser(u) && (
                           <Button
                             variant="ghost"
                             size="icon"
@@ -408,25 +417,28 @@ export function RolesPage() {
                   )}
                 </CardTitle>
                 <CardDescription>
-                  Кликните по ячейке, чтобы переключить право для роли. Изменения
-                  сохраняются на сервере и сразу применяются ко всем сотрудникам.
+                  {canEditMatrix
+                    ? 'Кликните по ячейке, чтобы переключить право для роли. Изменения сохраняются на сервере и сразу применяются ко всем сотрудникам.'
+                    : 'Только просмотр: изменять матрицу доступов может только администратор.'}
                 </CardDescription>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="shrink-0 gap-1.5"
-                disabled={resetPermissionsMutation.isPending}
-                onClick={() => {
-                  resetPermissionsMutation.mutate(undefined, {
-                    onSuccess: () => toast.success('Матрица доступов сброшена к умолчаниям'),
-                    onError: () => toast.error('Не удалось сбросить матрицу'),
-                  });
-                }}
-              >
-                <RotateCcw className="h-3.5 w-3.5" />
-                {resetPermissionsMutation.isPending ? 'Сброс…' : 'Сбросить'}
-              </Button>
+              {canEditMatrix && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0 gap-1.5"
+                  disabled={resetPermissionsMutation.isPending}
+                  onClick={() => {
+                    resetPermissionsMutation.mutate(undefined, {
+                      onSuccess: () => toast.success('Матрица доступов сброшена к умолчаниям'),
+                      onError: () => toast.error('Не удалось сбросить матрицу'),
+                    });
+                  }}
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  {resetPermissionsMutation.isPending ? 'Сброс…' : 'Сбросить'}
+                </Button>
+              )}
             </CardHeader>
             <Table>
               <TableHeader>
@@ -443,6 +455,9 @@ export function RolesPage() {
                 {permissions.map((p, i) => {
                   const prev = permissions[i - 1];
                   const showGroup = !prev || prev.group !== p.group;
+                  // Строка без actions нигде не проверяется (ни фронтом, ни бэком) —
+                  // переключать её бессмысленно, чтобы не вводить админа в заблуждение.
+                  const notEnforced = p.actions.length === 0;
                   return (
                     <TableRow key={p.id}>
                       <TableCell>
@@ -452,6 +467,11 @@ export function RolesPage() {
                           </div>
                         )}
                         <div className="text-[13px] font-medium">{p.permission}</div>
+                        {notEnforced && (
+                          <div className="text-[10.5px] font-medium uppercase tracking-wider text-amber-600 dark:text-amber-400">
+                            Пока не влияет на доступ
+                          </div>
+                        )}
                         <div className="text-[11.5px] text-muted-foreground">{p.description}</div>
                       </TableCell>
                       {ROLES_ORDER.map((r) => {
@@ -468,7 +488,16 @@ export function RolesPage() {
                               aria-checked={allowed}
                               aria-busy={busy || undefined}
                               aria-label={`${p.permission} — ${ROLE_LABEL[r]}: ${allowed ? 'разрешено' : 'запрещено'}`}
-                              disabled={resetPermissionsMutation.isPending}
+                              title={
+                                notEnforced
+                                  ? 'Пока не влияет на доступ'
+                                  : !canEditMatrix
+                                    ? 'Изменять права может только администратор'
+                                    : undefined
+                              }
+                              disabled={
+                                !canEditMatrix || notEnforced || resetPermissionsMutation.isPending
+                              }
                               onClick={() =>
                                 togglePermissionMutation.mutate(
                                   { id: p.id, role: r, allowed: !allowed },

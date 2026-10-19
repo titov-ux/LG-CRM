@@ -26,6 +26,7 @@ import { EmptyState } from '@/components/common/EmptyState';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ENGAGEMENT_META, ENGAGEMENT_OPTIONS } from '@/lib/engagement';
 import { FilterBar, FilterChip, MenuItem } from '@/components/common/FilterChip';
+import { useCan } from '@/lib/permissions';
 
 const STATUSES: KanbanStatusDescriptor<CandidateStatus>[] = candidateStatuses;
 
@@ -73,6 +74,10 @@ export function CandidatesKanbanPage() {
   const { data: usersData } = useUsers();
   const reorder = useReorderCandidatesKanban();
   const queryClient = useQueryClient();
+  // Любое перетаскивание идёт через PUT /candidates/kanban-order, который на
+  // бэкенде требует candidate:change_status (и для смены колонки, и для порядка
+  // внутри колонки). Без права доска только для просмотра.
+  const canChangeStatus = useCan('candidate:change_status');
 
   const userMap = useMemo(() => new Map((usersData ?? []).map((u) => [u.id, u])), [usersData]);
 
@@ -242,7 +247,9 @@ export function CandidatesKanbanPage() {
               staleTime: 30_000,
             });
           }}
+          dragDisabled={!canChangeStatus}
           onReorder={(updates) => {
+            if (!canChangeStatus) return;
             const statusChanged = updates.find((u) => {
               const original = items.find((x) => x.id === u.id);
               return original && original.status !== u.status;

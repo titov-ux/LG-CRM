@@ -30,7 +30,7 @@ import { cn } from '@/lib/utils';
 import { useNotifications } from '@/features/notifications/hooks';
 import { useMyHr } from '@/features/hrEdo/hooks';
 import { useAuthStore } from '@/stores/auth';
-import { useCan } from '@/lib/permissions';
+import { useCan, useCanOrAdmin } from '@/lib/permissions';
 import { useUIStore } from '@/stores/ui';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { AppInfoPopover } from './AppInfoPopover';
@@ -57,7 +57,8 @@ type NavAction =
   | 'lead:access'
   | 'analytics:view'
   | 'vacancy:view'
-  | 'candidate:view';
+  | 'candidate:view'
+  | 'audit:view';
 
 interface NavGroup {
   label?: string;
@@ -110,7 +111,7 @@ const GROUPS: NavGroup[] = [
       { to: '/calculator', label: 'Калькулятор', icon: Calculator },
       { to: '/resume-formatter', label: 'Оформление резюме', icon: FileUp },
       { to: '/offers', label: 'Офферы', icon: FileSignature },
-      { to: '/audit', label: 'Журнал действий', icon: Activity },
+      { to: '/audit', label: 'Журнал действий', icon: Activity, anyAction: ['audit:view'] },
     ],
   },
   {
@@ -140,6 +141,8 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const canViewAnalytics = useCan('analytics:view');
   const canViewVacancies = useCan('vacancy:view');
   const canViewCandidates = useCan('candidate:view');
+  // Журнал действий: право audit:view, админ проходит всегда (как на бэкенде).
+  const canViewAudit = useCanOrAdmin('audit:view');
   // Бейдж «Мои документы» — число документов, которые ждут подписи.
   const { data: myHr } = useMyHr();
   const myDocsPending = myHr?.employee?.pendingCount ?? 0;
@@ -152,6 +155,7 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
     'analytics:view': canViewAnalytics,
     'vacancy:view': canViewVacancies,
     'candidate:view': canViewCandidates,
+    'audit:view': canViewAudit,
   };
   const isVisible = (item: NavItem) =>
     (!item.adminOnly || isAdmin) &&

@@ -278,6 +278,14 @@ export function CandidateCardPage({ source: sourceProp }: CandidateCardPageProps
   const canDeletePermanent = useCan('candidate:delete_permanent');
   const canRunScreening = useCan('screening:run');
   const canViewScreeningReport = useCan('screening:view_report');
+  // Права — как в backend `candidates/service.py`: правка (PATCH) —
+  // candidate:edit, копия (POST) — candidate:create, смена статуса —
+  // candidate:change_status. Прикрепить/открепить вакансию идёт через
+  // matching-эндпоинты, которые требуют vacancy:edit.
+  const canEdit = useCan('candidate:edit');
+  const canCreate = useCan('candidate:create');
+  const canChangeStatus = useCan('candidate:change_status');
+  const canEditMatches = useCan('vacancy:edit');
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [archiveReason, setArchiveReason] = useState('');
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -534,7 +542,7 @@ export function CandidateCardPage({ source: sourceProp }: CandidateCardPageProps
   };
 
   const handleStatusChange = (status: CandidateStatus) => {
-    if (!candidate || status === candidate.status) return;
+    if (!candidate || status === candidate.status || !canChangeStatus) return;
     changeStatus.mutate(
       { id: candidate.id, status },
       {
@@ -551,24 +559,28 @@ export function CandidateCardPage({ source: sourceProp }: CandidateCardPageProps
         <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-background px-6 py-4">
           <div className="flex items-center gap-1">
             <Button variant="ghost" size="icon" onClick={close}><ChevronLeft className="h-3.5 w-3.5" /></Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              disabled={!candidate}
-              onClick={() => setEditOpen(true)}
-              aria-label="Редактировать кандидата"
-            >
-              <Edit3 className="h-3.5 w-3.5" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              disabled={!candidate || createCandidate.isPending}
-              onClick={handleCopy}
-              aria-label="Скопировать кандидата"
-            >
-              <Copy className="h-3.5 w-3.5" />
-            </Button>
+            {canEdit && (
+              <Button
+                variant="ghost"
+                size="icon"
+                disabled={!candidate}
+                onClick={() => setEditOpen(true)}
+                aria-label="Редактировать кандидата"
+              >
+                <Edit3 className="h-3.5 w-3.5" />
+              </Button>
+            )}
+            {canCreate && (
+              <Button
+                variant="ghost"
+                size="icon"
+                disabled={!candidate || createCandidate.isPending}
+                onClick={handleCopy}
+                aria-label="Скопировать кандидата"
+              >
+                <Copy className="h-3.5 w-3.5" />
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="sm"
@@ -612,15 +624,18 @@ export function CandidateCardPage({ source: sourceProp }: CandidateCardPageProps
                   Выгрузить для МБ
                 </DropdownMenuItem>
                 {candidate?.archived ? (
-                  <DropdownMenuItem
-                    onSelect={(e) => {
-                      e.preventDefault();
-                      handleRestore();
-                    }}
-                  >
-                    <ArchiveRestore className="mr-2 h-3.5 w-3.5" />
-                    Вернуть на доску
-                  </DropdownMenuItem>
+                  // Восстановление на бэкенде тоже требует candidate:archive.
+                  canArchive && (
+                    <DropdownMenuItem
+                      onSelect={(e) => {
+                        e.preventDefault();
+                        handleRestore();
+                      }}
+                    >
+                      <ArchiveRestore className="mr-2 h-3.5 w-3.5" />
+                      Вернуть на доску
+                    </DropdownMenuItem>
+                  )
                 ) : (
                   canArchive && (
                     <DropdownMenuItem
@@ -722,6 +737,7 @@ export function CandidateCardPage({ source: sourceProp }: CandidateCardPageProps
                   value={candidate.status}
                   onValueChange={handleStatusChange}
                   disabled={changeStatus.isPending}
+                  readOnly={!canChangeStatus}
                 />
                 <EngagementBadge type={candidate.engagementType} variant="chip" />
                 <span className="text-xs text-muted-foreground">
@@ -885,15 +901,17 @@ export function CandidateCardPage({ source: sourceProp }: CandidateCardPageProps
             <Section
               title={`Прикреплённые вакансии · ${attachedVacancies.length}`}
               action={
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 gap-1 px-2 text-xs"
-                  onClick={() => setAttachOpen(true)}
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  Прикрепить
-                </Button>
+                canEditMatches ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 gap-1 px-2 text-xs"
+                    onClick={() => setAttachOpen(true)}
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Прикрепить
+                  </Button>
+                ) : undefined
               }
             >
               {attachedVacancies.length === 0 ? (
@@ -925,16 +943,18 @@ export function CandidateCardPage({ source: sourceProp }: CandidateCardPageProps
                                 : '—'
                               : `${formatMoneyRub(v.rateClient)} ₽`}
                           </span>
-                          <button
-                            type="button"
-                            onClick={() => handleDetachVacancy(v.id, v.title)}
-                            disabled={detachCandidate.isPending}
-                            aria-label={`Открепить от вакансии «${v.title}»`}
-                            title="Открепить от вакансии"
-                            className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-background hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
-                          >
-                            <X className="h-3.5 w-3.5" />
-                          </button>
+                          {canEditMatches && (
+                            <button
+                              type="button"
+                              onClick={() => handleDetachVacancy(v.id, v.title)}
+                              disabled={detachCandidate.isPending}
+                              aria-label={`Открепить от вакансии «${v.title}»`}
+                              title="Открепить от вакансии"
+                              className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-background hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          )}
                           <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
                         </div>
                       </div>
@@ -1092,7 +1112,7 @@ export function CandidateCardPage({ source: sourceProp }: CandidateCardPageProps
       </SheetContent>
     </Sheet>
 
-    <Sheet open={editOpen} onOpenChange={setEditOpen}>
+    <Sheet open={canEdit && editOpen} onOpenChange={setEditOpen}>
       <SheetContent className="overflow-y-auto sm:max-w-xl">
         <SheetHeader className="mb-4">
           <SheetTitle>Редактирование кандидата</SheetTitle>
@@ -1207,7 +1227,7 @@ export function CandidateCardPage({ source: sourceProp }: CandidateCardPageProps
 
     {candidate && (
       <AttachVacancyDialog
-        open={attachOpen}
+        open={canEditMatches && attachOpen}
         onOpenChange={setAttachOpen}
         candidateId={candidate.id}
         excludeIds={candidate.vacancyIds}

@@ -26,6 +26,7 @@ import type { ClientKind, ClientStatus } from '@/api/types';
 import { CLIENT_OWNER_ROLES, ClientForm, type ClientFormValues } from './ClientForm';
 import { useClients, useCreateClient, useUsers } from './hooks';
 import { useFiltersStore } from '@/stores/filters';
+import { useCan } from '@/lib/permissions';
 
 const STATUS_LABEL: Record<ClientStatus, string> = {
   lead: 'Лид',
@@ -80,6 +81,8 @@ export function ClientsListPage() {
   const [filters, setFilters] = useState<Filters>(EMPTY);
   const [addOpen, setAddOpen] = useState(false);
   const createClient = useCreateClient();
+  // Создание клиента — право client:create (бэкенд: `_ensure_can_mutate(..., "client:create")`).
+  const canCreate = useCan('client:create');
   const set = <K extends keyof Filters>(k: K, v: Filters[K]) =>
     setFilters((p) => ({ ...p, [k]: v }));
 
@@ -159,15 +162,17 @@ export function ClientsListPage() {
         hasActiveFilters={hasActiveFilters}
         onReset={() => setFilters(EMPTY)}
         leftSlot={
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 gap-1.5"
-            onClick={() => setAddOpen(true)}
-          >
-            <Plus className="h-3.5 w-3.5" />
-            Добавить клиента
-          </Button>
+          canCreate ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 gap-1.5"
+              onClick={() => setAddOpen(true)}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Добавить клиента
+            </Button>
+          ) : undefined
         }
         rightSlot={
           <span className="tnum text-[11.5px] text-muted-foreground/80">
@@ -379,7 +384,7 @@ export function ClientsListPage() {
         </Table>
       </Card>
 
-      <Sheet open={addOpen} onOpenChange={setAddOpen}>
+      <Sheet open={canCreate && addOpen} onOpenChange={setAddOpen}>
         <SheetContent className="overflow-y-auto sm:max-w-xl">
           <SheetHeader className="mb-4">
             <SheetTitle>Новый клиент</SheetTitle>

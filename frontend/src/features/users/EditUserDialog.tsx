@@ -36,7 +36,9 @@ interface Props {
 
 /**
  * Диалог редактирования пользователя админом: ФИО, email, telegram, роль, активность.
- * Бэкенд: PATCH /users/{id} (только admin, право users.manage).
+ * Бэкенд: PATCH /users/{id} (право user:manage, админ проходит всегда; не-админ
+ * не может трогать администраторов и выдавать роль admin). Открывается только
+ * из «Ролей и доступов», где кнопка уже скрыта без этого права.
  * Пароль здесь не меняется — для не активированных есть переотправка приглашения,
  * активные меняют пароль сами в профиле.
  */
@@ -45,6 +47,7 @@ export function EditUserDialog({ user, onOpenChange }: Props) {
   const setPassword = useSetUserPassword();
   const currentUser = useAuthStore((s) => s.user);
   const isSelf = !!user && currentUser?.id === user.id;
+  const isAdmin = currentUser?.role === 'admin';
   const [newPassword, setNewPassword] = useState('');
 
   // Не тащим введённый пароль между разными пользователями.
@@ -93,6 +96,7 @@ export function EditUserDialog({ user, onOpenChange }: Props) {
             isPending={updateUser.isPending}
             disableRole={isSelf}
             disableActive={isSelf}
+            allowAdminRole={isAdmin}
             defaultValues={{
               fullName: user.fullName,
               email: user.email,

@@ -12,6 +12,11 @@ interface Props<TStatus extends string> {
   value: TStatus;
   onValueChange: (status: TStatus) => void;
   disabled?: boolean;
+  /**
+   * Только просмотр (нет права менять статус): вместо выпадающего списка —
+   * статичный бейдж того же вида.
+   */
+  readOnly?: boolean;
 }
 
 export function KanbanStatusSelect<TStatus extends string>({
@@ -19,8 +24,23 @@ export function KanbanStatusSelect<TStatus extends string>({
   value,
   onValueChange,
   disabled,
+  readOnly = false,
 }: Props<TStatus>) {
   const current = statuses.find((s) => s.id === value);
+
+  if (readOnly) {
+    return (
+      <span
+        className="inline-flex items-center gap-1.5 rounded-md bg-muted px-2 py-0.5 text-xs font-medium"
+        aria-label="Статус на доске"
+      >
+        {current && (
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: current.color }} />
+        )}
+        {current?.label ?? value}
+      </span>
+    );
+  }
 
   return (
     <Select

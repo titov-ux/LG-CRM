@@ -149,6 +149,8 @@ export function CandidatesDatabasePage() {
   const restoreCandidate = useRestoreCandidate();
   const deleteCandidatePermanent = useDeleteCandidatePermanent();
   const canDeletePermanent = useCan('candidate:delete_permanent');
+  // «Вернуть на доску» — POST /candidates/{id}/restore, на бэкенде candidate:archive.
+  const canArchive = useCan('candidate:archive');
   // Кандидат под удаление держим в локальном state, чтобы диалог был один
   // на всю страницу — без рендера N модалок в TableBody.
   const [pendingDelete, setPendingDelete] = useState<Candidate | null>(null);
@@ -551,7 +553,7 @@ export function CandidatesDatabasePage() {
                         onClick={(e) => e.stopPropagation()}
                       >
                         <div className="inline-flex items-center gap-1">
-                          {c.archived && (
+                          {c.archived && canArchive && (
                             <Button
                               type="button"
                               size="sm"

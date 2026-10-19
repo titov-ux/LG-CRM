@@ -26,6 +26,7 @@ import { useFiltersStore } from '@/stores/filters';
 import { useClients } from '@/features/clients/hooks';
 import { useContacts } from './hooks';
 import { AddContactDialog } from './AddContactDialog';
+import { useCan } from '@/lib/permissions';
 
 type ChannelKey = 'hasEmail' | 'hasPhone' | 'hasTelegram' | 'hasBirthday';
 
@@ -67,6 +68,8 @@ export function ContactsListPage() {
   const navigate = useNavigate();
   const [filters, setFilters] = useState<Filters>(EMPTY);
   const [addOpen, setAddOpen] = useState(false);
+  // Контакты клиентов меняются по праву client:edit (backend `contacts_service`).
+  const canEdit = useCan('client:edit');
 
   const queryParams = useMemo(
     () => ({
@@ -113,15 +116,17 @@ export function ContactsListPage() {
         hasActiveFilters={hasActiveFilters}
         onReset={() => setFilters(EMPTY)}
         leftSlot={
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 gap-1.5"
-            onClick={() => setAddOpen(true)}
-          >
-            <Plus className="h-3.5 w-3.5" />
-            Добавить контакт
-          </Button>
+          canEdit ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 gap-1.5"
+              onClick={() => setAddOpen(true)}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Добавить контакт
+            </Button>
+          ) : undefined
         }
         rightSlot={
           <span className="tnum text-[11.5px] text-muted-foreground/80">
@@ -274,7 +279,7 @@ export function ContactsListPage() {
         </Table>
       </Card>
 
-      <AddContactDialog open={addOpen} onOpenChange={setAddOpen} />
+      <AddContactDialog open={canEdit && addOpen} onOpenChange={setAddOpen} />
     </div>
   );
 }

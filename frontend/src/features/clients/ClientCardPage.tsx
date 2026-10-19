@@ -81,6 +81,12 @@ export function ClientCardPage() {
   const { data: vacanciesData } = useVacancies({ clientId: id });
   // Без права vacancy:view (например, менеджер по продажам) блок вакансий скрыт.
   const canViewVacancies = useCan('vacancy:view');
+  // Права на изменения — как в backend `clients/service.py`: создание (в т.ч.
+  // копия) — client:create, правка клиента, юр.лиц и контактов — client:edit,
+  // удаление — client:delete.
+  const canCreate = useCan('client:create');
+  const canEdit = useCan('client:edit');
+  const canDelete = useCan('client:delete');
   const updateClient = useUpdateClient();
   const createClient = useCreateClient();
   const deleteClient = useDeleteClient();
@@ -162,24 +168,28 @@ export function ClientCardPage() {
         <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-background px-6 py-4">
           <div className="flex items-center gap-1">
             <Button variant="ghost" size="icon" onClick={close}><ChevronLeft className="h-3.5 w-3.5" /></Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              disabled={!client}
-              onClick={() => setEditOpen(true)}
-              aria-label="Редактировать клиента"
-            >
-              <Edit3 className="h-3.5 w-3.5" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              disabled={!client || createClient.isPending}
-              onClick={handleCopy}
-              aria-label="Скопировать клиента"
-            >
-              <Copy className="h-3.5 w-3.5" />
-            </Button>
+            {canEdit && (
+              <Button
+                variant="ghost"
+                size="icon"
+                disabled={!client}
+                onClick={() => setEditOpen(true)}
+                aria-label="Редактировать клиента"
+              >
+                <Edit3 className="h-3.5 w-3.5" />
+              </Button>
+            )}
+            {canCreate && (
+              <Button
+                variant="ghost"
+                size="icon"
+                disabled={!client || createClient.isPending}
+                onClick={handleCopy}
+                aria-label="Скопировать клиента"
+              >
+                <Copy className="h-3.5 w-3.5" />
+              </Button>
+            )}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon" disabled={!client} aria-label="Ещё">
@@ -191,17 +201,21 @@ export function ClientCardPage() {
                   <Share2 className="mr-2 h-3.5 w-3.5" />
                   Поделиться
                 </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onSelect={(e) => {
-                    e.preventDefault();
-                    setDeleteOpen(true);
-                  }}
-                  className="text-red-600 focus:bg-red-50 focus:text-red-700 dark:focus:bg-red-950/40"
-                >
-                  <Trash2 className="mr-2 h-3.5 w-3.5" />
-                  Удалить
-                </DropdownMenuItem>
+                {canDelete && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onSelect={(e) => {
+                        e.preventDefault();
+                        setDeleteOpen(true);
+                      }}
+                      className="text-red-600 focus:bg-red-50 focus:text-red-700 dark:focus:bg-red-950/40"
+                    >
+                      <Trash2 className="mr-2 h-3.5 w-3.5" />
+                      Удалить
+                    </DropdownMenuItem>
+                  </>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -274,16 +288,18 @@ export function ClientCardPage() {
             <Section
               title="Контактные лица"
               action={
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-7 gap-1 text-xs"
-                  onClick={() => setContactDialogOpen(true)}
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  Добавить
-                </Button>
+                canEdit ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 gap-1 text-xs"
+                    onClick={() => setContactDialogOpen(true)}
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Добавить
+                  </Button>
+                ) : undefined
               }
             >
               {contactsList.length === 0 ? (
@@ -342,7 +358,7 @@ export function ClientCardPage() {
 
             <AddContactDialog
               clientId={id}
-              open={contactDialogOpen}
+              open={canEdit && contactDialogOpen}
               onOpenChange={setContactDialogOpen}
             />
 
@@ -385,7 +401,7 @@ export function ClientCardPage() {
       </SheetContent>
     </Sheet>
 
-    <Sheet open={editOpen} onOpenChange={setEditOpen}>
+    <Sheet open={canEdit && editOpen} onOpenChange={setEditOpen}>
       <SheetContent className="overflow-y-auto sm:max-w-xl">
         <SheetHeader className="mb-4">
           <SheetTitle>Редактирование клиента</SheetTitle>
@@ -402,7 +418,7 @@ export function ClientCardPage() {
       </SheetContent>
     </Sheet>
 
-    <Dialog open={deleteOpen} onOpenChange={(o) => !deleteClient.isPending && setDeleteOpen(o)}>
+    <Dialog open={canDelete && deleteOpen} onOpenChange={(o) => !deleteClient.isPending && setDeleteOpen(o)}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>Удалить клиента?</DialogTitle>

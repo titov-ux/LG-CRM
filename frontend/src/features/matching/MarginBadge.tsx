@@ -50,7 +50,7 @@ export function MarginBadge({ vacancy, candidate, hoursPerMonth, size = 'md' }: 
     hoursPerMonth,
   });
   // Порог «хорошей» маржи зависит от формы оформления:
-  // ТК РФ — 30% (обслуживание дороже), ИП/СМЗ — 25%. См. marginZone.
+  // Целевая маржа 30% для всех форм; у ИП/СМЗ есть промежуточная зона 15–30%. См. marginZone.
   const zoneClass = ZONE_BADGE[marginZone(comp.marginPct, candidate.employmentType)];
   const sizeClass = SIZE_CLASS[size];
 

@@ -272,6 +272,29 @@ export interface Lead {
   note?: string | null;
 }
 
+// === Tasks (внутренняя доска задач команды) ===
+export type TaskStatus = 'todo' | 'in_progress' | 'review' | 'done';
+
+export interface Task {
+  id: UUID;
+  title: string;
+  /** Описание / детали задачи (plain text, переносы строк сохраняются). */
+  description?: string | null;
+  status: TaskStatus;
+  priority: Priority;
+  /** Исполнитель. */
+  assigneeId: UUID | null;
+  /** Постановщик — кто создал задачу. */
+  authorId: UUID | null;
+  /** Срок выполнения (ISO YYYY-MM-DD). */
+  dueDate?: string | null;
+  daysInStatus: number;
+  /** Когда задачу перевели в «Готово» (ISO datetime); null — не выполнена. */
+  completedAt?: string | null;
+  createdAt: string;
+  kanbanOrder: number;
+}
+
 // === Candidates ===
 export type CandidateStatus =
   | 'new'
@@ -571,6 +594,7 @@ export interface Notification {
     | 'event'
     | 'tender'
     | 'lead'
+    | 'task'
     | 'hr_document';
   entityId?: UUID;
   /**
@@ -590,7 +614,8 @@ export type CommentEntityType =
   | 'vacancy'
   | 'client'
   | 'tender'
-  | 'lead';
+  | 'lead'
+  | 'task';
 
 export interface Comment {
   id: UUID;
@@ -624,7 +649,7 @@ export interface UpdateCommentRequest {
 // === Audit / Activity ===
 export interface ActivityEntry {
   id: UUID;
-  entityType: 'vacancy' | 'candidate' | 'client' | 'tender' | 'lead';
+  entityType: 'vacancy' | 'candidate' | 'client' | 'tender' | 'lead' | 'task';
   entityId: UUID;
   /** null = актёр удалён. */
   actorId: UUID | null;

@@ -58,6 +58,9 @@ class NotificationEntityType(str, enum.Enum):
     # Добавлено миграцией 0037_leads — @-упоминания в комментариях к лиду;
     # entity_id ссылается на leads.id.
     lead = "lead"
+    # Добавлено миграцией 0042_tasks — назначение/выполнение задачи и
+    # комментарии к ней; entity_id ссылается на tasks.id.
+    task = "task"
     # Добавлено миграцией 0036_hr_edo — кадровый документ; entity_id
     # ссылается на hr_documents.id.
     hr_document = "hr_document"

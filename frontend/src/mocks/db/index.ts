@@ -5,6 +5,7 @@ export { usersDb } from './users';
 export { clientsDb, contactsDb } from './clients';
 export { vacanciesDb, vacancyStatuses, persistVacanciesDb } from './vacancies';
 export { tendersDb, persistTendersDb } from './tenders';
+export { tasksDb, persistTasksDb } from './tasks';
 export { leadsDb, persistLeadsDb } from './leads';
 export { candidatesDb, candidateStatuses, persistCandidatesDb } from './candidates';
 export { notificationsDb, activityDb, auditDb } from './notifications';

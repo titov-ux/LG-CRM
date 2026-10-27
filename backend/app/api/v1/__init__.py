@@ -25,6 +25,7 @@ from app.api.v1.endpoints import (
     screening_ws,
     screenings,
     telegram,
+    tasks,
     tenders,
     users,
     vacancies,
@@ -38,6 +39,7 @@ api_router.include_router(contacts.router)
 api_router.include_router(documents.router)
 api_router.include_router(vacancies.router)
 api_router.include_router(tenders.router)
+api_router.include_router(tasks.router)
 api_router.include_router(leads.router)
 api_router.include_router(candidates.router)
 api_router.include_router(matching.matches_router)

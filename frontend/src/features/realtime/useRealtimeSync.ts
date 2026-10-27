@@ -17,6 +17,7 @@ import { candidateKeys } from '@/features/candidates/hooks';
 import { vacancyKeys } from '@/features/vacancies/hooks';
 import { tenderKeys } from '@/features/tenders/hooks';
 import { leadKeys } from '@/features/leads/hooks';
+import { taskKeys } from '@/features/tasks/hooks';
 import { matchKeys } from '@/features/matching/hooks';
 import { screeningKeys } from '@/features/screening/hooks';
 import {
@@ -84,7 +85,8 @@ export function useRealtimeSync(): void {
         event.type !== 'vacancy.changed' &&
         event.type !== 'candidate.changed' &&
         event.type !== 'tender.changed' &&
-        event.type !== 'lead.changed'
+        event.type !== 'lead.changed' &&
+        event.type !== 'task.changed'
       ) {
         return;
       }
@@ -100,6 +102,12 @@ export function useRealtimeSync(): void {
         if (event.id) {
           queryClient.invalidateQueries({ queryKey: leadKeys.byId(event.id) });
           queryClient.invalidateQueries({ queryKey: leadKeys.activity(event.id) });
+        }
+      } else if (event.entity === 'task') {
+        queryClient.invalidateQueries({ queryKey: taskKeys.all });
+        if (event.id) {
+          queryClient.invalidateQueries({ queryKey: taskKeys.byId(event.id) });
+          queryClient.invalidateQueries({ queryKey: taskKeys.activity(event.id) });
         }
       } else if (event.entity === 'tender') {
         queryClient.invalidateQueries({ queryKey: tenderKeys.all });

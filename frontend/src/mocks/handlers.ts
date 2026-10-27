@@ -14,6 +14,8 @@ import type {
   Lead,
   LeadStatus,
   Notification,
+  Task,
+  TaskStatus,
   Tender,
   TenderStatus,
   User,
@@ -33,6 +35,7 @@ import {
   leadsDb,
   persistCandidatesDb,
   persistLeadsDb,
+  persistTasksDb,
   persistTendersDb,
   persistVacanciesDb,
   resetPermissionsMatrix,
@@ -44,6 +47,7 @@ import {
   listScreenings,
   nextQuestionId,
   nextScreeningId,
+  tasksDb,
   tendersDb,
   updatePermissionRow,
   usersDb,
@@ -58,6 +62,7 @@ import type {
   ScreeningSession,
 } from '@/api/screenings';
 import { tenderStatuses } from '@/features/tenders/statuses';
+import { taskStatuses } from '@/features/tasks/statuses';
 import { leadStatusLabel } from '@/features/leads/statuses';
 import { hrEdoHandlers } from './hrEdoHandlers';
 
@@ -238,6 +243,9 @@ function candidateStatusLabel(id: CandidateStatus): string {
 }
 function vacancyStatusLabel(id: VacancyStatus): string {
   return vacancyStatuses.find((s) => s.id === id)?.label ?? id;
+}
+function taskStatusLabel(id: TaskStatus): string {
+  return taskStatuses.find((s) => s.id === id)?.label ?? id;
 }
 function tenderStatusLabel(id: TenderStatus): string {
   return tenderStatuses.find((s) => s.id === id)?.label ?? id;
@@ -938,6 +946,133 @@ export const handlers = [
     if (idx === -1) return new HttpResponse(null, { status: 404 });
     tendersDb.splice(idx, 1);
     persistTendersDb();
+    return HttpResponse.json({ ok: true });
+  }),
+
+  // === Tasks ===
+  http.put(url('/tasks/kanban-order'), async ({ request }) => {
+    const body = (await request.json()) as {
+      updates: { id: string; status: TaskStatus; kanbanOrder: number }[];
+    };
+    const before = new Map(tasksDb.map((t) => [t.id, t.status]));
+    const updated = applyKanbanReorder(tasksDb, body.updates);
+    const actorId = actorIdFromRequest(request);
+    for (const u of body.updates) {
+      const prev = before.get(u.id);
+      if (prev && prev !== u.status) {
+        const t = tasksDb.find((x) => x.id === u.id);
+        if (t) t.completedAt = u.status === 'done' ? new Date().toISOString() : null;
+        pushActivity({
+          entityType: 'task',
+          entityId: u.id,
+          actorId,
+          kind: 'status',
+          text: `Статус изменён: ${taskStatusLabel(prev)} → ${taskStatusLabel(u.status)}`,
+        });
+      }
+    }
+    persistTasksDb();
+    return HttpResponse.json(updated);
+  }),
+  http.get(url('/tasks'), ({ request }) => {
+    const u = new URL(request.url);
+    const search = u.searchParams.get('search')?.toLowerCase() ?? '';
+    const priority = u.searchParams.get('priority');
+    const assigneeId = u.searchParams.get('assigneeId');
+    const authorId = u.searchParams.get('authorId');
+    const items = tasksDb.filter((t) => {
+      if (
+        search &&
+        !t.title.toLowerCase().includes(search) &&
+        !(t.description ?? '').toLowerCase().includes(search)
+      )
+        return false;
+      if (priority && t.priority !== priority) return false;
+      if (assigneeId && t.assigneeId !== assigneeId) return false;
+      if (authorId && t.authorId !== authorId) return false;
+      return true;
+    });
+    return HttpResponse.json(
+      paginate(
+        sortByKanbanOrder(items),
+        u.searchParams.get('page'),
+        u.searchParams.get('pageSize'),
+      ),
+    );
+  }),
+  http.post(url('/tasks'), async ({ request }) => {
+    const body = (await request.json()) as Partial<Task>;
+    const status = body.status ?? 'todo';
+    const created: Task = {
+      id: `task-${Date.now()}`,
+      title: body.title ?? 'Без названия',
+      description: body.description ?? null,
+      status,
+      priority: body.priority ?? 'medium',
+      assigneeId: body.assigneeId ?? null,
+      authorId: actorIdFromRequest(request),
+      dueDate: body.dueDate ?? null,
+      daysInStatus: 0,
+      completedAt: status === 'done' ? new Date().toISOString() : null,
+      createdAt: new Date().toISOString(),
+      kanbanOrder: nextKanbanOrder(tasksDb, status),
+    };
+    tasksDb.unshift(created);
+    persistTasksDb();
+    pushActivity({
+      entityType: 'task',
+      entityId: created.id,
+      actorId: actorIdFromRequest(request),
+      kind: 'create',
+      text: `Задача «${created.title}» создана`,
+    });
+    return HttpResponse.json(created, { status: 201 });
+  }),
+  http.get(url('/tasks/:id'), ({ params }) => {
+    const t = tasksDb.find((x) => x.id === params.id);
+    return t ? HttpResponse.json(t) : new HttpResponse(null, { status: 404 });
+  }),
+  http.get(url('/tasks/:id/activity'), ({ params }) =>
+    HttpResponse.json(
+      activityDb
+        .filter((a) => a.entityType === 'task' && a.entityId === params.id)
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
+    ),
+  ),
+  http.patch(url('/tasks/:id/status'), async ({ params, request }) => {
+    const body = (await request.json()) as { status: TaskStatus };
+    const t = tasksDb.find((x) => x.id === params.id);
+    if (!t) return new HttpResponse(null, { status: 404 });
+    const prev = t.status;
+    if (prev !== body.status) {
+      t.status = body.status;
+      t.daysInStatus = 0;
+      t.completedAt = body.status === 'done' ? new Date().toISOString() : null;
+      t.kanbanOrder = nextKanbanOrder(tasksDb, body.status);
+      pushActivity({
+        entityType: 'task',
+        entityId: t.id,
+        actorId: actorIdFromRequest(request),
+        kind: 'status',
+        text: `Статус изменён: ${taskStatusLabel(prev)} → ${taskStatusLabel(body.status)}`,
+      });
+    }
+    persistTasksDb();
+    return HttpResponse.json(t);
+  }),
+  http.patch(url('/tasks/:id'), async ({ params, request }) => {
+    const patch = (await request.json()) as Partial<Task>;
+    const t = tasksDb.find((x) => x.id === params.id);
+    if (!t) return new HttpResponse(null, { status: 404 });
+    Object.assign(t, patch);
+    persistTasksDb();
+    return HttpResponse.json(t);
+  }),
+  http.delete(url('/tasks/:id'), ({ params }) => {
+    const idx = tasksDb.findIndex((x) => x.id === params.id);
+    if (idx === -1) return new HttpResponse(null, { status: 404 });
+    tasksDb.splice(idx, 1);
+    persistTasksDb();
     return HttpResponse.json({ ok: true });
   }),
 

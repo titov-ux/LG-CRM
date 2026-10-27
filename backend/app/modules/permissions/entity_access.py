@@ -77,6 +77,13 @@ async def ensure_entity_access(
         await tenders_service.get_tender(db, user, entity_id)
         return
 
+    if kind == "task":
+        from app.modules.tasks import service as tasks_service
+
+        # Доска задач общая: видеть (и комментировать) может любой сотрудник.
+        await tasks_service.get_task(db, user, entity_id)
+        return
+
     if kind == "client":
         from app.modules.clients import service as clients_service
 

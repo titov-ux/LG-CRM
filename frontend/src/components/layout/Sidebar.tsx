@@ -15,13 +15,13 @@ import {
   Gavel,
   Target,
   Home,
+  ListTodo,
   MessageSquare,
   Settings,
   ShieldCheck,
   Stamp,
   TrendingUp,
   Users,
-  Video,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Link, useRouterState } from '@tanstack/react-router';
@@ -78,12 +78,15 @@ const GROUPS: NavGroup[] = [
       { to: '/contacts', label: 'Контакты', icon: ContactRound },
       { to: '/chat', label: 'Чат', icon: MessageSquare },
       { to: '/calendar', label: 'Календарь', icon: Calendar },
-      {
-        to: '/video-interviews',
-        label: 'Видеоинтервью',
-        icon: Video,
-        anyAction: ['screening:run', 'screening:view_report'],
-      },
+      { to: '/tasks', label: 'Задачи', icon: ListTodo },
+      // Видеоинтервью временно скрыты из меню (раздел доступен по прямой ссылке
+      // /video-interviews). Чтобы вернуть — раскомментировать пункт и импорт Video.
+      // {
+      //   to: '/video-interviews',
+      //   label: 'Видеоинтервью',
+      //   icon: Video,
+      //   anyAction: ['screening:run', 'screening:view_report'],
+      // },
     ],
   },
   {

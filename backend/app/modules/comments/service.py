@@ -70,12 +70,13 @@ async def _notify_comment_recipients(
 
     Для кандидата — его ответственный рекрутер (`recruiter_id`); для вакансии —
     все прикреплённые рекрутеры (M2M) И ответственный аккаунт-менеджер
-    (`account_manager_id`). Автор и уже @-упомянутые исключаются — последние
+    (`account_manager_id`); для задачи — постановщик и исполнитель. Автор и уже @-упомянутые исключаются — последние
     и так получат `mention`-уведомление, дублировать не нужно. Для
     client/contact заинтересованных не выводим — пропускаем.
     """
     # Локальные импорты, чтобы не создавать циклических зависимостей модулей.
     from app.modules.candidates.models import Candidate
+    from app.modules.tasks.models import Task
     from app.modules.vacancies.models import Vacancy, VacancyRecruiter
 
     recipients: set[uuid.UUID] = set()
@@ -100,6 +101,15 @@ async def _notify_comment_recipients(
         if vac.account_manager_id is not None:
             recipients.add(vac.account_manager_id)
         label = f"вакансии «{vac.title}»"
+    elif entity_type == CommentEntityType.task:
+        task = await db.get(Task, entity_id)
+        if task is None:
+            return
+        # Постановщик и исполнитель задачи.
+        recipients.update(
+            uid for uid in (task.author_id, task.assignee_id) if uid is not None
+        )
+        label = f"задаче «{task.title}»"
     else:
         return
 

@@ -27,6 +27,7 @@ export const auditApi = {
       client: 'clients',
       tender: 'tenders',
       lead: 'leads',
+      task: 'tasks',
     };
     return api.get(`${entityPath[entityType]}/${entityId}/activity`).json<ActivityEntry[]>();
   },

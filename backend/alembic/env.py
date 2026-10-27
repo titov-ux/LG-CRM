@@ -21,6 +21,7 @@ from app.modules.clients.models import Client, Contact, LegalEntity  # noqa: F40
 from app.modules.vacancies.models import Vacancy, VacancyRecruiter  # noqa: F401
 from app.modules.tenders.models import Tender  # noqa: F401
 from app.modules.leads.models import Lead  # noqa: F401
+from app.modules.tasks.models import Task  # noqa: F401
 from app.modules.candidates.models import Candidate  # noqa: F401
 from app.modules.matching.models import VacancyCandidate  # noqa: F401
 from app.modules.comments.models import Comment  # noqa: F401

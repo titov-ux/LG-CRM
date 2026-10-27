@@ -19,6 +19,7 @@ class CommentEntityType(str, enum.Enum):
     client = "client"
     tender = "tender"
     lead = "lead"
+    task = "task"
 
 
 def _enum_values(e):

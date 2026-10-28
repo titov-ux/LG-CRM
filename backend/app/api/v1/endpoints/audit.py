@@ -20,6 +20,8 @@ from app.modules.audit.models import ActivityEntityType
 from app.modules.audit.schemas import ActivityResponse, AuditResponse
 from app.modules.auth.dependencies import get_current_user, require_roles
 from app.modules.leads import service as leads_service
+from app.modules.tenders import service as tenders_service
+from app.modules.vacancies import service as vacancies_service
 from app.modules.permissions.dependencies import require_action_dep
 from app.modules.users.models import Role, User
 
@@ -92,9 +94,11 @@ activity_router = APIRouter(tags=["audit"])
 )
 async def vacancy_activity(
     entity_id: uuid.UUID,
-    _: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[ActivityResponse]:
+    # Та же видимость, что у карточки: account_manager — только свои вакансии.
+    await vacancies_service.get_vacancy(db, user, entity_id)
     return await _activity_for(db, ActivityEntityType.vacancy, entity_id)
 
 
@@ -134,9 +138,11 @@ async def client_activity(
 )
 async def tender_activity(
     entity_id: uuid.UUID,
-    _: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[ActivityResponse]:
+    # Та же видимость, что у карточки тендера.
+    await tenders_service.get_tender(db, user, entity_id)
     return await _activity_for(db, ActivityEntityType.tender, entity_id)
 
 

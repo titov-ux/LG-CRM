@@ -66,7 +66,7 @@ interface NavGroup {
 }
 
 const GROUPS: NavGroup[] = [
-  { items: [{ to: '/dashboard', label: 'Главная', icon: Home }] },
+  { items: [{ to: '/dashboard', label: 'Главная', icon: Home, adminOnly: true }] },
   {
     label: 'Работа',
     items: [

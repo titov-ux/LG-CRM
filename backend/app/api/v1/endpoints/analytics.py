@@ -1,7 +1,9 @@
 """Эндпоинты /analytics/*.
 
-Доступ — авторизованный пользователь. Контентовая фильтрация по ролям
-(account_manager видит только свои) появится в Этапе 8 (см. план §4).
+Доступ — только администратор: на роутере стоит `require_roles(admin)`.
+Дашборд («Главная») и раздел «Аналитика» показывают маржу по клиентам и
+рекрутерам, ФИО кандидатов и вакансии по всей компании, поэтому другим ролям
+весь раздел закрыт целиком (решение от 29.10.2026).
 """
 from __future__ import annotations
 
@@ -36,7 +38,7 @@ from app.modules.analytics.worklog_schemas import (
 )
 from app.modules.chat.analytics import chat_stats
 from app.modules.screening.metrics import SCREENING_METRICS
-from app.modules.auth.dependencies import get_current_user
+from app.modules.auth.dependencies import get_current_user, require_roles
 from app.modules.users.models import Role, User
 
 # Учёт времени (страница «Аналитика») — только администратор. Жёсткое правило
@@ -51,7 +53,12 @@ async def _ensure_worklog_access(db: AsyncSession, current: User) -> None:
         )
 
 
-router = APIRouter(prefix="/analytics", tags=["analytics"])
+router = APIRouter(
+    prefix="/analytics",
+    tags=["analytics"],
+    # Весь раздел — только администратор (дашборд, отчёты, учёт времени).
+    dependencies=[Depends(require_roles(Role.admin.value))],
+)
 
 
 @router.get("/summary", response_model=DashboardSummary, summary="Сводка дашборда")

@@ -74,7 +74,7 @@ export function VacancyImportDialog({ open, onOpenChange, onApply }: Props) {
     if (parsed.format) items.push({ label: 'Формат', value: parsed.format });
     if (parsed.priority) items.push({ label: 'Приоритет', value: PRIORITY_LABEL[parsed.priority] });
     if (parsed.deadline) items.push({ label: 'Дедлайн', value: formatDateRu(parsed.deadline) });
-    if (parsed.rateClient) items.push({ label: 'Ставка клиента', value: `${parsed.rateClient} ₽/ч` });
+    if (parsed.rateClient) items.push({ label: 'Ставка клиента', value: `${parsed.rateClient} в час` });
     if (parsed.stack) items.push({ label: 'Стек', value: parsed.stack });
     if (parsed.requirements) items.push({ label: 'Требования', value: 'распознаны' });
     if (parsed.description) items.push({ label: 'Описание', value: 'распознано' });

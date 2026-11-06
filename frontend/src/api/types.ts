@@ -77,6 +77,9 @@ export type ClientStatus = 'lead' | 'in_progress' | 'active' | 'paused' | 'archi
  */
 export type ClientKind = 'direct' | 'intermediary';
 
+/** Валюта расчётов с клиентом: RUB — российские клиенты, USD — иностранные заказчики. */
+export type Currency = 'RUB' | 'USD';
+
 export interface LegalEntity {
   id: UUID;
   name: string;
@@ -95,6 +98,8 @@ export interface Client {
   clientKind: ClientKind;
   /** Ссылка или @username общего Telegram-чата с клиентом */
   telegramChat?: string;
+  /** Валюта расчётов. USD — иностранный заказчик: ставки его вакансий в $/час. */
+  currency: Currency;
   vacanciesCount: number;
   contactsCount: number;
 }
@@ -162,8 +167,11 @@ export interface Vacancy {
   grade: Grade;
   stack: string[];
   format: WorkFormat;
-  /** Ставка клиента в ₽/час. Используется для аутстаффа; для агентских вакансий не применяется. */
+  /** Ставка клиента в час — в валюте `currency` (₽ или $). Используется для аутстаффа;
+   *  для агентских вакансий не применяется. */
   rateClient: number;
+  /** Валюта rateClient = валюта клиента (только чтение; меняется в карточке клиента). */
+  currency: Currency;
   /** Верхняя граница оклада в ₽/мес. Используется только для агентских вакансий, опционально.
    *  null/undefined трактуем одинаково — «не указан». */
   salaryMax?: number | null;

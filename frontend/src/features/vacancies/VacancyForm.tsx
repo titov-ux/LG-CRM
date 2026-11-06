@@ -32,7 +32,9 @@ import {
   CommandItem,
   CommandList,
 } from '@/components/ui/command';
-import { useClients } from '@/features/clients/hooks';
+import { useAllClients } from '@/features/clients/hooks';
+import { useUsdRub } from '@/features/fx/hooks';
+import { currencySign, formatMoney } from '@/lib/currency';
 import { useUsers } from '@/features/users/hooks';
 import { EngagementTypeField } from '@/components/forms/EngagementTypeField';
 import { DateField } from '@/components/forms/DateField';
@@ -77,7 +79,7 @@ const schema = z
     // см. superRefine ниже. Для агентских вакансий значение не используется.
     rateClient: z.coerce
       .number()
-      .max(MAX_CLIENT_RATE, `Не больше ${MAX_CLIENT_RATE.toLocaleString('ru-RU')} ₽/ч`)
+      .max(MAX_CLIENT_RATE, `Не больше ${MAX_CLIENT_RATE.toLocaleString('ru-RU')} в час`)
       .optional(),
     salaryMax: optionalPositiveNumber,
     positions: z.coerce.number().int().positive(),
@@ -115,7 +117,7 @@ export function VacancyForm({
   isPending,
   submitLabel = 'Сохранить',
 }: Props) {
-  const { data: clientsData } = useClients();
+  const { data: clientsData } = useAllClients();
   const { data: users } = useUsers();
   // В качестве «ответственных рекрутеров» можно назначать и админов — они тоже ведут вакансии.
   const recruiters = (users ?? []).filter((u) => u.role === 'recruiter' || u.role === 'admin');
@@ -170,6 +172,12 @@ export function VacancyForm({
       form.setValue('accountManagerId', nextAccountManagerId, { shouldDirty: false, shouldValidate: false });
     }
   }, [watchedClientId, clientsData, form, shouldAutofillAm]);
+
+  // Валюта ставки = валюта клиента: у иностранных заказчиков — $/ч.
+  const selectedClient = clientsData?.items.find((c) => c.id === watchedClientId);
+  const rateCurrency = selectedClient?.currency ?? 'RUB';
+  const usdRub = useUsdRub();
+  const watchedRate = useWatch({ control: form.control, name: 'rateClient' });
 
   const applyParsed = (parsed: ParsedVacancy) => {
     const setIf = (key: keyof VacancyFormValues, value: unknown) => {
@@ -332,7 +340,7 @@ export function VacancyForm({
               name="rateClient"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Ставка клиента (₽/ч)</FormLabel>
+                  <FormLabel>Ставка клиента ({currencySign(rateCurrency)}/ч)</FormLabel>
                   <FormControl>
                     <MoneyInput
                       placeholder="0"
@@ -341,8 +349,17 @@ export function VacancyForm({
                       value={field.value}
                       onBlur={field.onBlur}
                       onChange={field.onChange}
+                      allowDecimals={rateCurrency === 'USD'}
                     />
                   </FormControl>
+                  {rateCurrency === 'USD' && (
+                    <p className="text-[12px] text-muted-foreground">
+                      Иностранный заказчик — ставка в долларах.
+                      {usdRub && Number(watchedRate) > 0
+                        ? ` ≈ ${formatMoney(Math.round(Number(watchedRate) * usdRub), 'RUB')}/ч по курсу ЦБ`
+                        : ''}
+                    </p>
+                  )}
                   <FormMessage />
                 </FormItem>
               )}

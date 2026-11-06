@@ -7,7 +7,9 @@ import {
   type MarginZone,
   type MatchCompensation,
 } from '@/lib/compensation';
-import type { Candidate, Vacancy } from '@/api/types';
+import type { Candidate, Currency, Vacancy } from '@/api/types';
+import { formatMoney, formatUsdRate, toRub } from '@/lib/currency';
+import { useFxRates } from '@/features/fx/hooks';
 
 /**
  * Компактный бейдж маржи для пары «вакансия ↔ кандидат».
@@ -20,7 +22,7 @@ import type { Candidate, Vacancy } from '@/api/types';
  */
 
 interface Props {
-  vacancy: Pick<Vacancy, 'rateClient' | 'engagementType'>;
+  vacancy: Pick<Vacancy, 'rateClient' | 'engagementType'> & Partial<Pick<Vacancy, 'currency'>>;
   candidate: Pick<Candidate, 'rateMonth' | 'employmentType' | 'engagementType'>;
   hoursPerMonth: number;
   /** 'sm' — для плотных списков (диалог), 'md' — для карточек. */
@@ -40,11 +42,27 @@ const SIZE_CLASS: Record<NonNullable<Props['size']>, string> = {
 };
 
 export function MarginBadge({ vacancy, candidate, hoursPerMonth, size = 'md' }: Props) {
+  // Хук — до любых early return (rules of hooks).
+  const fx = useFxRates().data;
   // Жёсткая страховка: маржа не имеет смысла, если хоть одна из сторон — агентская сделка.
   if (!pairSupportsMargin(vacancy, candidate)) return null;
 
+  // Иностранный заказчик платит в $ — для маржи переводим ставку в ₽ по курсу ЦБ.
+  const currency: Currency = vacancy.currency ?? 'RUB';
+  const rateClientRub = toRub(vacancy.rateClient, currency, fx?.usdRub);
+  if (rateClientRub == null) {
+    return (
+      <span
+        className={`tnum inline-flex cursor-default items-center justify-center rounded-md bg-muted font-semibold text-muted-foreground ${SIZE_CLASS[size]}`}
+        title="Нет курса $ → ₽ — маржу посчитать нельзя"
+      >
+        $?
+      </span>
+    );
+  }
+
   const comp = calcMatchCompensation({
-    rateClient: vacancy.rateClient,
+    rateClient: rateClientRub,
     rateMonth: candidate.rateMonth,
     employmentType: candidate.employmentType,
     hoursPerMonth,
@@ -69,6 +87,9 @@ export function MarginBadge({ vacancy, candidate, hoursPerMonth, size = 'md' }: 
         <MarginTooltipContent
           comp={comp}
           rateClient={vacancy.rateClient}
+          currency={currency}
+          usdRub={fx?.usdRub ?? null}
+          fxDate={fx?.date ?? null}
           hoursPerMonth={hoursPerMonth}
           employmentType={candidate.employmentType}
         />
@@ -80,11 +101,22 @@ export function MarginBadge({ vacancy, candidate, hoursPerMonth, size = 'md' }: 
 interface TooltipContentProps {
   comp: MatchCompensation;
   rateClient: number;
+  currency: Currency;
+  usdRub: number | null;
+  fxDate: string | null;
   hoursPerMonth: number;
   employmentType: Candidate['employmentType'];
 }
 
-function MarginTooltipContent({ comp, rateClient, hoursPerMonth, employmentType }: TooltipContentProps) {
+function MarginTooltipContent({
+  comp,
+  rateClient,
+  currency,
+  usdRub,
+  fxDate,
+  hoursPerMonth,
+  employmentType,
+}: TooltipContentProps) {
   return (
     <div className="space-y-1.5">
       <div className="font-semibold">Расчёт маржи</div>
@@ -101,7 +133,8 @@ function MarginTooltipContent({ comp, rateClient, hoursPerMonth, employmentType 
         <span className="tnum text-right">{formatMoneyRub(comp.candidateNet)} ₽</span>
       </div>
       <div className="border-t pt-1 text-[10px] text-muted-foreground">
-        {rateClient.toLocaleString('ru-RU')} ₽/ч × {hoursPerMonth} ч · {employmentType} {comp.taxLabel}
+        {formatMoney(rateClient, currency)}/ч × {hoursPerMonth} ч · {employmentType} {comp.taxLabel}
+        {currency === 'USD' && usdRub ? <div>{formatUsdRate(usdRub, fxDate)}</div> : null}
       </div>
     </div>
   );

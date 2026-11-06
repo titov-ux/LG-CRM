@@ -14,6 +14,7 @@ from app.api.v1.endpoints import (
     contacts,
     documents,
     files,
+    fx,
     hr_edo,
     hr_sign_public,
     integrations,
@@ -47,6 +48,7 @@ api_router.include_router(matching.vacancy_matches_router)
 api_router.include_router(comments.router)
 api_router.include_router(notifications.router)
 api_router.include_router(files.router)
+api_router.include_router(fx.router)
 api_router.include_router(audit.router)
 api_router.include_router(audit.activity_router)
 api_router.include_router(analytics.router)

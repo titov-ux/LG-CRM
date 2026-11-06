@@ -5,6 +5,7 @@ import { DaysBadge } from '@/components/common/DaysBadge';
 import { AvatarStack } from '@/components/common/AvatarStack';
 import { EngagementBadge } from '@/components/common/EngagementBadge';
 import { formatMoneyRub } from '@/lib/utils';
+import { formatClientRate } from '@/lib/currency';
 
 interface Props {
   vacancy: Vacancy;
@@ -19,7 +20,7 @@ function vacancyPay(vacancy: Vacancy): string {
       : 'оклад не указан';
   }
   return vacancy.rateClient > 0
-    ? `${formatMoneyRub(vacancy.rateClient)} ₽/час`
+    ? formatClientRate(vacancy)
     : 'ставка не указана';
 }
 

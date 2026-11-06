@@ -37,7 +37,7 @@ import {
   useVacancyActivity,
 } from './hooks';
 import { VacancyForm, type VacancyFormValues } from './VacancyForm';
-import { useClients } from '@/features/clients/hooks';
+import { useAllClients } from '@/features/clients/hooks';
 import { useUsers } from '@/features/users/hooks';
 import { useCandidates } from '@/features/candidates/hooks';
 import { vacancyStatuses, isFinalVacancyStatus } from '@/mocks/db/vacancies';
@@ -56,6 +56,8 @@ import {
 } from '@/features/matching/hooks';
 import { MatchCompensationRow } from '@/features/matching/MatchCompensationRow';
 import { DEFAULT_HOURS_PER_MONTH, vacancyMaxNetSalary } from '@/lib/compensation';
+import { formatClientRate, formatMoney, formatUsdRate, toRub } from '@/lib/currency';
+import { useFxRates } from '@/features/fx/hooks';
 import { HTTPError } from 'ky';
 import {
   applyImprovementToCandidate,
@@ -171,7 +173,7 @@ export function VacancyCardPage() {
   const { id } = useParams({ from: '/_authed/vacancies/$id' });
   const { data: vacancy, isLoading } = useVacancy(id);
   const { data: activity, isLoading: activityLoading, isError: activityError } = useVacancyActivity(id);
-  const { data: clientsData } = useClients();
+  const { data: clientsData } = useAllClients();
   const { data: usersData } = useUsers();
   // PERF/BUG: раньше тянули первую страницу /candidates (до 50 шт) и фильтровали
   // на клиенте по c.vacancyIds.includes(vacancy.id). Это и баг (на больших
@@ -220,6 +222,9 @@ export function VacancyCardPage() {
   const [sortByScore, setSortByScore] = useState(false);
   const [onlyGoodFit, setOnlyGoodFit] = useState(false);
   const hoursPerMonth = DEFAULT_HOURS_PER_MONTH;
+  // Курс ЦБ — для вакансий иностранных заказчиков (ставка в $): «оклад до» считаем в ₽.
+  const fx = useFxRates().data;
+  const rateClientRub = vacancy ? toRub(vacancy.rateClient, vacancy.currency, fx?.usdRub) : null;
 
   const close = () => navigate({ to: '/vacancies' });
   const client = clientsData?.items.find((c) => c.id === vacancy?.clientId);
@@ -640,17 +645,36 @@ export function VacancyCardPage() {
                 />
               ) : (
                 <>
-                  <Field label="Ставка для клиента" value={`${formatMoneyRub(vacancy.rateClient)} ₽/час`} />
+                  <Field
+                    label="Ставка для клиента"
+                    value={
+                      vacancy.currency === 'USD' ? (
+                        <span className="flex flex-col gap-0.5 leading-tight">
+                          <span>{formatClientRate(vacancy)}</span>
+                          {fx?.usdRub ? (
+                            <span className="text-[12px] text-muted-foreground">
+                              ≈ {formatMoney(Math.round(vacancy.rateClient * fx.usdRub), 'RUB')}/час ·{' '}
+                              {formatUsdRate(fx.usdRub, fx.date)}
+                            </span>
+                          ) : (
+                            <span className="text-[12px] text-muted-foreground">курс $ недоступен</span>
+                          )}
+                        </span>
+                      ) : (
+                        formatClientRate(vacancy)
+                      )
+                    }
+                  />
                   <Field
                     label="Оклад до"
                     value={
-                      vacancy.rateClient > 0 ? (
+                      rateClientRub != null && rateClientRub > 0 ? (
                         <span className="flex flex-col gap-0.5 text-[13px] leading-tight">
                           <span>
                             <span className="text-muted-foreground">ИП / СМЗ:</span>{' '}
                             {formatMoneyRub(
                               vacancyMaxNetSalary({
-                                rateClient: vacancy.rateClient,
+                                rateClient: rateClientRub,
                                 employmentType: 'ИП',
                                 hoursPerMonth,
                               }),
@@ -661,7 +685,7 @@ export function VacancyCardPage() {
                             <span className="text-muted-foreground">ТК РФ:</span>{' '}
                             {formatMoneyRub(
                               vacancyMaxNetSalary({
-                                rateClient: vacancy.rateClient,
+                                rateClient: rateClientRub,
                                 employmentType: 'ТК РФ',
                                 hoursPerMonth,
                               }),

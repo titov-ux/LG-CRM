@@ -98,6 +98,7 @@ export function ClientsListPage() {
         accountManagerId: values.accountManagerId,
         status: values.status,
         clientKind: values.clientKind,
+        currency: values.currency,
         ...(values.telegramChat.trim() ? { telegramChat: values.telegramChat.trim() } : {}),
       },
       {
@@ -333,7 +334,17 @@ export function ClientsListPage() {
                   className="cursor-pointer"
                   onClick={() => navigate({ to: '/clients/$id', params: { id: c.id } })}
                 >
-                  <TableCell className="font-semibold">{c.name}</TableCell>
+                  <TableCell className="font-semibold">
+                    {c.name}
+                    {c.currency === 'USD' && (
+                      <span
+                        className="ml-1.5 inline-flex items-center rounded bg-emerald-100 px-1 text-[10.5px] font-semibold text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
+                        title="Иностранный заказчик — расчёты в долларах"
+                      >
+                        $
+                      </span>
+                    )}
+                  </TableCell>
                   <TableCell className="text-[12.5px] text-muted-foreground">
                     {c.legalEntities.length === 1
                       ? c.legalEntities[0].name

@@ -22,6 +22,7 @@ from app.modules.audit.models import AuditEntry
 from app.modules.calendar.models import CalendarEvent, EventStatus, EventType
 from app.modules.candidates.models import Candidate, CandidateStatus
 from app.modules.clients.models import Client, ClientKind, ClientStatus
+from app.modules.fx import service as fx_service
 from app.modules.matching.models import MatchStatus, VacancyCandidate
 from app.modules.users.models import User
 from app.modules.vacancies.models import Vacancy, VacancyStatus
@@ -596,7 +597,8 @@ async def time_to_hire(db: AsyncSession, *, period: Period | None = None) -> dic
 # ---------------------------------------------------------------------------
 
 
-# Сколько рабочих часов в месяце — для перевода Vacancy.rate_client (₽/час)
+# Сколько рабочих часов в месяце — для перевода Vacancy.rate_client (₽/час;
+# у иностранных заказчиков $/час — пересчитывается в ₽ в _hired_placements)
 # в месячный поток для расчёта маржи.
 WORKING_HOURS_PER_MONTH = 160
 
@@ -648,6 +650,7 @@ async def _hired_placements(db: AsyncSession, period: Period) -> list[_Placement
                 VacancyCandidate.added_at,
                 Vacancy.client_id,
                 Vacancy.rate_client,
+                Vacancy.currency,
                 Vacancy.created_at,
             )
             .select_from(Candidate)
@@ -671,10 +674,15 @@ async def _hired_placements(db: AsyncSession, period: Period) -> list[_Placement
         )
     ).all()
 
+    # Ставки иностранных заказчиков — в USD; маржу считаем в ₽ по курсу ЦБ.
+    usd_rub: float | None = None
+    if any(row[8] == "USD" for row in rows):
+        usd_rub = (await fx_service.get_usd_rub()).usd_rub
+
     best: dict[uuid.UUID, tuple[tuple[int, datetime], _Placement]] = {}
     for (
         cand_id, recruiter_id, rate_month, hired_at,
-        match_status, added_at, client_id, rate_client, vac_created,
+        match_status, added_at, client_id, rate_client, currency, vac_created,
     ) in rows:
         placement = _Placement(
             candidate_id=cand_id,
@@ -685,7 +693,11 @@ async def _hired_placements(db: AsyncSession, period: Period) -> list[_Placement
         score = (0, datetime.min.replace(tzinfo=timezone.utc))
         if client_id is not None and match_status is not None:
             placement.client_id = client_id
-            placement.rate_client = float(rate_client) if rate_client is not None else None
+            placement.rate_client = (
+                fx_service.to_rub(float(rate_client), currency, usd_rub)
+                if rate_client is not None
+                else None
+            )
             placement.vacancy_created_at = vac_created
             score = (_PLACEMENT_RANK[match_status], added_at or score[1])
         current = best.get(cand_id)

@@ -15,10 +15,11 @@ import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { EngagementBadge } from '@/components/common/EngagementBadge';
 import { useVacancies } from '@/features/vacancies/hooks';
-import { useClients } from '@/features/clients/hooks';
+import { useAllClients } from '@/features/clients/hooks';
 import { useCandidate } from '@/features/candidates/hooks';
 import { vacancyStatuses } from '@/mocks/db/vacancies';
 import { formatMoneyRub } from '@/lib/utils';
+import { formatClientRate } from '@/lib/currency';
 import { cn } from '@/lib/utils';
 import { engagementLabel } from '@/lib/engagement';
 import { useAttachCandidate } from './hooks';
@@ -82,7 +83,7 @@ export function AttachVacancyDialog({ open, onOpenChange, candidateId, excludeId
   const [salaryConfirmFor, setSalaryConfirmFor] = useState<Vacancy | null>(null);
   const { data: candidate } = useCandidate(candidateId);
   const { data, isLoading } = useVacancies({ search });
-  const { data: clientsData } = useClients();
+  const { data: clientsData } = useAllClients();
   const attach = useAttachCandidate();
   // Часы в месяц — единый параметр расчёта маржи, задаётся в карточке вакансии.
   const hoursPerMonth = useMemo(
@@ -449,7 +450,7 @@ function VacancyRow({
               ? vacancy.salaryMax
                 ? `до ${formatMoneyRub(vacancy.salaryMax)} ₽/мес`
                 : '—'
-              : `${formatMoneyRub(vacancy.rateClient)} ₽/ч`}
+              : formatClientRate(vacancy, 'ч')}
             {candidate && pairSupportsMargin(vacancy, candidate) && (
               <MarginBadge
                 vacancy={vacancy}

@@ -64,6 +64,7 @@ def _to_dto(vac: VacancyModel, candidates_count: int = 0) -> VacancyResponse:
         stack=list(vac.stack or []),
         format=vac.format_,
         rate_client=float(vac.rate_client or 0),
+        currency=vac.currency or "RUB",
         salary_max=float(vac.salary_max) if vac.salary_max is not None else None,
         positions=vac.positions,
         status=vac.status,

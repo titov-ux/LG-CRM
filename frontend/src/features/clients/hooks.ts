@@ -32,6 +32,14 @@ export function useClients(params: ClientsListParams = {}) {
   });
 }
 
+/** Полный справочник клиентов (до 200 — лимит бэкенда) для подстановки имён
+ *  в вакансии, кандидатов, контакты. Без pageSize бэкенд отдаёт первые 50:
+ *  после слияния баз 26.10.2026 клиентов стало 73, и у вакансий с клиентами
+ *  из «хвоста» списка имя не находилось («—» вместо названия). */
+export function useAllClients() {
+  return useClients({ pageSize: 200 });
+}
+
 export function useClient(id: UUID | undefined) {
   return useQuery({
     queryKey: clientKeys.byId(id ?? ''),

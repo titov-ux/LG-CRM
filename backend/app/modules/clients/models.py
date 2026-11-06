@@ -73,6 +73,11 @@ class Client(Base, TimestampsMixin, SoftDeleteMixin):
         index=True,
     )
     telegram_chat: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Валюта расчётов: RUB — российские клиенты, USD — иностранные заказчики.
+    # Копия хранится в vacancies.currency (см. миграцию 0043_currency).
+    currency: Mapped[str] = mapped_column(
+        String(3), nullable=False, default="RUB", server_default="RUB"
+    )
 
     legal_entities: Mapped[list["LegalEntity"]] = relationship(
         back_populates="client",

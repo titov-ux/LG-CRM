@@ -27,7 +27,7 @@ import {
   vacancyKeys,
 } from './hooks';
 import { FinalStatusCommentDialog } from './FinalStatusCommentDialog';
-import { useClients } from '@/features/clients/hooks';
+import { useAllClients } from '@/features/clients/hooks';
 import { useUsers } from '@/features/users/hooks';
 import { VacancyKanbanCard } from './VacancyKanbanCard';
 import { useFiltersStore } from '@/stores/filters';
@@ -94,7 +94,7 @@ export function VacanciesKanbanPage() {
     pageSize: 200,
   });
   const { data: usersData } = useUsers();
-  const { data: clientsData } = useClients();
+  const { data: clientsData } = useAllClients();
   const reorder = useReorderVacanciesKanban();
   const changeStatus = useChangeVacancyStatus();
   const queryClient = useQueryClient();

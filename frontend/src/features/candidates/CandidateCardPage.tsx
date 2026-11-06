@@ -55,6 +55,7 @@ import type {
   SkillCategory,
 } from '@/api/types';
 import { formatMoneyRub, telegramUrl } from '@/lib/utils';
+import { formatMoney } from '@/lib/currency';
 import { CandidateForm, type CandidateFormValues } from './CandidateForm';
 import {
   useArchiveCandidate,
@@ -71,7 +72,7 @@ import { HireEmployeeButton } from '@/features/hrEdo/HireEmployeeButton';
 import { Textarea } from '@/components/ui/textarea';
 import { useUsers } from '@/features/users/hooks';
 import { useVacancies } from '@/features/vacancies/hooks';
-import { useClients } from '@/features/clients/hooks';
+import { useAllClients } from '@/features/clients/hooks';
 import { candidateStatuses } from '@/mocks/db/candidates';
 import { CommentsSection } from '@/features/comments/CommentsSection';
 import { AttachVacancyDialog } from '@/features/matching/AttachVacancyDialog';
@@ -264,8 +265,8 @@ export function CandidateCardPage({ source: sourceProp }: CandidateCardPageProps
   const { data: candidate, isLoading } = useCandidate(id);
   const { data: activity } = useCandidateActivity(id);
   const { data: usersData } = useUsers();
-  const { data: vacanciesData } = useVacancies();
-  const { data: clientsData } = useClients();
+  const { data: vacanciesData } = useVacancies({ pageSize: 200 }) // TODO: отдельный эндпоинт справочника — вакансий уже >200;
+  const { data: clientsData } = useAllClients();
   const changeStatus = useChangeCandidateStatus();
   const createCandidate = useCreateCandidate();
   const updateCandidate = useUpdateCandidate();
@@ -941,7 +942,7 @@ export function CandidateCardPage({ source: sourceProp }: CandidateCardPageProps
                               ? v.salaryMax
                                 ? `до ${formatMoneyRub(v.salaryMax)} ₽`
                                 : '—'
-                              : `${formatMoneyRub(v.rateClient)} ₽`}
+                              : formatMoney(v.rateClient, v.currency)}
                           </span>
                           {canEditMatches && (
                             <button

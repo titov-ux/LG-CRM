@@ -15,7 +15,9 @@ import {
   netToCandidate,
   round10k,
 } from '@/lib/compensation';
-import type { EmploymentType } from '@/api/types';
+import type { Currency, EmploymentType } from '@/api/types';
+import { useFxRates } from '@/features/fx/hooks';
+import { formatMoney, formatUsdRate, toRub } from '@/lib/currency';
 
 /**
  * Калькулятор «ставка заказчика → зарплата кандидата».
@@ -41,12 +43,15 @@ const TYPE_ACCENT: Record<EmploymentType, string> = {
 
 interface InputsState {
   rateClient: number;
+  /** Валюта ставки заказчика: $ — для иностранных заказчиков (пересчёт по курсу ЦБ). */
+  currency: Currency;
   /** Целевая маржа в % (0..100) по каждой форме оформления, переопределяет дефолты. */
   margins: Record<EmploymentType, number>;
 }
 
 const DEFAULT_INPUTS: InputsState = {
   rateClient: 4000,
+  currency: 'RUB',
   margins: {
     'ТК РФ': Math.round(TARGET_MARGIN_BY_EMPLOYMENT['ТК РФ'] * 100),
     'ИП': Math.round(TARGET_MARGIN_BY_EMPLOYMENT['ИП'] * 100),
@@ -56,12 +61,15 @@ const DEFAULT_INPUTS: InputsState = {
 
 export function CalculatorPage() {
   const [inputs, setInputs] = useState<InputsState>(DEFAULT_INPUTS);
+  const fx = useFxRates().data;
+  // Ставка в ₽/час (для $ — по курсу ЦБ; нет курса → 0, расчёт не показываем).
+  const rateClientRub = toRub(inputs.rateClient, inputs.currency, fx?.usdRub) ?? 0;
 
   // У нас всегда 160 часов в месяц — это стандарт для аутстаффа, отдельным полем
   // в форме не выводим, берём из общего lib/compensation.ts.
   const revenue = useMemo(
-    () => monthlyClientRevenue(inputs.rateClient, DEFAULT_HOURS_PER_MONTH),
-    [inputs.rateClient],
+    () => monthlyClientRevenue(rateClientRub, DEFAULT_HOURS_PER_MONTH),
+    [rateClientRub],
   );
 
   const rows = useMemo(
@@ -121,23 +129,55 @@ export function CalculatorPage() {
               htmlFor="rateClient"
               className="text-[12px] font-medium text-muted-foreground"
             >
-              Ставка заказчика, ₽/час
+              Ставка заказчика, {inputs.currency === 'USD' ? '$' : '₽'}/час
             </Label>
-            <Input
-              id="rateClient"
-              type="number"
-              inputMode="numeric"
-              min={0}
-              step={50}
-              value={inputs.rateClient || ''}
-              placeholder="0"
-              onChange={(e) =>
-                setInputs((s) => ({
-                  ...s,
-                  rateClient: numberFromInput(e.target.value),
-                }))
-              }
-            />
+            <div className="flex gap-2">
+              <Input
+                id="rateClient"
+                type="number"
+                inputMode="decimal"
+                min={0}
+                step={inputs.currency === 'USD' ? 1 : 50}
+                value={inputs.rateClient || ''}
+                placeholder="0"
+                onChange={(e) =>
+                  setInputs((s) => ({
+                    ...s,
+                    rateClient: numberFromInput(e.target.value),
+                  }))
+                }
+              />
+              <div className="flex shrink-0 rounded-md border p-0.5" role="group" aria-label="Валюта ставки">
+                {(['RUB', 'USD'] as const).map((cur) => (
+                  <button
+                    key={cur}
+                    type="button"
+                    onClick={() =>
+                      setInputs((s) =>
+                        s.currency === cur
+                          ? s
+                          : { ...s, currency: cur, rateClient: cur === 'USD' ? 50 : DEFAULT_INPUTS.rateClient },
+                      )
+                    }
+                    className={`h-8 w-9 rounded text-[13px] font-semibold ${
+                      inputs.currency === cur
+                        ? 'bg-foreground text-background'
+                        : 'text-muted-foreground hover:bg-muted'
+                    }`}
+                    title={cur === 'USD' ? 'Иностранный заказчик — ставка в долларах' : 'Ставка в рублях'}
+                  >
+                    {cur === 'USD' ? '$' : '₽'}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {inputs.currency === 'USD' && (
+              <p className="text-[11px] text-muted-foreground">
+                {fx?.usdRub
+                  ? `≈ ${formatMoney(Math.round(rateClientRub), 'RUB')}/час · ${formatUsdRate(fx.usdRub, fx.date)}`
+                  : 'Курс $ недоступен — расчёт в рублях невозможен.'}
+              </p>
+            )}
             <p className="text-[11px] text-muted-foreground">
               Цена часа, по которой выставляем заказчику. Месяц считаем как{' '}
               {DEFAULT_HOURS_PER_MONTH} часов.

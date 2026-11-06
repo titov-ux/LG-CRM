@@ -6,6 +6,7 @@ from datetime import date
 
 from pydantic import Field
 
+from app.core.currency import DEFAULT_CURRENCY, Currency
 from app.core.schemas import CamelModel
 from app.modules.vacancies.models import (
     EngagementType,
@@ -26,6 +27,8 @@ class VacancyResponse(CamelModel):
     stack: list[str] = Field(default_factory=list)
     format: WorkFormat
     rate_client: float
+    # Валюта rate_client = валюта клиента (только чтение, задаётся в карточке клиента).
+    currency: Currency = DEFAULT_CURRENCY
     salary_max: float | None = None
     positions: int
     status: VacancyStatus

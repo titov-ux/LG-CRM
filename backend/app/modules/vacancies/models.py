@@ -112,6 +112,10 @@ class Vacancy(Base, TimestampsMixin, SoftDeleteMixin):
         default=WorkFormat.hybrid,
     )
     rate_client: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    # Валюта rate_client — всегда равна валюте клиента (синхронизирует сервис).
+    currency: Mapped[str] = mapped_column(
+        String(3), nullable=False, default="RUB", server_default="RUB"
+    )
     salary_max: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     positions: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     status: Mapped[VacancyStatus] = mapped_column(

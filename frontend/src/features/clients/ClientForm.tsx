@@ -1,4 +1,4 @@
-import { useFieldArray, useForm } from 'react-hook-form';
+import { useFieldArray, useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Plus, Trash2 } from 'lucide-react';
@@ -22,6 +22,7 @@ import {
 import { useUsers } from '@/features/users/hooks';
 import { useAuthStore } from '@/stores/auth';
 import type { ClientKind, ClientStatus, Role } from '@/api/types';
+import { CURRENCY_OPTIONS } from '@/lib/currency';
 
 const STATUSES: { id: ClientStatus; label: string }[] = [
   { id: 'lead', label: 'Лид' },
@@ -36,12 +37,15 @@ const CLIENT_KINDS: { id: ClientKind; label: string }[] = [
   { id: 'intermediary', label: 'Посредник' },
 ];
 
+// ИНН проверяем только у российских клиентов (см. superRefine ниже): у
+// иностранного заказчика ИНН нет — там необязательный рег. номер / Tax ID.
 const legalEntitySchema = z.object({
   name: z.string().min(2, 'Минимум 2 символа'),
-  inn: z.string().regex(/^\d{10,12}$/, 'ИНН должен быть из 10 или 12 цифр'),
+  inn: z.string().trim().max(32, 'Не больше 32 символов'),
 });
 
-const schema = z.object({
+const schema = z
+  .object({
   name: z.string().min(2, 'Минимум 2 символа'),
   legalEntities: z.array(legalEntitySchema).min(1, 'Добавьте хотя бы одно юр. лицо'),
   industry: z.string().min(2),
@@ -49,7 +53,20 @@ const schema = z.object({
   status: z.enum(['lead', 'in_progress', 'active', 'paused', 'archived']),
   clientKind: z.enum(['direct', 'intermediary']),
   telegramChat: z.string(),
-});
+  currency: z.enum(['RUB', 'USD']),
+  })
+  .superRefine((values, ctx) => {
+    if (values.currency !== 'RUB') return;
+    values.legalEntities.forEach((le, i) => {
+      if (!/^\d{10,12}$/.test(le.inn)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'ИНН должен быть из 10 или 12 цифр',
+          path: ['legalEntities', i, 'inn'],
+        });
+      }
+    });
+  });
 
 export type ClientFormValues = z.infer<typeof schema>;
 
@@ -89,10 +106,14 @@ export function ClientForm({ defaultValues, onSubmit, isPending, submitLabel = '
       status: 'lead',
       clientKind: 'direct',
       telegramChat: '',
+      currency: 'RUB',
       ...defaultValues,
       ...(lockedManagerId ? { accountManagerId: lockedManagerId } : {}),
     } as ClientFormValues,
   });
+
+  const currency = useWatch({ control: form.control, name: 'currency' });
+  const isForeign = currency === 'USD';
 
   const { fields, append, remove } = useFieldArray({
     control: form.control,
@@ -155,7 +176,7 @@ export function ClientForm({ defaultValues, onSubmit, isPending, submitLabel = '
                   <FormItem>
                     <FormLabel>Наименование</FormLabel>
                     <FormControl>
-                      <Input {...f} placeholder="ООО «Ромашка»" />
+                      <Input {...f} placeholder={isForeign ? 'Acme Inc.' : 'ООО «Ромашка»'} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -166,9 +187,9 @@ export function ClientForm({ defaultValues, onSubmit, isPending, submitLabel = '
                 name={`legalEntities.${index}.inn`}
                 render={({ field: f }) => (
                   <FormItem>
-                    <FormLabel>ИНН</FormLabel>
+                    <FormLabel>{isForeign ? 'Рег. номер / Tax ID (необязательно)' : 'ИНН'}</FormLabel>
                     <FormControl>
-                      <Input {...f} placeholder="7728029110" />
+                      <Input {...f} placeholder={isForeign ? 'EIN, VAT, Company No…' : '7728029110'} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -208,6 +229,29 @@ export function ClientForm({ defaultValues, onSubmit, isPending, submitLabel = '
                   ))}
                 </SelectContent>
               </Select>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <FormField
+          control={form.control}
+          name="currency"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Валюта расчётов</FormLabel>
+              <Select value={field.value} onValueChange={field.onChange}>
+                <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
+                <SelectContent>
+                  {CURRENCY_OPTIONS.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>{c.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {isForeign && (
+                <p className="text-[12px] text-muted-foreground">
+                  Ставки всех вакансий клиента — в $/час. Маржа считается в ₽ по курсу ЦБ.
+                </p>
+              )}
               <FormMessage />
             </FormItem>
           )}

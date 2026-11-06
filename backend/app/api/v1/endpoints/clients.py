@@ -38,6 +38,7 @@ def _to_dto(client: ClientModel, counts: dict[str, int]) -> ClientResponse:
         status=client.status,
         client_kind=client.client_kind,
         telegram_chat=client.telegram_chat,
+        currency=client.currency,
         vacancies_count=counts.get("vacancies_count", 0),
         contacts_count=counts.get("contacts_count", 0),
     )

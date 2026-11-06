@@ -396,6 +396,7 @@ export const handlers = [
     const created: Client = {
       id: `c-${Date.now()}`,
       name: body.name ?? 'Без названия',
+      currency: body.currency ?? 'RUB',
       legalEntities: (body.legalEntities ?? []).map((le, i) => ({
         id: le.id ?? `le-${Date.now()}-${i}`,
         name: le.name,
@@ -442,6 +443,12 @@ export const handlers = [
       else delete c.telegramChat;
     }
     Object.assign(c, rest);
+    if (patch.currency) {
+      // Как на бэкенде: ставки вакансий клиента — в валюте клиента.
+      vacanciesDb.forEach((v) => {
+        if (v.clientId === c.id) v.currency = patch.currency!;
+      });
+    }
     if (patch.status && patch.status !== prevStatus) {
       pushActivity({
         entityType: 'client',
@@ -634,6 +641,7 @@ export const handlers = [
       title: body.title ?? 'Без названия',
       clientId: body.clientId ?? '',
       engagementType: body.engagementType ?? 'outstaff',
+      currency: client?.currency ?? 'RUB',
       project: body.project,
       grade: body.grade ?? 'Middle',
       stack: body.stack ?? [],

@@ -52,6 +52,7 @@ function toFormValues(client: Client): Partial<ClientFormValues> {
     status: client.status,
     clientKind: client.clientKind,
     telegramChat: client.telegramChat ?? '',
+    currency: client.currency ?? 'RUB',
   };
 }
 
@@ -66,6 +67,7 @@ function toDuplicatePayload(client: Client): Partial<Client> {
     accountManagerId: client.accountManagerId,
     status: 'lead',
     clientKind: client.clientKind,
+    currency: client.currency,
     ...(client.telegramChat ? { telegramChat: client.telegramChat } : {}),
   };
 }
@@ -146,6 +148,7 @@ export function ClientCardPage() {
           accountManagerId: values.accountManagerId,
           status: values.status,
           clientKind: values.clientKind,
+          currency: values.currency,
           ...(values.telegramChat.trim()
             ? { telegramChat: values.telegramChat.trim() }
             : { telegramChat: '' }),
@@ -244,7 +247,11 @@ export function ClientCardPage() {
                 {client.legalEntities.map((le) => (
                   <div key={le.id} className="py-2.5">
                     <div className="text-[13px] font-medium">{le.name}</div>
-                    <div className="mt-0.5 text-[11.5px] text-muted-foreground tnum">ИНН {le.inn}</div>
+                    {le.inn ? (
+                      <div className="mt-0.5 text-[11.5px] text-muted-foreground tnum">
+                        {client.currency === 'USD' ? 'Рег. номер' : 'ИНН'} {le.inn}
+                      </div>
+                    ) : null}
                   </div>
                 ))}
               </div>
@@ -264,6 +271,10 @@ export function ClientCardPage() {
               />
               <Field label="Отрасль" value={client.industry} />
               <Field label="Тип клиента" value={CLIENT_KIND_LABEL[client.clientKind] ?? '—'} />
+              <Field
+                label="Валюта расчётов"
+                value={client.currency === 'USD' ? '$ — иностранный заказчик' : '₽ — рубли'}
+              />
               <Field
                 label="Telegram-чат"
                 value={

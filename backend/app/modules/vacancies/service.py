@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.errors import ApiError
+from app.modules.clients.models import Client
 from app.modules.audit import service as audit_service
 from app.modules.audit.models import ActivityEntityType, ActivityKind
 from app.modules.notifications import service as notify_service
@@ -246,6 +247,7 @@ async def create_vacancy(
         stack=list(payload.stack),
         format_=payload.format,
         rate_client=float(payload.rate_client),
+        currency=await _client_currency(db, payload.client_id),
         salary_max=float(payload.salary_max) if payload.salary_max is not None else None,
         positions=payload.positions,
         status=payload.status,
@@ -282,6 +284,16 @@ async def create_vacancy(
     return vac
 
 
+async def _client_currency(db: AsyncSession, client_id: uuid.UUID | None) -> str:
+    """Валюта клиента — в ней хранится ставка rate_client его вакансий."""
+    if client_id is None:
+        return "RUB"
+    cur = (
+        await db.execute(select(Client.currency).where(Client.id == client_id))
+    ).scalar_one_or_none()
+    return cur or "RUB"
+
+
 async def update_vacancy(
     db: AsyncSession, user: User, vac_id: uuid.UUID, payload: UpdateVacancyRequest
 ) -> Vacancy:
@@ -308,6 +320,9 @@ async def update_vacancy(
             setattr(vac, attr, data[field])
     if "stack" in data and data["stack"] is not None:
         vac.stack = list(data["stack"])
+    if data.get("client_id") is not None:
+        # Сменили клиента — ставка теперь в его валюте.
+        vac.currency = await _client_currency(db, data["client_id"])
     if "rate_client" in data and data["rate_client"] is not None:
         vac.rate_client = float(data["rate_client"])
     if "salary_max" in data:

@@ -19,7 +19,7 @@ import uuid
 from collections.abc import Iterable
 
 from fastapi import status
-from sqlalchemy import Select, and_, func, or_, select
+from sqlalchemy import Select, and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -213,6 +213,7 @@ async def create_client(
         status=payload.status,
         client_kind=payload.client_kind,
         telegram_chat=(payload.telegram_chat or "").strip() or None,
+        currency=payload.currency,
     )
     for le in payload.legal_entities:
         client.legal_entities.append(LegalEntity(name=le.name, inn=le.inn))
@@ -262,6 +263,14 @@ async def update_client(
         client.telegram_chat = (val or "").strip() or None
     if "legal_entities" in data and data["legal_entities"] is not None:
         _replace_legal_entities(client, payload.legal_entities or [])
+    if data.get("currency") is not None and data["currency"] != client.currency:
+        client.currency = data["currency"]
+        # Ставки всех вакансий клиента — в валюте клиента: держим копию в синхроне.
+        await db.execute(
+            update(Vacancy)
+            .where(Vacancy.client_id == client.id)
+            .values(currency=data["currency"])
+        )
 
     await db.commit()
     await db.refresh(client, attribute_names=["legal_entities"])

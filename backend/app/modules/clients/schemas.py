@@ -6,6 +6,7 @@ from datetime import date
 
 from pydantic import EmailStr, Field
 
+from app.core.currency import DEFAULT_CURRENCY, Currency
 from app.core.schemas import CamelModel
 from app.modules.clients.models import ClientKind, ClientStatus
 
@@ -36,6 +37,7 @@ class ClientResponse(CamelModel):
     status: ClientStatus
     client_kind: ClientKind
     telegram_chat: str | None = None
+    currency: Currency = DEFAULT_CURRENCY
     vacancies_count: int = 0
     contacts_count: int = 0
 
@@ -49,6 +51,7 @@ class CreateClientRequest(CamelModel):
     status: ClientStatus = ClientStatus.lead
     client_kind: ClientKind = ClientKind.direct
     telegram_chat: str | None = None
+    currency: Currency = DEFAULT_CURRENCY
 
 
 class UpdateClientRequest(CamelModel):
@@ -59,6 +62,7 @@ class UpdateClientRequest(CamelModel):
     status: ClientStatus | None = None
     client_kind: ClientKind | None = None
     telegram_chat: str | None = None
+    currency: Currency | None = None
 
 
 # ─── Pagination wrapper (Page<Client>) ───

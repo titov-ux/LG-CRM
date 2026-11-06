@@ -265,6 +265,13 @@ class Settings(BaseSettings):
     # хосте появится рабочий IPv6.
     force_ipv4_egress: bool = True
 
+    # ── Курсы валют (иностранные заказчики платят в USD) ───
+    # Курс USD→RUB берём у ЦБ РФ (JSON-зеркало cbr-xml-daily.ru), кэшируем в
+    # Redis. Если ЦБ недоступен и в кэше пусто — используем fallback; 0 = нет
+    # курса (маржа по долларовым вакансиям тогда не считается).
+    fx_cbr_url: str = "https://www.cbr-xml-daily.ru/daily_json.js"
+    fx_usd_rub_fallback: float = 0.0
+
 
 def hr_edo_is_enabled(settings: Settings) -> bool:
     if settings.hr_edo_enabled is None:

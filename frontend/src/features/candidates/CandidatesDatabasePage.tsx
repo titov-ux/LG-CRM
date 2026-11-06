@@ -137,7 +137,7 @@ export function CandidatesDatabasePage() {
   });
   const { data: usersData } = useUsers();
   // Список вакансий для пикера превью-скоринга (только незакрытые — их подбирают).
-  const { data: vacanciesData } = useVacancies();
+  const { data: vacanciesData } = useVacancies({ pageSize: 200 }) // TODO: отдельный эндпоинт справочника — вакансий уже >200;
   const previewVacancies = useMemo(
     () =>
       (vacanciesData?.items ?? []).filter(

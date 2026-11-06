@@ -291,3 +291,55 @@ def test_flat_contacts_list_and_filters(
     r = client.get("/api/v1/contacts?search=acme", headers=h)
     # search по client.name тоже работает
     assert r.json()["total"] == 2
+
+
+def test_foreign_client_currency_flows_to_vacancies(
+    client: TestClient, admin_user, account_manager_user
+) -> None:
+    """Валюта клиента (USD для иностранных заказчиков) наследуется вакансиями
+    и синхронизируется при её смене."""
+    h = auth_headers(client, admin_user.email)
+    r = client.post("/api/v1/clients", headers=h, json=_make_client_payload(account_manager_user.id))
+    assert r.status_code == 201, r.text
+    rub_client = r.json()
+    assert rub_client["currency"] == "RUB"
+
+    r = client.post(
+        "/api/v1/clients",
+        headers=h,
+        json=_make_client_payload(account_manager_user.id, name="Foreign Inc", currency="USD"),
+    )
+    assert r.status_code == 201, r.text
+    usd_client = r.json()
+    assert usd_client["currency"] == "USD"
+
+    vac_payload = {
+        "title": "Java dev",
+        "clientId": usd_client["id"],
+        "accountManagerId": str(account_manager_user.id),
+        "rateClient": 25,
+    }
+    r = client.post("/api/v1/vacancies", headers=h, json=vac_payload)
+    assert r.status_code == 201, r.text
+    vac = r.json()
+    assert vac["currency"] == "USD"
+    assert vac["rateClient"] == 25
+
+    # Перенос вакансии к рублёвому клиенту — валюта меняется вместе с клиентом.
+    r = client.patch(f"/api/v1/vacancies/{vac['id']}", headers=h, json={"clientId": rub_client["id"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["currency"] == "RUB"
+
+    # Клиента перевели в USD — все его вакансии тоже в USD.
+    r = client.patch(f"/api/v1/clients/{rub_client['id']}", headers=h, json={"currency": "USD"})
+    assert r.status_code == 200, r.text
+    assert r.json()["currency"] == "USD"
+    r = client.get(f"/api/v1/vacancies/{vac['id']}", headers=h)
+    assert r.json()["currency"] == "USD"
+
+    r = client.post(
+        "/api/v1/clients",
+        headers=h,
+        json=_make_client_payload(account_manager_user.id, name="Bad", currency="EUR"),
+    )
+    assert r.status_code == 422

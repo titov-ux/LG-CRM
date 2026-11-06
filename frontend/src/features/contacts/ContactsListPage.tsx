@@ -23,7 +23,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { FilterBar, FilterChip, MenuItem } from '@/components/common/FilterChip';
 import { useFiltersStore } from '@/stores/filters';
-import { useClients } from '@/features/clients/hooks';
+import { useAllClients } from '@/features/clients/hooks';
 import { useContacts } from './hooks';
 import { AddContactDialog } from './AddContactDialog';
 import { useCan } from '@/lib/permissions';
@@ -85,7 +85,7 @@ export function ContactsListPage() {
 
   const { data, isLoading } = useContacts(queryParams);
   // Список клиентов нужен и для подсказки фильтра, и для отображения в строках.
-  const { data: clientsData } = useClients();
+  const { data: clientsData } = useAllClients();
 
   const totalCount = data?.items.length ?? 0;
   const activeChannels = CHANNEL_OPTIONS.filter((k) => filters.channels[k]);

@@ -269,7 +269,15 @@ async def list_candidates(
 
     total = (await db.execute(select(func.count()).select_from(q.subquery()))).scalar_one()
     q = (
-        q.order_by(Candidate.status, Candidate.kanban_order, Candidate.created_at.desc())
+        # Candidate.id — стабильный тай-брейкер: без него при одинаковых
+        # status/kanban_order/created_at постраничный обход (массовая выгрузка
+        # резюме) мог пропускать или дублировать строки между страницами.
+        q.order_by(
+            Candidate.status,
+            Candidate.kanban_order,
+            Candidate.created_at.desc(),
+            Candidate.id,
+        )
         .offset((page - 1) * page_size)
         .limit(page_size)
     )

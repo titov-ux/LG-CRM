@@ -6,6 +6,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Database,
+  Download,
   FileDown,
   FileSignature,
   GraduationCap,
@@ -58,6 +59,7 @@ import type {
 } from '@/api/types';
 import { useCandidates, useDeleteCandidatePermanent, useRestoreCandidate } from './hooks';
 import { useCan } from '@/lib/permissions';
+import { useAuthStore } from '@/stores/auth';
 
 const GRADE_OPTIONS: Grade[] = ['Junior', 'Middle', 'Senior', 'Lead'];
 const EMPLOYMENT_OPTIONS: EmploymentType[] = ['ИП', 'СМЗ', 'ТК РФ'];
@@ -155,6 +157,37 @@ export function CandidatesDatabasePage() {
   // на всю страницу — без рендера N модалок в TableBody.
   const [pendingDelete, setPendingDelete] = useState<Candidate | null>(null);
 
+  // «Выгрузить все резюме» — только администратор. Собираем .docx по всем
+  // кандидатам базы (включая архив, без учёта фильтров) в один ZIP.
+  const isAdmin = useAuthStore((s) => s.user?.role) === 'admin';
+  const [exportProgress, setExportProgress] = useState<{ done: number; total: number } | null>(
+    null,
+  );
+  const handleExportAll = async () => {
+    if (exportProgress) return;
+    setExportProgress({ done: 0, total: 0 });
+    try {
+      // Ленивая загрузка: генератор .docx нужен только по нажатию кнопки.
+      const { exportAllResumes } = await import('./resume/exportAll');
+      const res = await exportAllResumes(setExportProgress);
+      if (res.exported === 0) {
+        toast.error('Нет резюме для выгрузки');
+      } else if (res.failed.length > 0) {
+        toast.warning(
+          `Выгружено ${res.exported}, не удалось собрать: ${res.failed.length} (${res.failed
+            .slice(0, 5)
+            .join(', ')}${res.failed.length > 5 ? '…' : ''})`,
+        );
+      } else {
+        toast.success(`Выгружено резюме: ${res.exported}`);
+      }
+    } catch {
+      toast.error('Не удалось выгрузить резюме. Попробуйте ещё раз.');
+    } finally {
+      setExportProgress(null);
+    }
+  };
+
   // Если после удаления/архивирования текущая страница оказалась пустой,
   // а на предыдущих ещё что-то есть — мягко откатываемся назад.
   useEffect(() => {
@@ -229,16 +262,36 @@ export function CandidatesDatabasePage() {
           );
         })}
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="h-8 gap-1.5"
-          onClick={() => setHhImportOpen(true)}
-        >
-          <FileDown className="h-3.5 w-3.5" />
-          Импорт с hh.ru
-        </Button>
+        <div className="flex items-center gap-2">
+          {isAdmin && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1.5"
+              disabled={!!exportProgress}
+              onClick={handleExportAll}
+              title="Все кандидаты базы, включая архив — .docx в одном ZIP"
+            >
+              <Download className="h-3.5 w-3.5" />
+              {exportProgress
+                ? exportProgress.total > 0
+                  ? `Выгрузка ${exportProgress.done}/${exportProgress.total}…`
+                  : 'Выгрузка…'
+                : 'Выгрузить все резюме'}
+            </Button>
+          )}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1.5"
+            onClick={() => setHhImportOpen(true)}
+          >
+            <FileDown className="h-3.5 w-3.5" />
+            Импорт с hh.ru
+          </Button>
+        </div>
       </div>
 
         <FilterBar

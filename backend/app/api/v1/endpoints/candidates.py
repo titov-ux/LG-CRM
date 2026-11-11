@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ApiError
 from app.db.session import get_db
-from app.modules.auth.dependencies import get_current_user
+from app.modules.auth.dependencies import get_current_user, require_roles
 from app.modules.auth.schemas import OkResponse
 from app.modules.candidates import service
 from app.modules.candidates.ai import (
@@ -61,8 +61,17 @@ def _maybe_mask(value: Any, user: User) -> Any:
     return None if user.role == Role.viewer else value
 
 
-def _to_dto(cand: Candidate, vacancy_ids: list[uuid.UUID], user: User) -> CandidateResponse:
-    resume = cand.resume or {}
+def _to_dto(
+    cand: Candidate,
+    vacancy_ids: list[uuid.UUID],
+    user: User,
+    *,
+    include_resume: bool = True,
+) -> CandidateResponse:
+    # include_resume=False — для списка: полные блоки резюме (опыт, навыки,
+    # образование…) отдаём только в карточке и в админской выгрузке, чтобы
+    # базу резюме нельзя было выкачать постранично через GET /candidates.
+    resume = (cand.resume or {}) if include_resume else {}
     return CandidateResponse(
         id=cand.id,
         full_name=cand.full_name,
@@ -275,6 +284,43 @@ async def list_candidates(
         archived=archived_param,
         page=page,
         page_size=page_size,
+    )
+    return CandidatePage(
+        # Список — без полных резюме (см. _to_dto): они есть в карточке
+        # (GET /candidates/{id}) и в админской выгрузке (GET /candidates/export).
+        items=[_to_dto(c, vmap.get(c.id, []), user, include_resume=False) for c in rows],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get(
+    "/export",
+    response_model=CandidatePage,
+    summary="Массовая выгрузка кандидатов с полными резюме (только администратор)",
+    dependencies=[Depends(require_roles(Role.admin.value))],
+)
+async def export_candidates(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=100, ge=1, le=200, alias="pageSize"),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> CandidatePage:
+    """Вся база (включая архив) с полными резюме — для кнопки «Выгрузить все резюме».
+
+    Единственный способ получить резюме пачкой: обычный список их не отдаёт.
+    Доступ — только роль admin; каждое обращение пишется в лог.
+    """
+    rows, total, vmap = await service.list_candidates(
+        db, user, archived="all", page=page, page_size=page_size
+    )
+    logger.info(
+        "candidates.export page=%s page_size=%s total=%s actor_id=%s",
+        page,
+        page_size,
+        total,
+        user.id,
     )
     return CandidatePage(
         items=[_to_dto(c, vmap.get(c.id, []), user) for c in rows],

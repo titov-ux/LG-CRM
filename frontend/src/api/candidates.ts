@@ -44,6 +44,18 @@ export const candidatesApi = {
     });
     return api.get('candidates', { searchParams }).json<Page<Candidate>>();
   },
+  /**
+   * Массовая выгрузка: вся база (включая архив) с полными резюме. Только admin
+   * (остальным бэкенд отвечает 403). Обычный `list` блоки резюме не отдаёт.
+   * Таймаут увеличен: страница несёт до 200 полных резюме.
+   */
+  exportPage: (page: number, pageSize: number) =>
+    api
+      .get('candidates/export', {
+        searchParams: { page: String(page), pageSize: String(pageSize) },
+        timeout: 60_000,
+      })
+      .json<Page<Candidate>>(),
   byId: (id: UUID) => api.get(`candidates/${id}`).json<Candidate>(),
   create: (payload: Partial<Candidate>) => api.post('candidates', { json: payload }).json<Candidate>(),
   update: (id: UUID, payload: Partial<Candidate>) =>

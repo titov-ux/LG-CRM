@@ -160,3 +160,67 @@ def test_create_candidate_returns_201_if_activity_write_fails(
     r = client.get(f"/api/v1/candidates/{cid}", headers=h)
     assert r.status_code == 200
     assert r.json()["fullName"] == "Иван Иванов"
+
+
+# ─── Массовая выгрузка резюме: только администратор ───
+
+_RESUME_BLOCK = {
+    "experience": [
+        {
+            "id": "exp-1",
+            "company": "ООО Ромашка",
+            "position": "Backend",
+            "startMonth": "2020-01",
+            "endMonth": "2024-06",
+        }
+    ],
+}
+
+
+def _create_with_resume(client: TestClient, headers, recruiter_id) -> dict:
+    r = client.post(
+        "/api/v1/candidates",
+        headers=headers,
+        json=_cand_payload(recruiter_id, **_RESUME_BLOCK),
+    )
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def test_export_forbidden_for_non_admin(client: TestClient, admin_user, recruiter_user) -> None:
+    admin_h = auth_headers(client, admin_user.email)
+    _create_with_resume(client, admin_h, recruiter_user.id)
+    h = auth_headers(client, recruiter_user.email)
+    r = client.get("/api/v1/candidates/export", headers=h)
+    assert r.status_code == 403, r.text
+
+
+def test_export_returns_full_resume_for_admin(
+    client: TestClient, admin_user, recruiter_user
+) -> None:
+    h = auth_headers(client, admin_user.email)
+    created = _create_with_resume(client, h, recruiter_user.id)
+    assert created["experience"], "карточка должна вернуть резюме целиком"
+    # Архивный кандидат тоже попадает в выгрузку.
+    client.post(f"/api/v1/candidates/{created['id']}/archive", headers=h, json={})
+    r = client.get("/api/v1/candidates/export?pageSize=200", headers=h)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["total"] == 1
+    assert body["items"][0]["experience"][0]["company"] == "ООО Ромашка"
+
+
+def test_list_does_not_return_resume_blocks(
+    client: TestClient, admin_user, recruiter_user
+) -> None:
+    h = auth_headers(client, admin_user.email)
+    created = _create_with_resume(client, h, recruiter_user.id)
+    for who in (admin_user, recruiter_user):
+        r = client.get("/api/v1/candidates", headers=auth_headers(client, who.email))
+        assert r.status_code == 200, r.text
+        item = r.json()["items"][0]
+        for key in ("skillCategories", "experience", "education", "certifications", "languages"):
+            assert item.get(key) is None, key
+    # Карточка по-прежнему отдаёт резюме.
+    r = client.get(f"/api/v1/candidates/{created['id']}", headers=h)
+    assert r.json()["experience"][0]["company"] == "ООО Ромашка"

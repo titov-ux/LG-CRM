@@ -10,8 +10,8 @@ import { candidatesApi } from '@/api/candidates';
 import type { Candidate } from '@/api/types';
 import { generateResumeDocxBlob, resumeFileName } from './generateDocx';
 
-// В базе может быть больше 1000 кандидатов — тянем постранично. 100 на
-// страницу: каждая запись несёт полное резюме, 200 упирались бы в таймаут.
+// В базе может быть больше 1000 кандидатов — тянем постранично, по 100
+// полных резюме на страницу.
 const EXPORT_PAGE_SIZE = 100;
 
 export interface ExportProgress {
@@ -119,11 +119,8 @@ async function fetchAllCandidates(): Promise<Candidate[]> {
   let page = 1;
   // Страхуемся от бесконечного цикла: 500 страниц × 200 = 100 000 кандидатов.
   while (page <= 500) {
-    const res = await candidatesApi.list({
-      archived: 'all',
-      page,
-      pageSize: EXPORT_PAGE_SIZE,
-    });
+    // Админский эндпоинт: только он отдаёт резюме пачкой (GET /candidates — без них).
+    const res = await candidatesApi.exportPage(page, EXPORT_PAGE_SIZE);
     res.items.forEach((c) => byId.set(c.id, c));
     if (res.items.length === 0 || page * EXPORT_PAGE_SIZE >= res.total) break;
     page += 1;
